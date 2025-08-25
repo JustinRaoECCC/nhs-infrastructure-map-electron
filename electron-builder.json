@@ -1,0 +1,18 @@
+{
+  "appId": "com.nhs.infrastructure.map",
+  "productName": "NHS Infrastructure Map",
+  "asar": true,
+  "directories": {
+    "buildResources": "build"
+  },
+  "files": [
+    "main.js",
+    "preload.js",
+    "backend/**/*",
+    "frontend/**/*",
+    "package.json"
+  ],
+  "win": { "target": ["nsis", "portable"] },
+  "mac": { "target": ["dmg"] },
+  "linux": { "target": ["AppImage"] }
+}

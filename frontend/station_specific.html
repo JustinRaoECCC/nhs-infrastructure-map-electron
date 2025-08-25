@@ -1,0 +1,83 @@
+<!-- frontend/station_specific.html -->
+<div id="stationPage">
+  <button id="backButton">&larr; Back to Main View</button>
+  <h1 id="stationTitle">STATION NAME (ID)</h1>
+  <div class="tabs">
+    <button class="tab active" data-target="overview">Overview</button>
+    <button class="tab" data-target="inspection-history">Inspection History</button>
+    <button class="tab" data-target="construction-history">Construction History</button>
+    <button class="tab" data-target="high-priority-repairs">High Priority Repairs</button>
+    <button class="tab" data-target="documents">Documents</button>
+    <button class="tab" data-target="photos">Photos</button>
+  </div>
+  <div id="overview" class="tab-content active">
+    <div class="station-section">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h3>General Information</h3>
+        <button id="unlockEditing" class="open-modal-button">🔒 Unlock Editing</button>
+      </div>
+      <table>
+        <tr><th>Station ID:</th> <td><input id="giStationId" type="text" disabled /></td></tr>
+        <tr><th>Category:</th>   <td><input id="giCategory"  type="text" disabled /></td></tr>
+        <tr><th>Site Name:</th>  <td><input id="giSiteName"  type="text" disabled /></td></tr>
+        <tr><th>Province:</th>   <td><input id="giProvince"  type="text" disabled /></td></tr>
+        <tr><th>Latitude:</th>   <td><input id="giLatitude"  type="number" step="any" disabled /></td></tr>
+        <tr><th>Longitude:</th>  <td><input id="giLongitude" type="number" step="any" disabled /></td></tr>
+        <tr>
+          <th>Status:</th>
+          <td>
+            <select id="giStatus" disabled>
+              <option>Active</option>
+              <option>Inactive</option>
+              <option>Unknown</option>
+            </select>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    <button id="btnStationAddSection">+ Add Section</button>
+    <div id="stationSectionsContainer"></div>
+
+    <div style="margin-top:1em;">
+      <button id="saveChanges">Save Changes</button>
+      <button id="deleteStation" style="margin-left:1em;">Delete Station</button>
+    </div>
+  </div>
+
+  <div id="inspection-history" class="tab-content"></div>
+  <div id="construction-history" class="tab-content"></div>
+  <div id="high-priority-repairs" class="tab-content">
+    <h3>Existing Repairs</h3>
+    <table id="existingRepairsTable" class="repairs-table">
+      <thead><tr><th>Repair Name</th><th>Severity</th><th>Priority</th><th>Cost</th><th>Category</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div id="repairsSection">
+      <button id="btnAddRepair" class="btn-primary">+ Add Repair</button>
+      <button id="btnSaveRepairs" class="btn-primary">Save Changes</button>
+      <button id="btnResolveRepairs" class="btn-primary">Resolve Repairs</button>
+      <button id="btnExportRepairs">Export Repairs to Dashboard</button>
+      <div id="repairFormsContainer"></div>
+    </div>
+    <div id="addRepairModal" class="modal" style="display:none;">
+      <div class="modal-content">
+        <span class="close-modal" id="closeAddRepairModal">&times;</span>
+        <h2>Add Repair</h2>
+        <label>Repair Name</label><input type="text" id="inputRepairName"/><br/>
+        <label>Severity Ranking</label><input type="number" id="inputSeverityRanking"/><br/>
+        <label>Priority Ranking</label><input type="number" id="inputPriorityRanking"/><br/>
+        <label>Repair Cost</label><input type="number" step="any" id="inputRepairCost"/><br/>
+        <label>Category</label>
+        <select id="selectRepairCategory">
+          <option value="Capital">Capital</option>
+          <option value="O&M">O&M</option>
+        </select><br/>
+        <button id="confirmAddRepair">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="documents" class="tab-content"></div>
+  <div id="photos" class="tab-content"></div>
+</div>

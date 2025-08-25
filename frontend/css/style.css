@@ -1,0 +1,206 @@
+/* *****************************************************************************
+   NHS Infrastructure — Map View
+***************************************************************************** */
+
+/* ---------- Tokens */
+:root{
+  --bg:            #f8fafc;            /* page background */
+  --panel:         #ffffff;             /* cards / panels */
+  --text:          #0f172a;             /* slate-900 */
+  --muted:         #334155;             /* slate-700 */
+  --border:        #e5e7eb;             /* gray-200 */
+  --primary:       #2563eb;             /* blue-600 */
+  --primary-600:   #2563eb;
+  --primary-700:   #1d4ed8;
+  --sidebar-bg:    #0b1220;             /* deep navy */
+  --sidebar-fg:    #cbd5e1;             /* slate-300 */
+  --sidebar-muted: #94a3b8;             /* slate-400 */
+  --sidebar-hover: rgba(148,163,184,0.12);
+  --radius:        12px;
+  --shadow:        0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(15,23,42,.08);
+}
+
+*{ box-sizing: border-box; }
+html, body { height: 100%; }
+body{
+  margin: 0;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+
+/* ---------- App frame */
+.app-container{ display:flex; flex-direction:column; min-height:100vh; width:100%; }
+
+/* Top bar */
+.title-bar{
+  height:64px;
+  background:#fff;
+  border-bottom:1px solid var(--border);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:0 16px;
+  gap:12px;
+}
+.title-bar h1{
+  font-size:18px; font-weight:600; margin:0; letter-spacing:.2px;
+}
+
+/* top bar right side (search + actions) */
+.controls-row{ margin-left:auto; display:flex; align-items:center; gap:10px; }
+.search{
+  position:relative; display:flex; align-items:center;
+  background:#f1f5f9; border:1px solid var(--border); border-radius:999px; padding:0 12px;
+}
+.search input{
+  height:36px; width:42vw; max-width:560px;
+  border:0; outline:0; background:transparent; color:var(--text);
+  font-size:14px;
+}
+.btn, .dropbtn{
+  height:36px; padding:0 12px; border-radius:8px;
+  border:1px solid var(--border); background:#fff; color:var(--text);
+  font-weight:500; cursor:pointer;
+}
+.btn.primary{ background:var(--primary); color:#fff; border-color:var(--primary); }
+.btn.primary:hover{ background:var(--primary-700); }
+
+/* ---------- Main layout: left nav / content / right panel */
+.main-view-wrapper{ flex:1; display:flex; width:100%; min-width:0; }
+.main-content{
+  display:grid;
+  grid-template-columns: 260px 1fr 380px; /* prevent 0-width collapse */
+  grid-template-rows: 1fr;
+  height: calc(100vh - 64px);
+  width: 100%;
+  min-width: 0; /* allow center column to actually shrink/grow */
+}
+
+/* ensure all ancestors have height so #map:height:100% is meaningful */
+html, body, .app-container, .main-view-wrapper, .main-content { min-height: 100vh; }
+
+/* Left NAV */
+.left-panel{
+  grid-column:1;
+  background:var(--sidebar-bg);
+  color:var(--sidebar-fg);
+  padding:14px 12px;
+  display:flex; flex-direction:column; gap:16px;
+  min-width: 260px;
+}
+.left-panel .brand{
+  font-weight:700; color:#fff; font-size:16px; padding:6px 8px 2px;
+}
+.nav-section h2{
+  color:#e2e8f0; opacity:.75; font-size:12px; margin:8px 8px 6px;
+  text-transform:uppercase; letter-spacing:.06em;
+}
+.nav-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
+.nav-item{
+  display:flex; align-items:center; gap:10px;
+  color:var(--sidebar-muted);
+  padding:10px 12px; border-radius:10px; cursor:pointer;
+  transition:background .15s ease, color .15s ease;
+}
+.nav-item:hover{ background:var(--sidebar-hover); color:#e2e8f0; }
+.nav-item.active{ background:var(--sidebar-hover); color:#fff; }
+.left-panel .footer{ margin-top:auto; border-top:1px solid rgba(148,163,184,.15); padding-top:10px; }
+
+/* ---------- Map column */
+.map-container{
+  grid-column:2;
+  position:relative;
+  background:#fff;
+  border-right:1px solid var(--border);
+  /* critical guards vs 0-width */
+  min-width: 400px;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+#map{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  min-height:300px;
+  z-index:1;
+}
+
+/* Leaflet tweaks to match clean style */
+.leaflet-container{ font: inherit; }
+.leaflet-control-zoom a{
+  border-radius:10px !important;
+  box-shadow: var(--shadow);
+}
+.leaflet-popup-content-wrapper, .leaflet-popup-tip{
+  border-radius:10px; box-shadow: var(--shadow);
+}
+
+/* marker dot used by map_view.js */
+.marker-dot{
+  display:inline-block; width:12px; height:12px; border-radius:50%;
+  background: var(--marker-color, #4b5563);
+  border:2px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,.25);
+}
+
+/* ---------- Right details panel */
+.right-panel{
+  grid-column:3;
+  background:var(--panel);
+  border-left:1px solid var(--border);
+  padding:16px;
+  overflow:auto;
+  min-width:380px;
+}
+.right-panel h2{ margin:0 0 8px; font-size:16px; font-weight:600; }
+.station-toolbar{ display:flex; justify-content:flex-end; gap:8px; margin-bottom:10px; }
+
+/* chips */
+.chips{ display:flex; gap:8px; flex-wrap:wrap; margin:4px 0 10px; }
+.chip{
+  display:inline-flex; align-items:center; gap:6px;
+  font-size:12px; font-weight:600; padding:4px 10px; border-radius:999px;
+}
+.chip.green{ background:#e8f5e9; color:#1b5e20; }
+.chip.gray { background:#eef2f7; color:#334155; }
+
+/* section cards */
+.station-section{
+  background:#fff; border:1px solid var(--border); border-radius:var(--radius);
+  box-shadow: var(--shadow);
+  margin:12px 0; overflow:hidden;
+}
+.station-section h3{
+  margin:0; padding:12px 14px; background:#f8fafc; border-bottom:1px solid var(--border);
+  font-size:14px; font-weight:600;
+}
+.station-section table{ width:100%; border-collapse:collapse; }
+.station-section th, .station-section td{
+  text-align:left; font-size:13px; padding:9px 14px; border-bottom:1px solid var(--border);
+}
+.station-section tr:last-child th, .station-section tr:last-child td{ border-bottom:0; }
+
+.actions{ display:flex; gap:8px; margin-top:12px; }
+.actions .btn{ height:38px; padding:0 14px; }
+
+/* ---------- Filter Drawer */
+.filter-drawer{
+  position:fixed; top:64px; right:-360px; width:360px;
+  height:calc(100vh - 64px);
+  background:#fff; border-left:1px solid var(--border);
+  box-shadow: var(--shadow);
+  transition:right .25s ease;
+  padding:12px; overflow:auto; z-index:50;
+}
+.filter-drawer.open{ right:0; }
+.filter-drawer h3{ margin:6px 6px 10px; font-size:14px; }
+
+/* ---------- Hide legacy UI bits */
+#listContainer{ display:none !important; }
+#btnDataNuke{ position:fixed; bottom:10px; left:10px; width:10px; height:10px; opacity:.05; border:0; background:transparent; }
+
+/* ---------- Small helpers */
+.dropdown, .dropdown-content{ display:none; }
+a { color: inherit; text-decoration: none; }

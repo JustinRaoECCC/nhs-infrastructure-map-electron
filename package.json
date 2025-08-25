@@ -1,0 +1,31 @@
+{
+  "name": "nhs-infrastructure-map-electron",
+  "version": "1.0.0",
+  "productName": "NHS Infrastructure Map",
+  "description": "Desktop app for visualising and managing infrastructure data.",
+  "private": true,
+  "main": "main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "postinstall": "node scripts/copy-leaflet.js && electron-builder install-app-deps"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "better-sqlite3": "^12.2.0",
+    "exceljs": "^4.4.0",
+    "fs-extra": "^11.3.1",
+    "leaflet": "^1.9.4",
+    "lodash": "^4.17.21",
+    "papaparse": "^5.5.3"
+  },
+  "devDependencies": {
+    "electron": "^37.3.1",
+    "electron-builder": "^24.13.3"
+  }
+}

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>NHS Infrastructure Map</title>
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- App styles -->
+  <link rel="stylesheet" href="css/style.css" />
+  <!-- Vendored Leaflet (guaranteed path in Electron) -->
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
+</head>
+<body>
+  <!-- Leaflet loader + diagnostics -->
+  <script>
+    (function () {
+      // try local bundle first (works offline in Electron)
+      var s = document.createElement('script');
+      s.src = 'vendor/leaflet/leaflet.js';
+      s.onload = function(){ console.log('[leaflet] loaded from vendor'); };
+      s.onerror = function(){
+        console.warn('[leaflet] vendor load failed, switching to CDN');
+        var l = document.createElement('link');
+        l.rel = 'stylesheet'; l.href = 'https://unpkg.com/leaflet/dist/leaflet.css';
+        document.head.appendChild(l);
+        var cdn = document.createElement('script');
+        cdn.src = 'https://unpkg.com/leaflet/dist/leaflet.js';
+        cdn.onload = function(){ console.log('[leaflet] loaded from CDN'); };
+        cdn.onerror = function(){ console.error('[leaflet] CDN load failed'); };
+        document.head.appendChild(cdn);
+      };
+      document.head.appendChild(s);
+    })();
+  </script>
+
+  <div class="app-container">
+    <!-- Top Bar -->
+    <header class="title-bar">
+      <div class="brand-area">
+        <span style="font-weight:700;">Infrastructure Assets</span>
+      </div>
+      <div class="controls-row">
+        <div class="search">
+          <input type="search" id="searchAssets" placeholder="Search assets…" />
+        </div>
+        <button id="btnGrid" class="btn" title="Toggle layout">☰</button>
+        <button id="btnFilter" class="btn" title="Open filters">Filter</button>
+      </div>
+    </header>
+
+    <div class="main-view-wrapper">
+      <div class="main-content">
+        <!-- Left Nav -->
+        <aside class="left-panel">
+          <div class="brand">Asset Manager</div>
+
+          <div class="nav-section">
+            <h2>Navigation</h2>
+            <ul class="nav-list">
+              <li class="nav-item active" id="navMap">🗺️ <span>Map View</span></li>
+              <li class="nav-item" id="navList">📋 <span>List View</span></li>
+              <li class="nav-item" id="navDocs">📄 <span>All Documents</span></li>
+            </ul>
+          </div>
+
+          <div class="nav-section">
+            <h2>Projects</h2>
+            <ul class="nav-list">
+              <li class="nav-item" id="navNewCompany">＋ New Company</li>
+            </ul>
+          </div>
+
+          <div class="footer">
+            <ul class="nav-list">
+              <li class="nav-item">⚙ Settings</li>
+              <li class="nav-item">👤 Users</li>
+              <li class="nav-item">⏻ Logout</li>
+            </ul>
+          </div>
+        </aside>
+
+        <!-- Center Map -->
+        <div class="map-container" id="mapContainer">
+          <div id="map" aria-label="Map"></div>
+        </div>
+
+        <!-- Right Panel -->
+        <aside class="right-panel" id="rightPanel">
+          <div class="station-toolbar">
+            <button id="btnImportDataGlobal" class="btn">Import Data</button>
+            <input id="fileImportDataGlobal" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none" />
+          </div>
+
+          <div class="chips"></div>
+
+          <h2>Station Details</h2>
+          <div id="station-details">
+            <p><em>Click a pin to see details</em></p>
+          </div>
+
+          <div class="actions"></div>
+        </aside>
+      </div>
+    </div>
+
+    <!-- Slide-Out Filter Drawer -->
+    <div id="filterDrawer" class="filter-drawer">
+      <h3>Filters</h3>
+      <div id="filterTree"></div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script>window.L_NO_TOUCH=false; window.L_DISABLE_3D=true;</script>
+  <script src="js/filters.js"></script>
+  <script src="js/map_view.js"></script>
+  <script src="js/list_view.js"></script>
+  <script src="js/station.js"></script>
+  <!-- If Leaflet still missing, show banner -->
+  <script>
+    setTimeout(function(){
+      if (!window.L) {
+        var warn = document.createElement('div');
+        warn.textContent = 'Leaflet failed to load (checked vendor + CDN).';
+        warn.style.cssText = 'position:fixed;top:64px;left:0;right:0;background:#fee2e2;color:#991b1b;padding:8px 12px;z-index:99999;';
+        document.body.appendChild(warn);
+        console.error('[leaflet] not available; verify frontend/vendor/leaflet exists or network to CDN.');
+      }
+    }, 400);
+  </script>
+  <script>
+    (function(){
+      const drawer = document.getElementById('filterDrawer');
+      const btn = document.getElementById('btnFilter');
+      if (btn && drawer) btn.addEventListener('click', () => {
+        drawer.classList.toggle('open');
+      });
+    })();
+  </script>
+</body>
+</html>
