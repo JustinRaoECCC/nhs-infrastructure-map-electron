@@ -2,6 +2,7 @@
 const path = require('path');
 let ExcelJS = null;
 const { readJSON, writeJSON } = require('./utils/fs_utils');
+const lookupsRepo = require('./lookups_repo');
 
 const STATE_PATH = path.join(__dirname, '..', 'data', 'app_state.json');
 let _state = null;
@@ -21,13 +22,6 @@ function hashColor(str) {
   let h = 0; for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0;
   const hue = Math.abs(h) % 360;
   return `hsl(${hue}, 70%, 45%)`;
-}
-function colorFor(station, colors) {
-  const loc = station.province || station.location;
-  const at  = station.asset_type || 'Unknown';
-  const byLoc = (colors.byLocation?.[loc] || {})[at];
-  const global = (colors.global || {})[at];
-  return byLoc || global || hashColor(`${loc}:${at}`);
 }
 
 /**
@@ -69,55 +63,87 @@ function sheetToObjects(worksheet) {
 // ─── Public API ────────────────────────────────────────────────────────────
 async function getStationData() {
   const s = loadState();
-  return (s.stations || []).map(st => ({ ...st, color: colorFor(st, s.colors || {}) }));
+  const rows = s.stations || [];
+  const out = [];
+  for (const st of rows) {
+    const loc = st.province || st.location || '';
+    const at  = st.asset_type || 'Unknown';
+    let color = null;
+    try {
+      // prefer per-location color; then global; then hash
+      color = await lookupsRepo.getAssetTypeColorForLocation(at, loc)
+           || await lookupsRepo.getAssetTypeColor(at);
+    } catch (_) {}
+    out.push({ ...st, color: color || hashColor(`${loc}:${at}`) });
+  }
+  return out;
 }
 
 async function getActiveCompanies() {
+  // Excel lookups are the source of truth; fall back to legacy only if empty.
+  try {
+    await lookupsRepo.ensureLookupsReady();
+    const fromXlsx = await lookupsRepo.getActiveCompanies();
+    if (fromXlsx && fromXlsx.length) return fromXlsx;
+  } catch (e) {
+    console.error('[lookups] getActiveCompanies failed:', e);
+  }
   const s = loadState();
-  return s.companies && s.companies.length ? s.companies : ['NHS'];
+  return (s.companies && s.companies.length) ? s.companies : ['NHS'];
 }
 
 async function getLocationsForCompany(_company) {
+  try {
+    await lookupsRepo.ensureLookupsReady();
+    const fromXlsx = await lookupsRepo.getLocationsForCompany(_company);
+    if (fromXlsx && fromXlsx.length) return fromXlsx;
+  } catch (e) {
+    console.error('[lookups] getLocationsForCompany failed:', e);
+  }
+  // Legacy fallback: infer from station data (unscoped by company)
   const s = loadState();
   const locs = new Set();
   (s.stations || []).forEach(st => { if (st.province) locs.add(st.province); });
-  return Array.from(locs).sort();
+  return Array.from(locs).sort((a,b) => a.localeCompare(b));
 }
 
 async function getAssetTypesForLocation(_company, loc) {
+  try {
+    await lookupsRepo.ensureLookupsReady();
+    const fromXlsx = await lookupsRepo.getAssetTypesForLocation(loc);
+    if (fromXlsx && fromXlsx.length) return fromXlsx;
+  } catch (e) {
+    console.error('[lookups] getAssetTypesForLocation failed:', e);
+  }
+  // Legacy fallback: infer from station data
   const s = loadState();
   const ats = new Set();
   (s.stations || []).forEach(st => {
     if ((st.province || st.location) === loc && st.asset_type) ats.add(st.asset_type);
   });
-  return Array.from(ats).sort();
+  return Array.from(ats).sort((a,b) => a.localeCompare(b));
 }
 
 // Colors (global)
 async function getAssetTypeColor(assetType) {
-  const s = loadState();
-  return s.colors?.global?.[assetType] || null;
+  try {
+    await lookupsRepo.ensureLookupsReady();
+    return await lookupsRepo.getAssetTypeColor(assetType);
+  } catch(_) { return null; }
 }
 async function setAssetTypeColor(assetType, color) {
-  const s = loadState();
-  s.colors.global = s.colors.global || {};
-  s.colors.global[assetType] = color;
-  saveState(s);
-  return { success: true };
+  await lookupsRepo.ensureLookupsReady();
+  return await lookupsRepo.setAssetTypeColor(assetType, color);
 }
 
 // Colors (per location)
 async function getAssetTypeColorForLocation(assetType, loc) {
-  const s = loadState();
-  return s.colors?.byLocation?.[loc]?.[assetType] || null;
+  await lookupsRepo.ensureLookupsReady();
+  return await lookupsRepo.getAssetTypeColorForLocation(assetType, loc);
 }
 async function setAssetTypeColorForLocation(assetType, loc, color) {
-  const s = loadState();
-  s.colors.byLocation = s.colors.byLocation || {};
-  s.colors.byLocation[loc] = s.colors.byLocation[loc] || {};
-  s.colors.byLocation[loc][assetType] = color;
-  saveState(s);
-  return { success: true };
+  await lookupsRepo.ensureLookupsReady();
+  return await lookupsRepo.setAssetTypeColorForLocation(assetType, loc, color);
 }
 
 /**
@@ -193,4 +219,14 @@ module.exports = {
   getAssetTypeColorForLocation,
   setAssetTypeColorForLocation,
   importMultipleStations,
+  upsertCompany: lookupsRepo.upsertCompany,
+  upsertLocation: lookupsRepo.upsertLocation,
+  upsertAssetType: lookupsRepo.upsertAssetType,
+  // colors (lookups-backed)
+  setAssetTypeColorForLocation,
+  getAssetTypeColorForLocation,
+  setAssetTypeColor,
+  getAssetTypeColor,
+  // misc
+  invalidateStationCache: () => { _state = null; },
 };

@@ -86,6 +86,9 @@
           <div id="map" aria-label="Map"></div>
         </div>
 
+        <!-- Add Infra / New Company (content loaded from add_infra.html) -->
+        <div id="addInfraContainer" style="display:none;"></div>
+
         <!-- Right Panel -->
         <aside class="right-panel" id="rightPanel">
           <div class="station-toolbar">
@@ -107,8 +110,15 @@
 
     <!-- Slide-Out Filter Drawer -->
     <div id="filterDrawer" class="filter-drawer">
-      <h3>Filters</h3>
-      <div id="filterTree"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem">
+        <h3 style="margin:0">Filters</h3>
+        <div class="filter-actions">
+          <button id="btnAddCompany" class="btn btn-ghost" title="Add company">+ Company</button>
+          <button id="btnAddLocation" class="btn btn-ghost" title="Add location">+ Location</button>
+          <button id="btnAddAssetType" class="btn btn-ghost" title="Add asset">+ Asset</button>
+        </div>
+      </div>
+      <div id="filterTree" style="margin-top:.5rem"></div>
     </div>
   </div>
 
@@ -117,6 +127,7 @@
   <script src="js/filters.js"></script>
   <script src="js/map_view.js"></script>
   <script src="js/list_view.js"></script>
+  <script src="js/add_infra.js"></script>
   <script src="js/station.js"></script>
   <!-- If Leaflet still missing, show banner -->
   <script>

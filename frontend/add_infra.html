@@ -1,0 +1,86 @@
+<!-- frontend/add_infra.html -->
+<div id="addInfraPage" class="wizard-container">
+  <div class="wizard-header">
+    <ul class="wizard-steps" id="wizSteps">
+      <li class="step active"><span class="step-dot">1</span><span>Create Company</span></li>
+      <li class="step"><span class="step-dot">2</span><span>Create Project</span></li>
+      <li class="step"><span class="step-dot">3</span><span>Create Assets</span></li>
+      <li class="step"><span class="step-dot">4</span><span>Select data</span></li>
+    </ul>
+  </div>
+
+  <div class="wizard-body">
+    <!-- STEP 1: Create Company -->
+    <form class="wizard-step active" id="stepCompany" novalidate>
+      <h3>Create Company</h3>
+      <div class="form-row">
+        <label>Company Name*</label>
+        <input type="text" id="companyName" placeholder="Company name..." />
+      </div>
+      <div class="form-row">
+        <label>Company Description</label>
+        <textarea id="companyDesc" rows="6" placeholder=""></textarea>
+      </div>
+      <div class="form-row">
+        <label>Company Email*</label>
+        <input type="email" id="companyEmail" placeholder="" />
+      </div>
+    </form>
+
+    <!-- STEP 2: Create Project -->
+    <form class="wizard-step" id="stepProject" novalidate>
+      <h3>Create Project</h3>
+      <div class="form-row">
+        <label>Location</label>
+        <input type="text" id="projectName" placeholder="Location..." />
+      </div>
+      <div class="form-row">
+        <label>Excel File</label>
+        <div class="filepicker">
+          <input type="file" id="projectExcel" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+          <span id="projectExcelLabel">Select Excel File</span>
+        </div>
+      </div>
+    </form>
+
+    <!-- STEP 3: Create Assets -->
+    <form class="wizard-step" id="stepAssets" novalidate>
+      <h3>Create Assets</h3>
+      <div class="card">
+        <div class="card-title">Asset Creation Methods (Select all that apply)</div>
+        <div class="checklist">
+          <label class="chk">
+            <input type="checkbox" id="methodManual" disabled />
+            <span>Manual Creation</span>
+          </label>
+          <label class="chk">
+            <input type="checkbox" id="methodImport" checked />
+            <span>Import from Sheet</span>
+          </label>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Asset Name*</label>
+        <input type="text" id="assetName" placeholder="Enter asset name" />
+      </div>
+      <div class="form-row">
+        <label>Select sheet</label>
+        <select id="sheetSelect" disabled>
+          <option>Select Excel file in previous step</option>
+        </select>
+      </div>
+    </form>
+
+    <!-- STEP 4: Select data -->
+    <div class="wizard-step" id="stepSelectData">
+      <h3>Select data</h3>
+      <p style="opacity:.7">Coming soon — not implemented yet.</p>
+    </div>
+  </div>
+
+  <div class="wizard-footer">
+    <button id="wizBack" class="btn btn-ghost" disabled>BACK</button>
+    <button id="wizCancel" class="btn btn-ghost">CANCEL</button>
+    <button id="wizNext" class="btn btn-primary">NEXT</button>
+  </div>
+</div>

@@ -1,31 +1,25 @@
-// preload.js
+// (no-op or existing code)
 const { contextBridge, ipcRenderer } = require('electron');
-
-// simple in-preload cache so we don't spam disk
-let stationCache = null;
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Stations
-  async getStationData() {
-    if (!stationCache) stationCache = await ipcRenderer.invoke('getStationData');
-    return stationCache;
-  },
-  invalidateStationCache() { stationCache = null; },
+  getStationData:            () => ipcRenderer.invoke('stations:get'),
+  importMultipleStations:    (b64) => ipcRenderer.invoke('stations:import', b64),
+  invalidateStationCache:    () => ipcRenderer.invoke('stations:invalidate'),
 
-  // Import
-  importMultipleStations: (b64) => ipcRenderer.invoke('importMultipleStations', b64),
+  // Lookups (reads)
+  getActiveCompanies:        () => ipcRenderer.invoke('lookups:getActiveCompanies'),
+  getLocationsForCompany:    (company) => ipcRenderer.invoke('lookups:getLocationsForCompany', company),
+  getAssetTypesForLocation:  (company, location) => ipcRenderer.invoke('lookups:getAssetTypesForLocation', company, location),
 
-  // Filters / Lookups
-  getActiveCompanies:       ()                 => ipcRenderer.invoke('getActiveCompanies'),
-  getLocationsForCompany:   (company)          => ipcRenderer.invoke('getLocationsForCompany', company),
-  getAssetTypesForLocation: (company, loc)     => ipcRenderer.invoke('getAssetTypesForLocation', { company, loc }),
+  // Lookups (writes)
+  upsertCompany:             (name, active=true) => ipcRenderer.invoke('lookups:upsertCompany', name, active),
+  upsertLocation:            (location, company) => ipcRenderer.invoke('lookups:upsertLocation', location, company),
+  upsertAssetType:           (assetType, location) => ipcRenderer.invoke('lookups:upsertAssetType', assetType, location),
 
-  // Colors (global)
-  getAssetTypeColor:  (assetType)              => ipcRenderer.invoke('getAssetTypeColor', assetType),
-  setAssetTypeColor:  (assetType, color)       => ipcRenderer.invoke('setAssetTypeColor', { assetType, color }),
-
-  // Colors (per location)
-  getAssetTypeColorForLocation: (assetType, loc)    => ipcRenderer.invoke('getAssetTypeColorForLocation', { assetType, loc }),
-  setAssetTypeColorForLocation: ({ assetType, loc, color }) =>
-      ipcRenderer.invoke('setAssetTypeColorForLocation', { assetType, loc, color }),
+  // Colors
+  getAssetTypeColor:         (assetType) => ipcRenderer.invoke('lookups:getAssetTypeColor', assetType),
+  setAssetTypeColor:         (assetType, color) => ipcRenderer.invoke('lookups:setAssetTypeColor', assetType, color),
+  getAssetTypeColorForLocation: (assetType, location) => ipcRenderer.invoke('lookups:getAssetTypeColorForLocation', assetType, location),
+  setAssetTypeColorForLocation: (assetType, location, color) => ipcRenderer.invoke('lookups:setAssetTypeColorForLocation', assetType, location, color),
 });

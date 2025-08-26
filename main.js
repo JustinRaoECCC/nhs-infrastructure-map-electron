@@ -1,57 +1,51 @@
-// main.js
-
-process.env.ELECTRON_DISABLE_SANDBOX = 'true';
-process.env.ELECTRON_ENABLE_LOGGING = 'true';
-
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
-let backend = null;
-const { ensureLeafletVendor } = require('./backend/vendor_bootstrap');
-app.commandLine.appendSwitch('log-level', '2');
+const backend = require('./backend/app');
+const lookups = require('./backend/lookups_repo');
 
-app.disableHardwareAcceleration();
-
-function createWindow () {
+async function createWindow () {
   const win = new BrowserWindow({
-    width: 1500,
-    height: 900,
+    width: 1280,
+    height: 800,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
     }
   });
-
-  win.loadFile(path.join(__dirname, 'frontend', 'index.html'));
+  await lookups.ensureLookupsReady();
+  await win.loadFile(path.join(__dirname, 'frontend', 'index.html'));
 }
 
-app.whenReady().then(async () => {
-  try {
-    const res = await ensureLeafletVendor();
-    if (!res.ok) console.warn('[vendor] Leaflet bootstrap did not complete:', res);
-    else console.log('[vendor] Leaflet ready at', res.vendorDir);
-  } catch (e) {
-    console.warn('[vendor] ensureLeafletVendor failed:', e);
-  }
-
-  backend = require('./backend/app');
-  // IPC wiring (map + list needs)
-  ipcMain.handle('getStationData',              () => backend.getStationData());
-  ipcMain.handle('importMultipleStations',      (_e, b64) => backend.importMultipleStations(b64));
-
-  ipcMain.handle('getActiveCompanies',          () => backend.getActiveCompanies());
-  ipcMain.handle('getLocationsForCompany',      (_e, company) => backend.getLocationsForCompany(company));
-  ipcMain.handle('getAssetTypesForLocation',    (_e, { company, loc }) => backend.getAssetTypesForLocation(company, loc));
-
-  ipcMain.handle('getAssetTypeColor',           (_e, at) => backend.getAssetTypeColor(at));
-  ipcMain.handle('setAssetTypeColor',           (_e, { assetType, color }) => backend.setAssetTypeColor(assetType, color));
-  ipcMain.handle('getAssetTypeColorForLocation',(_e, { assetType, loc }) => backend.getAssetTypeColorForLocation(assetType, loc));
-  ipcMain.handle('setAssetTypeColorForLocation',(_e, { assetType, loc, color }) => backend.setAssetTypeColorForLocation(assetType, loc, color));
-
+app.whenReady().then(() => {
   createWindow();
 
-  app.on('activate', () => {
+  app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+
+app.on('window-all-closed', function () {
+  if (process.platform !== 'darwin') app.quit();
+});
+
+// ─── IPC: Stations ─────────────────────────────────────────────────────────
+ipcMain.handle('stations:get', async () => backend.getStationData());
+ipcMain.handle('stations:import', async (_evt, b64) => backend.importMultipleStations(b64));
+ipcMain.handle('stations:invalidate', async () => backend.invalidateStationCache());
+
+// ─── IPC: Lookups (reads) ──────────────────────────────────────────────────
+ipcMain.handle('lookups:getActiveCompanies', async () => backend.getActiveCompanies());
+ipcMain.handle('lookups:getLocationsForCompany', async (_evt, company) => backend.getLocationsForCompany(company));
+ipcMain.handle('lookups:getAssetTypesForLocation', async (_evt, company, location) => backend.getAssetTypesForLocation(company, location));
+
+// ─── IPC: Lookups (writes) ─────────────────────────────────────────────────
+ipcMain.handle('lookups:upsertCompany', async (_evt, name, active) => backend.upsertCompany(name, !!active));
+ipcMain.handle('lookups:upsertLocation', async (_evt, location, company) => backend.upsertLocation(location, company));
+ipcMain.handle('lookups:upsertAssetType', async (_evt, assetType, location) => backend.upsertAssetType(assetType, location));
+
+// ─── IPC: Colors ───────────────────────────────────────────────────────────
+ipcMain.handle('lookups:getAssetTypeColor', async (_evt, assetType) => backend.getAssetTypeColor(assetType));
+ipcMain.handle('lookups:setAssetTypeColor', async (_evt, assetType, color) => backend.setAssetTypeColor(assetType, color));
+ipcMain.handle('lookups:getAssetTypeColorForLocation', async (_evt, assetType, location) => backend.getAssetTypeColorForLocation(assetType, location));
+ipcMain.handle('lookups:setAssetTypeColorForLocation', async (_evt, assetType, location, color) => backend.setAssetTypeColorForLocation(assetType, location, color));

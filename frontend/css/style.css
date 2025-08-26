@@ -205,3 +205,134 @@ html, body, .app-container, .main-view-wrapper, .main-content { min-height: 100v
 /* ---------- Small helpers */
 .dropdown, .dropdown-content{ display:none; }
 a { color: inherit; text-decoration: none; }
+/* ===== Add-Infra Wizard (Create Company / Project / Assets) ===== */
+/* Make the injected wizard container occupy the full content area
+   (everything except the left sidebar column). Assumes .main-content
+   is a 3-col grid: [left-nav][main][right-panel]. */
+#addInfraContainer {
+  grid-column: 2 / 4;   /* center + right columns */
+  width: 100%;
+  height: 100%;
+  display: none;        /* shown by JS when the wizard opens */
+}
+.wizard-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 12px 16px 20px;
+  background: #f7f8fb;
+  width: 100%;
+  min-height: calc(100vh - 0px);
+}
+.wizard-header {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin: 0;
+}
+.wizard-steps {
+  display: flex;
+  list-style: none;
+  gap: 34px;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+}
+.wizard-steps .step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #6b7280;
+  font-weight: 600;
+}
+.wizard-steps .step .step-dot {
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 2px solid #d1d5db;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 700;
+  background: #fff;
+}
+.wizard-steps .step.active .step-dot {
+  border-color: #10b981; color: #10b981;
+}
+.wizard-steps .step.done .step-dot {
+  background: #10b981; color: #fff; border-color: #10b981;
+}
+.wizard-steps .step.active span:last-child { color: #111827; }
+
+.wizard-body {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 18px 18px 10px;
+  margin-top: 8px;
+}
+.wizard-step { display: none; }
+.wizard-step.active { display: block; }
+.wizard-step h3 { margin: 0 0 18px 0; font-size: 18px; }
+
+.form-row { display: flex; flex-direction: column; margin-bottom: 16px; }
+.form-row label { font-size: 14px; color: #374151; margin-bottom: 8px; }
+.form-row input[type="text"],
+.form-row input[type="email"],
+.form-row input[type="number"],
+.form-row textarea,
+.form-row select {
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 14px;
+  background: #fff;
+}
+.form-row textarea { resize: vertical; }
+
+.filepicker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  border: 1px dashed #d1d5db;
+  border-radius: 6px;
+  padding: 10px 12px;
+  cursor: pointer;
+  gap: 8px;
+  width: 340px;
+}
+.filepicker input[type="file"] {
+  position: absolute; inset: 0;
+  opacity: 0; cursor: pointer;
+}
+#projectExcelLabel { color:#111827; }
+
+.card {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 16px;
+  background:#fff;
+}
+.card-title { font-weight: 600; margin-bottom: 10px; }
+.checklist { display: grid; gap: 10px; }
+.chk { display: flex; align-items: center; gap: 8px; color:#111827; }
+.chk input[type="checkbox"]:disabled  span { opacity:.6; }
+
+.wizard-footer {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+.btn {
+  appearance: none;
+  border: 1px solid #d1d5db;
+  background: #fff; color: #111827;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-weight: 600; cursor: pointer;
+}
+.btn:disabled { opacity:.5; cursor: default; }
+.btn-ghost { background:#f3f4f6; }
+.btn-primary {
+  border-color: #10b981;
+  background: #10b981;
+  color: #fff;
+}
