@@ -9,6 +9,8 @@ let backend = null;
 const { ensureLeafletVendor } = require('./backend/vendor_bootstrap');
 app.commandLine.appendSwitch('log-level', '2');
 
+app.disableHardwareAcceleration();
+
 function createWindow () {
   const win = new BrowserWindow({
     width: 1500,
