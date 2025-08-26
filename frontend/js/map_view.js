@@ -21,6 +21,7 @@ function isFiniteCoord(v) {
 // ────────────────────────────────────────────────────────────────────────────
 let map;                 // Leaflet map
 let markersLayer;        // Layer group for pins
+let canvasRenderer;      // Canvas renderer instance
 let mapStationData = []; // in-memory copy for quick redraws
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -42,7 +43,7 @@ function initMap() {
   const ensureColumnWidth = () => {
     const w = mapCol.offsetWidth;
     const h = mapCol.offsetHeight;
-    console.log('[map] container dims (pre-init):', { width: w, height: h });
+    console.log('[map] container dims (pre-init): ' + JSON.stringify({ width: w, height: h }));
     if (w === 0) {
       console.warn('[map] map column width is 0 — forcing min widths');
       mapCol.style.minWidth = '400px';
@@ -61,7 +62,7 @@ function initMap() {
   }).setView([54.5, -119], 5);
 
   // Basemap
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; OpenStreetMap contributors',
     noWrap: true
   }).addTo(map);
@@ -80,6 +81,7 @@ function initMap() {
   })();
 
   // Markers layer
+  canvasRenderer = L.canvas({ padding: 0.5 });
   markersLayer = L.layerGroup().addTo(map);
   console.log('[map] markers layer ready');
 
@@ -121,13 +123,6 @@ function initMap() {
     if (container) container.innerHTML = `<p><em>Click a pin to see details</em></p>`;
   });
 
-  // Diagnostics
-  console.log('[map] post-init dims:', {
-    width: mapEl.offsetWidth,
-    height: mapEl.offsetHeight,
-    colWidth: mapCol.offsetWidth
-  });
-
   map.on('tileload', () => {
     // Mini Pekka approves.
   });
@@ -156,14 +151,48 @@ function getActiveFilters() {
 // ────────────────────────────────────────────────────────────────────────────
 // Icons & station details
 // ────────────────────────────────────────────────────────────────────────────
-function createColoredIcon(color) {
-  return L.divIcon({
-    className: 'custom-div-icon',
-    html: `<span class="marker-dot" style="--marker-color:${color || '#4b5563'}"></span>`,
-    iconSize: [12, 12],
-    iconAnchor: [6, 6]
+// Pretty tri-ring pin: thin BLACK outer ring -> slightly thicker WHITE ring -> COLORED core
+// Returns the top (interactive) inner marker so we can bind popups/clicks.
+function addTriRingMarker(lat, lon, color) {
+  const rCore = 4;                 // center radius
+  const ringBlack = 1;     // very thin black outline
+  const ringWhite = 1;     // slightly thicker white ring than black
+
+  // Outer black ring (no fill)
+  const outer = L.circleMarker([lat, lon], {
+    renderer: canvasRenderer,
+    radius: rCore + ringWhite + (ringBlack * 0.5),
+    color: '#000',
+    weight: ringBlack,
+    fill: false
   });
+
+  // Inner white ring (no fill)
+  const mid = L.circleMarker([lat, lon], {
+    renderer: canvasRenderer,
+    radius: rCore + (ringWhite * 0.5),
+    color: '#fff',
+    weight: ringWhite,
+    fill: false
+  });
+
+  // Colored core (fill only)
+  const inner = L.circleMarker([lat, lon], {
+    renderer: canvasRenderer,
+    radius: rCore,
+    fill: true,
+    fillColor: color || '#4b5563',
+    fillOpacity: 1,
+    stroke: false
+  });
+
+  // Add all three; return the interactive top layer
+  outer.addTo(markersLayer);
+  mid.addTo(markersLayer);
+  inner.addTo(markersLayer);
+  return inner;
 }
+
 
 function showStationDetails(stn) {
   const container = document.getElementById('station-details');
@@ -228,36 +257,43 @@ async function refreshMarkers() {
     markersLayer.clearLayers();
     const { locations, assetTypes } = getActiveFilters();
 
-    (mapStationData || []).forEach(stn => {
-      const lat = parseFloat(stn.lat);
-      const lon = parseFloat(stn.lon);
-      if (!isFiniteCoord(lat) || !isFiniteCoord(lon)) return;
+    const rows = mapStationData || [];
+    const batchSize = 1000; // yield every N to keep UI responsive
+    for (let i = 0; i < rows.length; i += batchSize) {
+      const batch = rows.slice(i, i + batchSize);
+      batch.forEach(stn => {
+        const lat = parseFloat(stn.lat);
+        const lon = parseFloat(stn.lon);
+        if (!isFiniteCoord(lat) || !isFiniteCoord(lon)) return;
 
-      if (locations.length && !locations.includes(stn.province)) return;
-      if (assetTypes.length && !assetTypes.includes(stn.asset_type)) return;
+        if (locations.length && !locations.includes(stn.province)) return;
+        if (assetTypes.length && !assetTypes.includes(stn.asset_type)) return;
 
-      const marker = L.marker([lat, lon], { icon: createColoredIcon(stn.color) })
-        .addTo(markersLayer)
-        .bindPopup(
+        const marker = addTriRingMarker(lat, lon, stn.color);
+        marker.bindPopup(
           `<a href="#" class="popup-link" data-id="${stn.station_id}">${stn.name || stn.station_id}</a>`
         );
 
-      marker.on('click', (e) => {
-        if (e.originalEvent && e.originalEvent.target.tagName === 'A') return;
-        marker.openPopup();
-        showStationDetails(stn);
-      });
+        marker.on('click', (e) => {
+          if (e.originalEvent && e.originalEvent.target.tagName === 'A') return;
+          marker.openPopup();
+          showStationDetails(stn);
+        });
 
-      marker.on('popupopen', () => {
-        const link = document.querySelector('.leaflet-popup a.popup-link');
-        if (link) {
-          link.addEventListener('click', (ev) => {
-            ev.preventDefault();
-            if (window.loadStationPage) window.loadStationPage(stn.station_id);
-          }, { once: true });
-        }
+        marker.on('popupopen', () => {
+          const link = document.querySelector('.leaflet-popup a.popup-link');
+          if (link) {
+            link.addEventListener('click', (ev) => {
+              ev.preventDefault();
+              if (window.loadStationPage) window.loadStationPage(stn.station_id);
+            }, { once: true });
+          }
+        });
       });
-    });
+      // yield to the renderer so first paint isn’t blocked
+      /* eslint-disable no-await-in-loop */
+      await new Promise(r => setTimeout(r, 0));
+    }
 
   } catch (err) {
     console.error('[map_view] refreshMarkers failed:', err);

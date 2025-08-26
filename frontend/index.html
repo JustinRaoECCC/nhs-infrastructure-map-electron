@@ -7,29 +7,31 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <!-- App styles -->
   <link rel="stylesheet" href="css/style.css" />
-  <!-- Vendored Leaflet (guaranteed path in Electron) -->
-  <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
+  <!-- Leaflet via CDN (CSS must load first) -->
+  <link rel="stylesheet" href="assets/vendor/leaflet-1.9.4/leaflet.css" />
 </head>
 <body>
-  <!-- Leaflet loader + diagnostics -->
+  <!-- Leaflet (local, non-blocking) -->
+  <script defer src="assets/vendor/leaflet-1.9.4/leaflet.js"></script>
   <script>
     (function () {
-      // try local bundle first (works offline in Electron)
-      var s = document.createElement('script');
-      s.src = 'vendor/leaflet/leaflet.js';
-      s.onload = function(){ console.log('[leaflet] loaded from vendor'); };
-      s.onerror = function(){
-        console.warn('[leaflet] vendor load failed, switching to CDN');
-        var l = document.createElement('link');
-        l.rel = 'stylesheet'; l.href = 'https://unpkg.com/leaflet/dist/leaflet.css';
-        document.head.appendChild(l);
-        var cdn = document.createElement('script');
-        cdn.src = 'https://unpkg.com/leaflet/dist/leaflet.js';
-        cdn.onload = function(){ console.log('[leaflet] loaded from CDN'); };
-        cdn.onerror = function(){ console.error('[leaflet] CDN load failed'); };
-        document.head.appendChild(cdn);
-      };
-      document.head.appendChild(s);
+      function injectCdn() {
+        if (window.L) return; // already loaded
+        var s = document.createElement('script');
+        s.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+        s.defer = true;
+        s.crossOrigin = 'anonymous';
+        document.head.appendChild(s);
+        // also ensure CSS if local CSS missing
+        var css = document.createElement('link');
+        css.rel = 'stylesheet';
+        css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+        document.head.appendChild(css);
+      }
+      addEventListener('DOMContentLoaded', function () {
+        // give defer script a moment, then check
+        setTimeout(injectCdn, 60);
+      });
     })();
   </script>
 
@@ -118,16 +120,18 @@
   <script src="js/station.js"></script>
   <!-- If Leaflet still missing, show banner -->
   <script>
+    // gentler warn: give CDN time to load
     setTimeout(function(){
       if (!window.L) {
         var warn = document.createElement('div');
-        warn.textContent = 'Leaflet failed to load (checked vendor + CDN).';
+        warn.textContent = 'Leaflet failed to load from CDN.';
         warn.style.cssText = 'position:fixed;top:64px;left:0;right:0;background:#fee2e2;color:#991b1b;padding:8px 12px;z-index:99999;';
         document.body.appendChild(warn);
-        console.error('[leaflet] not available; verify frontend/vendor/leaflet exists or network to CDN.');
+        console.error('[leaflet] not available; check network to unpkg.com');
       }
-    }, 400);
+    }, 1500);
   </script>
+
   <script>
     (function(){
       const drawer = document.getElementById('filterDrawer');

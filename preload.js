@@ -26,6 +26,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Colors (per location)
   getAssetTypeColorForLocation: (assetType, loc)    => ipcRenderer.invoke('getAssetTypeColorForLocation', { assetType, loc }),
-  setAssetTypeColorForLocation: ({assetType, loc, color}) =>
+  setAssetTypeColorForLocation: ({ assetType, loc, color }) =>
       ipcRenderer.invoke('setAssetTypeColorForLocation', { assetType, loc, color }),
 });

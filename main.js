@@ -1,7 +1,13 @@
 // main.js
+
+process.env.ELECTRON_DISABLE_SANDBOX = 'true';
+process.env.ELECTRON_ENABLE_LOGGING = 'true';
+
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
-const backend = require('./backend/app');
+let backend = null;
+const { ensureLeafletVendor } = require('./backend/vendor_bootstrap');
+app.commandLine.appendSwitch('log-level', '2');
 
 function createWindow () {
   const win = new BrowserWindow({
@@ -17,7 +23,16 @@ function createWindow () {
   win.loadFile(path.join(__dirname, 'frontend', 'index.html'));
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  try {
+    const res = await ensureLeafletVendor();
+    if (!res.ok) console.warn('[vendor] Leaflet bootstrap did not complete:', res);
+    else console.log('[vendor] Leaflet ready at', res.vendorDir);
+  } catch (e) {
+    console.warn('[vendor] ensureLeafletVendor failed:', e);
+  }
+
+  backend = require('./backend/app');
   // IPC wiring (map + list needs)
   ipcMain.handle('getStationData',              () => backend.getStationData());
   ipcMain.handle('importMultipleStations',      (_e, b64) => backend.importMultipleStations(b64));

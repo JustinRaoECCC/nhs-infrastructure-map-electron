@@ -130,6 +130,7 @@ html, body, .app-container, .main-view-wrapper, .main-content { min-height: 100v
 
 /* Leaflet tweaks to match clean style */
 .leaflet-container{ font: inherit; }
+.leaflet-container img { max-width: none !important; }
 .leaflet-control-zoom a{
   border-radius:10px !important;
   box-shadow: var(--shadow);

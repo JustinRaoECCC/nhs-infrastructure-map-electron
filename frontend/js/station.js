@@ -12,6 +12,10 @@ async function loadStationPage(stationId) {
   const dashboardCont = document.getElementById('dashboardContentContainer');
 
   const resp = await fetch('station_specific.html');
+  if (!resp.ok) {
+    alert('Failed to load station detail view.');
+   return;
+  }
   const html = await resp.text();
   container.innerHTML = html;
 

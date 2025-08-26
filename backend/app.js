@@ -1,16 +1,20 @@
 // backend/app.js
 const path = require('path');
-const ExcelJS = require('exceljs');
+let ExcelJS = null;
 const { readJSON, writeJSON } = require('./utils/fs_utils');
 
 const STATE_PATH = path.join(__dirname, '..', 'data', 'app_state.json');
+let _state = null;
 
 // shape: { stations: [], colors: { global: {...}, byLocation: { [loc]: { [assetType]: "#hex" } } }, companies: [] }
 function loadState() {
-  const s = readJSON(STATE_PATH, null);
-  return s || { stations: [], colors: { global: {}, byLocation: {} }, companies: ['NHS'] };
+  if (_state) return _state;
+  const s = readJSON(STATE_PATH, null) ||
+            { stations: [], colors: { global: {}, byLocation: {} }, companies: ['NHS'] };
+  _state = s;
+  return s;
 }
-function saveState(s) { writeJSON(STATE_PATH, s); }
+function saveState(s) { _state = s; writeJSON(STATE_PATH, s); }
 
 // deterministic fallback color
 function hashColor(str) {
@@ -124,6 +128,7 @@ async function setAssetTypeColorForLocation(assetType, loc, color) {
  */
 async function importMultipleStations(b64) {
   try {
+    if (!ExcelJS) ExcelJS = require('exceljs');
     const buf = Buffer.from(b64, 'base64');
     const wb  = new ExcelJS.Workbook();
     await wb.xlsx.load(buf);
