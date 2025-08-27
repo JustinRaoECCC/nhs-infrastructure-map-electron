@@ -13,28 +13,6 @@
 <body>
   <!-- Leaflet (local, non-blocking) -->
   <script defer src="assets/vendor/leaflet-1.9.4/leaflet.js"></script>
-  <script>
-    (function () {
-      function injectCdn() {
-        if (window.L) return; // already loaded
-        var s = document.createElement('script');
-        s.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-        s.defer = true;
-        s.crossOrigin = 'anonymous';
-        document.head.appendChild(s);
-        // also ensure CSS if local CSS missing
-        var css = document.createElement('link');
-        css.rel = 'stylesheet';
-        css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-        document.head.appendChild(css);
-      }
-      addEventListener('DOMContentLoaded', function () {
-        // give defer script a moment, then check
-        setTimeout(injectCdn, 60);
-      });
-    })();
-  </script>
-
   <div class="app-container">
     <!-- Top Bar -->
     <header class="title-bar">
@@ -124,11 +102,11 @@
 
   <!-- Scripts -->
   <script>window.L_NO_TOUCH=false; window.L_DISABLE_3D=true;</script>
-  <script src="js/filters.js"></script>
-  <script src="js/map_view.js"></script>
-  <script src="js/list_view.js"></script>
-  <script src="js/add_infra.js"></script>
-  <script src="js/station.js"></script>
+  <script defer src="js/filters.js"></script>
+  <script defer src="js/map_view.js"></script>
+  <script defer src="js/list_view.js"></script>
+  <script defer src="js/add_infra.js"></script>
+  <script defer src="js/station.js"></script>
   <!-- If Leaflet still missing, show banner -->
   <script>
     // gentler warn: give CDN time to load

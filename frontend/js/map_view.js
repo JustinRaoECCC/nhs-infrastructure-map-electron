@@ -23,6 +23,9 @@ let map;                 // Leaflet map
 let markersLayer;        // Layer group for pins
 let canvasRenderer;      // Canvas renderer instance
 let mapStationData = []; // in-memory copy for quick redraws
+let FAST_BOOT = true;           // first couple seconds: simple pins, limited count
+const MAX_INITIAL_PINS = 800;   // tune for your dataset
+
 
 // ────────────────────────────────────────────────────────────────────────────
 // Init
@@ -61,12 +64,28 @@ function initMap() {
     zoomControl: true
   }).setView([54.5, -119], 5);
 
-  // Basemap
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; OpenStreetMap contributors',
-    noWrap: true
-  }).addTo(map);
-  console.log('[map] tile layer added');
+  // Basemap (retry once if network service restarts during init)
+  function addTiles() {
+    try {
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors',
+        noWrap: true
+      }).addTo(map);
+    } catch (e) {
+      console.warn('[map] tile layer add failed, retrying shortly…', e);
+      setTimeout(() => {
+        try {
+          L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors',
+            noWrap: true
+          }).addTo(map);
+        } catch (e2) {
+          console.error('[map] tile layer final failure', e2);
+        }
+      }, 500);
+    }
+  }
+  addTiles();
 
   // Grey outside maxBounds
   (function addGreyMask() {
@@ -154,27 +173,31 @@ function getActiveFilters() {
 // Pretty tri-ring pin: thin BLACK outer ring -> slightly thicker WHITE ring -> COLORED core
 // Returns the top (interactive) inner marker so we can bind popups/clicks.
 function addTriRingMarker(lat, lon, color) {
-  const rCore = 4;                 // center radius
+  const rCore = FAST_BOOT ? 3 : 4; // slightly smaller during fast boot
   const ringBlack = 1;     // very thin black outline
   const ringWhite = 1;     // slightly thicker white ring than black
 
   // Outer black ring (no fill)
-  const outer = L.circleMarker([lat, lon], {
-    renderer: canvasRenderer,
-    radius: rCore + ringWhite + (ringBlack * 0.5),
-    color: '#000',
-    weight: ringBlack,
-    fill: false
-  });
+  if (!FAST_BOOT) { // skip outer/mid rings during fast boot
+    const outer = L.circleMarker([lat, lon], {
+      renderer: canvasRenderer,
+      radius: rCore + ringWhite + (ringBlack * 0.5),
+      color: '#000',
+      weight: ringBlack,
+      fill: false
+    });
 
-  // Inner white ring (no fill)
-  const mid = L.circleMarker([lat, lon], {
-    renderer: canvasRenderer,
-    radius: rCore + (ringWhite * 0.5),
-    color: '#fff',
-    weight: ringWhite,
-    fill: false
-  });
+    // Inner white ring (no fill)
+    const mid = L.circleMarker([lat, lon], {
+      renderer: canvasRenderer,
+      radius: rCore + (ringWhite * 0.5),
+      color: '#fff',
+      weight: ringWhite,
+      fill: false
+    });
+    outer.addTo(markersLayer);
+    mid.addTo(markersLayer);
+  }
 
   // Colored core (fill only)
   const inner = L.circleMarker([lat, lon], {
@@ -186,9 +209,6 @@ function addTriRingMarker(lat, lon, color) {
     stroke: false
   });
 
-  // Add all three; return the interactive top layer
-  outer.addTo(markersLayer);
-  mid.addTo(markersLayer);
   inner.addTo(markersLayer);
   return inner;
 }
@@ -252,12 +272,25 @@ window.showStationDetails = window.showStationDetails || showStationDetails;
 // ────────────────────────────────────────────────────────────────────────────
 async function refreshMarkers() {
   try {
-    mapStationData = await window.electronAPI.getStationData();
+    if (!mapStationData.length) {
+      // On first paint, skip expensive Excel/lookup reads for speed.
+      if (typeof window.electronAPI?.getStationData === 'function') {
+        mapStationData = await window.electronAPI.getStationData(FAST_BOOT ? { skipColors: true } : {});
+      }
+    }
 
     markersLayer.clearLayers();
     const { locations, assetTypes } = getActiveFilters();
 
-    const rows = mapStationData || [];
+    let rows = mapStationData || [];
+    if (FAST_BOOT && map) {
+      // Show only what's on screen at first, and cap count
+      const b = map.getBounds();
+      rows = rows.filter(stn => {
+        const lat = parseFloat(stn.lat), lon = parseFloat(stn.lon);
+        return b.contains([lat, lon]);
+      }).slice(0, MAX_INITIAL_PINS);
+    }
     const batchSize = 1000; // yield every N to keep UI responsive
     for (let i = 0; i < rows.length; i += batchSize) {
       const batch = rows.slice(i, i + batchSize);
@@ -362,10 +395,25 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     console.log('[map] booting with Leaflet', L.version);
+
     initMap();
     bindGlobalImportToolbar();
 
+    // Fast boot: paint instantly with visible/simple pins
     setTimeout(() => window.refreshMarkers(), 0);
+    // After a beat, render the full dataset with fancy pins
+    setTimeout(async () => {
+      FAST_BOOT = false;
+      // Always refresh with full colors after fast boot (replaces hash colors)
+      try {
+        if (typeof window.electronAPI?.getStationData === 'function') {
+          mapStationData = await window.electronAPI.getStationData({});
+        }
+      } catch (_) {
+        // keep whatever we had; color upgrade can happen later
+      }
+      await window.refreshMarkers();
+    }, 1200);
 
     // Extra reflows to handle late layout/font/GPU changes
     setTimeout(() => { try { map.invalidateSize(); } catch(_) {} }, 300);

@@ -61,20 +61,42 @@ function sheetToObjects(worksheet) {
 }
 
 // ─── Public API ────────────────────────────────────────────────────────────
-async function getStationData() {
+// When opts.skipColors === true, we avoid touching lookups/excel and
+// synthesize colors deterministically for a *much faster* first paint.
+async function getStationData(opts = {}) {
+  const skipColors = !!opts.skipColors;
   const s = loadState();
   const rows = s.stations || [];
-  const out = [];
-  for (const st of rows) {
+  const out = new Array(rows.length);
+
+  // Resolve colors in ONE pass from cache (warm if needed)
+  let globalMap = null, byLoc = null;
+  if (!skipColors) {
+    try {
+      const maps = await lookupsRepo.getColorMaps();
+      globalMap = maps.global;
+      byLoc     = maps.byLocation;
+    } catch(_) {}
+  }
+
+  for (let i = 0; i < rows.length; i++) {
+    const st = rows[i];
     const loc = st.province || st.location || '';
     const at  = st.asset_type || 'Unknown';
     let color = null;
-    try {
-      // prefer per-location color; then global; then hash
-      color = await lookupsRepo.getAssetTypeColorForLocation(at, loc)
-           || await lookupsRepo.getAssetTypeColor(at);
-    } catch (_) {}
-    out.push({ ...st, color: color || hashColor(`${loc}:${at}`) });
+    if (skipColors) {
+      color = hashColor(`${loc}:${at}`);
+    } else if (globalMap && byLoc) {
+      const m = byLoc.get(loc);
+      color = (m && m.get(at)) || globalMap.get(at) || null;
+    } else {
+      // Fallback (should rarely happen)
+      try {
+        color = await lookupsRepo.getAssetTypeColorForLocation(at, loc)
+              || await lookupsRepo.getAssetTypeColor(at);
+      } catch(_) {}
+    }
+    out[i] = { ...st, color: color || hashColor(`${loc}:${at}`) };
   }
   return out;
 }
@@ -82,7 +104,6 @@ async function getStationData() {
 async function getActiveCompanies() {
   // Excel lookups are the source of truth; fall back to legacy only if empty.
   try {
-    await lookupsRepo.ensureLookupsReady();
     const fromXlsx = await lookupsRepo.getActiveCompanies();
     if (fromXlsx && fromXlsx.length) return fromXlsx;
   } catch (e) {
@@ -94,7 +115,6 @@ async function getActiveCompanies() {
 
 async function getLocationsForCompany(_company) {
   try {
-    await lookupsRepo.ensureLookupsReady();
     const fromXlsx = await lookupsRepo.getLocationsForCompany(_company);
     if (fromXlsx && fromXlsx.length) return fromXlsx;
   } catch (e) {
@@ -109,7 +129,6 @@ async function getLocationsForCompany(_company) {
 
 async function getAssetTypesForLocation(_company, loc) {
   try {
-    await lookupsRepo.ensureLookupsReady();
     const fromXlsx = await lookupsRepo.getAssetTypesForLocation(loc);
     if (fromXlsx && fromXlsx.length) return fromXlsx;
   } catch (e) {
@@ -127,22 +146,18 @@ async function getAssetTypesForLocation(_company, loc) {
 // Colors (global)
 async function getAssetTypeColor(assetType) {
   try {
-    await lookupsRepo.ensureLookupsReady();
     return await lookupsRepo.getAssetTypeColor(assetType);
   } catch(_) { return null; }
 }
 async function setAssetTypeColor(assetType, color) {
-  await lookupsRepo.ensureLookupsReady();
   return await lookupsRepo.setAssetTypeColor(assetType, color);
 }
 
 // Colors (per location)
 async function getAssetTypeColorForLocation(assetType, loc) {
-  await lookupsRepo.ensureLookupsReady();
   return await lookupsRepo.getAssetTypeColorForLocation(assetType, loc);
 }
 async function setAssetTypeColorForLocation(assetType, loc, color) {
-  await lookupsRepo.ensureLookupsReady();
   return await lookupsRepo.setAssetTypeColorForLocation(assetType, loc, color);
 }
 
@@ -209,6 +224,25 @@ async function importMultipleStations(b64) {
   }
 }
 
+/**
+ * List sheet names from a base64 .xlsx payload.
+ * Renderer calls this to populate the Step 3 sheet selector.
+ */
+async function listExcelSheets(b64) {
+  try {
+    if (!ExcelJS) ExcelJS = require('exceljs');
+    const buf = Buffer.from(b64, 'base64');
+    const wb  = new ExcelJS.Workbook();
+    await wb.xlsx.load(buf);
+    const sheets = (wb.worksheets || []).map(ws => ws?.name || '').filter(Boolean);
+    return { success: true, sheets };
+  } catch (e) {
+    console.error('[listExcelSheets] failed:', e);
+    return { success: false, message: String(e) };
+  }
+}
+
+
 module.exports = {
   getStationData,
   getActiveCompanies,
@@ -219,9 +253,11 @@ module.exports = {
   getAssetTypeColorForLocation,
   setAssetTypeColorForLocation,
   importMultipleStations,
+  listExcelSheets,
   upsertCompany: lookupsRepo.upsertCompany,
   upsertLocation: lookupsRepo.upsertLocation,
   upsertAssetType: lookupsRepo.upsertAssetType,
+  getLookupTree: lookupsRepo.getLookupTree,
   // colors (lookups-backed)
   setAssetTypeColorForLocation,
   getAssetTypeColorForLocation,

@@ -3,18 +3,25 @@ const path = require('path');
 const backend = require('./backend/app');
 const lookups = require('./backend/lookups_repo');
 
+
+app.disableHardwareAcceleration();
+
 async function createWindow () {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
+    show: false,
+    backgroundColor: '#ffffff',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
     }
   });
-  await lookups.ensureLookupsReady();
-  await win.loadFile(path.join(__dirname, 'frontend', 'index.html'));
+
+  // Load UI immediately; heavy I/O happens after first paint
+  win.loadFile(path.join(__dirname, 'frontend', 'index.html'));
+  win.once('ready-to-show', () => win.show());
 }
 
 app.whenReady().then(() => {
@@ -23,6 +30,11 @@ app.whenReady().then(() => {
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+
+  // Warm the color cache ASAP without blocking the UI
+  setTimeout(() => {
+    lookups.primeAllCaches().catch(err => console.error('[prime lookups]', err));
+  }, 800);
 });
 
 app.on('window-all-closed', function () {
@@ -30,7 +42,7 @@ app.on('window-all-closed', function () {
 });
 
 // ─── IPC: Stations ─────────────────────────────────────────────────────────
-ipcMain.handle('stations:get', async () => backend.getStationData());
+ipcMain.handle('stations:get', async (_evt, opts) => backend.getStationData(opts || {}));
 ipcMain.handle('stations:import', async (_evt, b64) => backend.importMultipleStations(b64));
 ipcMain.handle('stations:invalidate', async () => backend.invalidateStationCache());
 
@@ -38,6 +50,7 @@ ipcMain.handle('stations:invalidate', async () => backend.invalidateStationCache
 ipcMain.handle('lookups:getActiveCompanies', async () => backend.getActiveCompanies());
 ipcMain.handle('lookups:getLocationsForCompany', async (_evt, company) => backend.getLocationsForCompany(company));
 ipcMain.handle('lookups:getAssetTypesForLocation', async (_evt, company, location) => backend.getAssetTypesForLocation(company, location));
+ipcMain.handle('lookups:getTree', async () => backend.getLookupTree());
 
 // ─── IPC: Lookups (writes) ─────────────────────────────────────────────────
 ipcMain.handle('lookups:upsertCompany', async (_evt, name, active) => backend.upsertCompany(name, !!active));
@@ -49,3 +62,4 @@ ipcMain.handle('lookups:getAssetTypeColor', async (_evt, assetType) => backend.g
 ipcMain.handle('lookups:setAssetTypeColor', async (_evt, assetType, color) => backend.setAssetTypeColor(assetType, color));
 ipcMain.handle('lookups:getAssetTypeColorForLocation', async (_evt, assetType, location) => backend.getAssetTypeColorForLocation(assetType, location));
 ipcMain.handle('lookups:setAssetTypeColorForLocation', async (_evt, assetType, location, color) => backend.setAssetTypeColorForLocation(assetType, location, color));
+ipcMain.handle('excel:listSheets', async (_evt, b64) => backend.listExcelSheets(b64));

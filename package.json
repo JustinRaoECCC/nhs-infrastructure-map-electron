@@ -7,7 +7,7 @@
   "main": "main.js",
   "type": "commonjs",
   "scripts": {
-    "start": "electron . --no-sandbox --disable-gpu-sandbox --disable-gpu --enable-basic-rendering --use-gl=swiftshader",
+    "start": "electron . --no-sandbox --disable-gpu-sandbox --disable-gpu --use-gl=swiftshader --log-level=3",
     "dev": "electron .",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
