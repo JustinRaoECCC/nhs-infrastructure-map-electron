@@ -2,10 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const { ensureDir } = require('./utils/fs_utils');
 
-let ExcelJS = null;
+const excel = require('./excel_worker_client');
 
 // ─── Paths ─────────────────────────────────────────────────────────────────
-const DATA_DIR      = path.join(__dirname, '..', 'data');
+const DATA_DIR      = process.env.NHS_DATA_DIR || path.join(__dirname, '..', 'data');
 const LOOKUPS_PATH  = path.join(DATA_DIR, 'lookups.xlsx');
 const LOCATIONS_DIR = path.join(DATA_DIR, 'locations');
 const REPAIRS_DIR   = path.join(DATA_DIR, 'repairs');
@@ -24,6 +24,13 @@ function uniqSorted(arr) {
 }
 function randHexColor() {
   return '#' + Math.floor(Math.random() * 0xFFFFFF).toString(16).padStart(6, '0');
+}
+
+// ─── FS-only, synchronous folder bootstrap (no ExcelJS) ───────────────────
+function ensureDataFoldersSync() {
+  try {
+    ensureDir(DATA_DIR); ensureDir(LOCATIONS_DIR); ensureDir(REPAIRS_DIR);
+  } catch (e) { /* swallow — better to not crash on first run */ }
 }
 
 // ─── Lightweight in-memory caches ──────────────────────────────────────────
@@ -79,80 +86,22 @@ function _saveJsonCache() {
 
 async function _primeAllCaches() {
   ensureDir(DATA_DIR);
-  const stat = fs.existsSync(LOOKUPS_PATH) ? fs.statSync(LOOKUPS_PATH) : null;
-  const mtimeMs = stat ? stat.mtimeMs : 0;
-  if (_cache.mtimeMs === mtimeMs) return;          // memory fresh
-  if (_loadJsonCache(mtimeMs)) return;             // disk cache fresh
-  if (!ExcelJS) ExcelJS = require('exceljs');
+  // Ask the worker for a snapshot (non-blocking for main thread)
+  const snap = await excel.readLookupsSnapshot();
+  const mtimeMs = snap?.mtimeMs || 0;
+  if (_cache.mtimeMs === mtimeMs) return;
 
-  // (Re)build from workbook once
-  const wb = new ExcelJS.Workbook();
-  if (fs.existsSync(LOOKUPS_PATH)) {
-    await wb.xlsx.readFile(LOOKUPS_PATH);
-  } else {
-    // ensure the file exists with canonical sheets
-    await ensureLookupsReady();
-    await wb.xlsx.readFile(LOOKUPS_PATH);
-  }
-  const wsA = getSheet(wb, 'AssetTypes');
-  const wsC = getSheet(wb, 'Companies');
-  const wsL = getSheet(wb, 'Locations');
+  const global = new Map(Object.entries(snap.colorsGlobal || {}));
+  const byLoc  = new Map(
+    Object.entries(snap.colorsByLoc || {}).map(([loc, obj]) => [loc, new Map(Object.entries(obj))])
+  );
 
-  const global = new Map();
-  const byLoc  = new Map();
-  if (wsA) {
-    wsA.eachRow({ includeEmpty:false }, (row, i) => {
-      if (i === 1) return;
-      const at  = normStr(row.getCell(1)?.text);
-      const loc = normStr(row.getCell(2)?.text);
-      const col = normStr(row.getCell(3)?.text);
-      if (!at || !col) return;
-      if (!loc) {
-        if (!global.has(at)) global.set(at, col);
-      } else {
-        const m = byLoc.get(loc) || new Map();
-        if (!m.has(at)) m.set(at, col);
-        byLoc.set(loc, m);
-      }
-    });
-  }
   // Companies
-  const companies = [];
-  if (wsC) {
-    wsC.eachRow({ includeEmpty:false }, (row, i) => {
-      if (i === 1) return;
-      const name = normStr(row.getCell(1)?.text);
-      const active = toBool(row.getCell(2)?.text);
-      if (name && active) companies.push(name);
-    });
-  }
+  const companies = snap.companies || [];
+
   // Locations + assets relations
-  const locsByCompany = {};
-  const assetsByLocation = {};
-  if (wsL) {
-    wsL.eachRow({ includeEmpty:false }, (row, i) => {
-      if (i === 1) return;
-      const loc = normStr(row.getCell(1)?.text);
-      const comp= normStr(row.getCell(2)?.text);
-      if (!loc || !comp) return;
-      (locsByCompany[comp] ||= new Set()).add(loc);
-    });
-  }
-  if (wsA) {
-    wsA.eachRow({ includeEmpty:false }, (row, i) => {
-      if (i === 1) return;
-      const at  = normStr(row.getCell(1)?.text);
-      const loc = normStr(row.getCell(2)?.text);
-      if (!at || !loc) return;
-      (assetsByLocation[loc] ||= new Set()).add(at);
-    });
-  }
-  Object.keys(locsByCompany).forEach(k => {
-    locsByCompany[k] = Array.from(locsByCompany[k]).sort((a,b)=>a.toLowerCase().localeCompare(b.toLowerCase()));
-  });
-  Object.keys(assetsByLocation).forEach(k => {
-    assetsByLocation[k] = Array.from(assetsByLocation[k]).sort((a,b)=>a.toLowerCase().localeCompare(b.toLowerCase()));
-  });
+  const locsByCompany = snap.locsByCompany || {};
+  const assetsByLocation = snap.assetsByLocation || {};
 
   _cache = {
     mtimeMs,
@@ -175,71 +124,8 @@ async function getColorMaps() {
 }
 
 // ─── Ensure folders & workbook ─────────────────────────────────────────────
-async function ensureLookupsReady() {
-  if (!ExcelJS) ExcelJS = require('exceljs');
-  ensureDir(DATA_DIR);
-  ensureDir(LOCATIONS_DIR);
-  ensureDir(REPAIRS_DIR);
+async function ensureLookupsReady() { return excel.ensureLookupsReady(); }
 
-  const wb = new ExcelJS.Workbook();
-  if (fs.existsSync(LOOKUPS_PATH)) {
-    await wb.xlsx.readFile(LOOKUPS_PATH);
-    // patch missing sheets/headers if needed
-    const need = (name) => !wb.worksheets.some(ws => ws.name === name);
-    let changed = false;
-    if (need('Companies')) {
-      const ws = wb.addWorksheet('Companies');
-      ws.addRow(['company','active']);
-      changed = true;
-    }
-    if (need('Locations')) {
-      const ws = wb.addWorksheet('Locations');
-      ws.addRow(['location','company']);
-      changed = true;
-    }
-    if (need('AssetTypes')) {
-      const ws = wb.addWorksheet('AssetTypes');
-      ws.addRow(['asset_type','location','color']);
-      changed = true;
-    }
-    if (need('Custom Weights')) {
-      const ws = wb.addWorksheet('Custom Weights');
-      ws.addRow(['weight','active']);
-      changed = true;
-    }
-    if (need('Workplan Constants')) {
-      const ws = wb.addWorksheet('Workplan Constants');
-      ws.addRow(['Field','Value']);
-      changed = true;
-    }
-    if (need('Algorithm Parameters')) {
-      const ws = wb.addWorksheet('Algorithm Parameters');
-      ws.addRow(['Applies To','Parameter','Condition','MaxWeight','Option','Weight','Selected']);
-      changed = true;
-    }
-    if (need('Workplan Details')) {
-      const ws = wb.addWorksheet('Workplan Details');
-      ws.addRow(['Parameter','Value']);
-      changed = true;
-    }
-    if (changed) await wb.xlsx.writeFile(LOOKUPS_PATH);
-    return wb;
-  }
-  // Fresh file with all canonical sheets
-  const companies = wb.addWorksheet('Companies');        companies.addRow(['company','active']);
-  const locations = wb.addWorksheet('Locations');        locations.addRow(['location','company']);
-  const assetTypes= wb.addWorksheet('AssetTypes');       assetTypes.addRow(['asset_type','location','color']);
-  const custW     = wb.addWorksheet('Custom Weights');   custW.addRow(['weight','active']);
-  const wpConst   = wb.addWorksheet('Workplan Constants'); wpConst.addRow(['Field','Value']);
-  const algo      = wb.addWorksheet('Algorithm Parameters'); algo.addRow(['Applies To','Parameter','Condition','MaxWeight','Option','Weight','Selected']);
-  const wpDet     = wb.addWorksheet('Workplan Details'); wpDet.addRow(['Parameter','Value']);
-  await wb.xlsx.writeFile(LOOKUPS_PATH);
-  return wb;
-}
-
-function getSheet(wb, name) {
-  return wb.getWorksheet(name) || wb.worksheets.find(ws => lc(ws.name) === lc(name));
-}
 
 // ─── Public read APIs ──────────────────────────────────────────────────────
 async function getActiveCompanies() {
@@ -275,135 +161,41 @@ async function getAssetTypeColorForLocation(assetType, location) {
 }
 
 async function setAssetTypeColor(assetType, color) {
-  const wb = await ensureLookupsReady();
-  const ws = getSheet(wb, 'AssetTypes');
-  if (!ws) return { success:false, message:'Missing AssetTypes sheet' };
-  const tgtAt = lc(assetType);
-  let updated = false;
-  ws.eachRow({ includeEmpty: false }, (row, idx) => {
-    if (idx === 1) return;
-    const at  = lc(row.getCell(1)?.text);
-    const loc = normStr(row.getCell(2)?.text);
-    if (at === tgtAt && !loc) {
-      row.getCell(3).value = color;
-      updated = true;
-    }
-  });
-  if (!updated) {
-    ws.addRow([normStr(assetType), '', color]);
-  }
-  await wb.xlsx.writeFile(LOOKUPS_PATH);
+  const res = await excel.setAssetTypeColor(assetType, color);
   _invalidateAllCaches();
-  return { success:true };
+  return res;
 }
 
 async function setAssetTypeColorForLocation(assetType, location, color) {
-  const wb = await ensureLookupsReady();
-  const ws = getSheet(wb, 'AssetTypes');
-  if (!ws) return { success:false, message:'Missing AssetTypes sheet' };
-  const tgtAt = lc(assetType);
-  const tgtLo = lc(location);
-  let updated = false;
-  ws.eachRow({ includeEmpty: false }, (row, idx) => {
-    if (idx === 1) return;
-    const at  = lc(row.getCell(1)?.text);
-    const loc = lc(row.getCell(2)?.text);
-    if (at === tgtAt && loc === tgtLo) {
-      row.getCell(3).value = color;
-      updated = true;
-    }
-  });
-  if (!updated) {
-    ws.addRow([normStr(assetType), normStr(location), color]);
-  }
-  await wb.xlsx.writeFile(LOOKUPS_PATH);
+  const res = await excel.setAssetTypeColorForLocation(assetType, location, color);
   _invalidateAllCaches();
-  return { success:true };
+  return res;
 }
 
 // ─── Writes / Upserts ─────────────────────────────────────────────────────
 async function upsertCompany(name, active = true) {
-  const wb = await ensureLookupsReady();
-  const ws = getSheet(wb, 'Companies');
-  const tgt = lc(name);
-  let found = false;
-  ws.eachRow({ includeEmpty:false }, (row, idx) => {
-    if (idx === 1) return;
-    if (lc(row.getCell(1)?.text) === tgt) {
-      row.getCell(2).value = active ? 'TRUE' : '';
-      found = true;
-    }
-  });
-  if (!found) ws.addRow([normStr(name), active ? 'TRUE' : '']);
-  await wb.xlsx.writeFile(LOOKUPS_PATH);
-  return { success:true };
+  const res = await excel.upsertCompany(name, active);
+  _invalidateAllCaches();
+  return res;
 }
 
 async function upsertLocation(location, company) {
-  const wb = await ensureLookupsReady();
-  const ws = getSheet(wb, 'Locations');
-  const tgtLoc = lc(location);
-  const tgtComp= lc(company);
-  let exists = false;
-  ws.eachRow({ includeEmpty:false }, (row, idx) => {
-    if (idx === 1) return;
-    if (lc(row.getCell(1)?.text) === tgtLoc && lc(row.getCell(2)?.text) === tgtComp) {
-      exists = true;
-    }
-  });
-  if (!exists) ws.addRow([normStr(location), normStr(company)]);
-  await wb.xlsx.writeFile(LOOKUPS_PATH);
-  // also create the locations workbook if missing
-  const locPath = path.join(LOCATIONS_DIR, `${normStr(location)}.xlsx`);
-  if (!fs.existsSync(locPath)) {
-    const nb = new ExcelJS.Workbook();
-    await nb.xlsx.writeFile(locPath);
-  }
-  return { success:true };
+  const res = await excel.upsertLocation(location, company);
+  _invalidateAllCaches();
+  return res;
 }
 
 async function upsertAssetType(assetType, location) {
-  const wb = await ensureLookupsReady();
-  const ws = getSheet(wb, 'AssetTypes');
-  const tgtAt  = lc(assetType);
-  const tgtLoc = lc(location || '');
-
-  // 1) If exact pair exists, no-op
-  let match = null;
-  ws.eachRow({ includeEmpty:false }, (row, idx) => {
-    if (idx === 1) return;
-    const at  = lc(row.getCell(1)?.text);
-    const loc = lc(row.getCell(2)?.text);
-    if (at === tgtAt && loc === tgtLoc) match = row;
-  });
-  if (match) return { success:true, added:false };
-
-  // 2) If there's a blank-parent row for this asset type, fill in the location
-  let blank = null;
-  ws.eachRow({ includeEmpty:false }, (row, idx) => {
-    if (idx === 1) return;
-    const at  = lc(row.getCell(1)?.text);
-    const loc = normStr(row.getCell(2)?.text);
-    if (at === tgtAt && !loc) blank = row;
-  });
-  if (blank) {
-    blank.getCell(2).value = normStr(location || '');
-    if (!normStr(blank.getCell(3)?.text)) blank.getCell(3).value = randHexColor();
-    await wb.xlsx.writeFile(LOOKUPS_PATH);
-    return { success:true, added:true };
-  }
-
-  // 3) Otherwise append a brand-new row with a random colour
-  ws.addRow([normStr(assetType), normStr(location || ''), randHexColor()]);
-  await wb.xlsx.writeFile(LOOKUPS_PATH);
+  const res = await excel.upsertAssetType(assetType, location);
   _invalidateAllCaches();
-  return { success:true, added:true };
+  return res;
 }
 
 module.exports = {
   // ensure/init
   ensureLookupsReady,
   primeAllCaches: _primeAllCaches,
+  ensureDataFoldersSync,
   getColorMaps,
   async getLookupTree() {
     await _primeAllCaches();

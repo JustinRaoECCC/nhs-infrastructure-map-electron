@@ -1,2 +1,6 @@
 # .gitignore
 node_modules/
+data/locations
+data/repairs
+data/lookups.xlsx
+data/.lookups_cache.json

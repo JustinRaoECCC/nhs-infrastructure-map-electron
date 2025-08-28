@@ -9,6 +9,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   importMultipleStations: (b64) => ipcRenderer.invoke('stations:import', b64),
   invalidateStationCache: () => ipcRenderer.invoke('stations:invalidate'),
 
+  // ─── Lookups (reads) ────────────────────────────────────────────────────
+  // Drives the hierarchical filter tree (Company ▸ Locations ▸ Asset Types).
+  getLookupTree:          ()      => ipcRenderer.invoke('lookups:getTree'),
+
   // ─── Lookups (writes only — used by Add Infrastructure wizard) ──────────
   upsertCompany:  (name, active = true)       => ipcRenderer.invoke('lookups:upsertCompany', name, !!active),
   upsertLocation: (location, company)         => ipcRenderer.invoke('lookups:upsertLocation', location, company),
@@ -16,4 +20,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ─── Excel helper for Step 3 sheet picker ───────────────────────────────
   excelListSheets: (b64)                      => ipcRenderer.invoke('excel:listSheets', b64),
+
+  // ─── Boot progress from the worker (UI progress bar) ────────────────────
+  onExcelProgress: (handler) => {
+    const listener = (_evt, payload) => { try { handler(payload); } catch (_) {} };
+    ipcRenderer.on('excel:progress', listener);
+    // return an unsubscribe in case you want to detach later
+    return () => ipcRenderer.removeListener('excel:progress', listener);
+  },
 });

@@ -101,7 +101,18 @@
   </div>
 
   <!-- Scripts -->
+
+  <!-- Excel boot overlay: shows while ExcelJS/Lookups are initializing -->
+  <div id="excelBootOverlay" class="boot-overlay">
+    <div class="boot-card">
+      <div class="boot-title">Preparing Excel lookups…</div>
+      <div id="excelBootText" class="boot-status">Starting…</div>
+      <div class="boot-bar"><div id="excelBootFill" class="boot-bar-fill"></div></div>
+    </div>
+  </div>  
+
   <script>window.L_NO_TOUCH=false; window.L_DISABLE_3D=true;</script>
+  <script defer src="js/boot_status.js"></script>
   <script defer src="js/filters.js"></script>
   <script defer src="js/map_view.js"></script>
   <script defer src="js/list_view.js"></script>

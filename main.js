@@ -1,7 +1,11 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
-const backend = require('./backend/app');
-const lookups = require('./backend/lookups_repo');
+const os   = require('os');
+
+// Import AFTER NHS_DATA_DIR is set so backends pick up the fast path.
+const backend     = require('./backend/app');
+const lookups     = require('./backend/lookups_repo');
+const excelClient = require('./backend/excel_worker_client');
 
 
 app.disableHardwareAcceleration();
@@ -21,11 +25,57 @@ async function createWindow () {
 
   // Load UI immediately; heavy I/O happens after first paint
   win.loadFile(path.join(__dirname, 'frontend', 'index.html'));
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => {
+    win.show();
+
+    // Kick off Excel load immediately after paint; progress goes to renderer
+    setTimeout(() => {
+      excelClient.warm().catch(err => console.error('[excel warm @show] failed:', err));
+      lookups.ensureLookupsReady?.().catch(err => console.error('[ensure lookups @show] failed:', err));
+      // also trigger a snapshot to finalize to 100%
+      lookups.primeAllCaches?.().catch(err => console.error('[prime caches @show] failed:', err));
+    }, 40);
+  });
+}
+
+// Boot-time lookups bootstrap (runs as soon as the app is ready)
+// - warms the worker thread
+// - creates lookups.xlsx if missing (non-blocking)
+// - primes caches
+function bootstrapLookupsAtBoot() {
+  // Start the worker immediately (non-blocking).
+  excelClient.warm().catch(err => console.error('[excel warm @boot] failed:', err));
+
+  // Fire-and-forget creation of the workbook + initial cache snapshot.
+  Promise.resolve()
+    .then(() => lookups.ensureLookupsReady?.())
+    .then(() => lookups.primeAllCaches?.())
+    .catch(err => console.error('[ensure lookups @boot] failed:', err));
+
+  // Small failsafe retry in case the first attempt raced the worker startup.
+  setTimeout(() => {
+    lookups.ensureLookupsReady?.().catch(err => console.error('[ensure lookups @boot retry] failed:', err));
+  }, 3000);
 }
 
 app.whenReady().then(() => {
+  // Create folders immediately (sync, no ExcelJS)
+  if (typeof lookups.ensureDataFoldersSync === 'function') {
+    lookups.ensureDataFoldersSync();
+  }
+  bootstrapLookupsAtBoot();
   createWindow();
+
+  // Forward worker progress to all windows
+  excelClient.onProgress((data) => {
+    try {
+      for (const w of BrowserWindow.getAllWindows()) {
+        w.webContents.send('excel:progress', data);
+      }
+    } catch (e) {
+      console.error('[excel:progress forward] failed:', e);
+    }
+  });
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -33,7 +83,7 @@ app.whenReady().then(() => {
 
   // Warm the color cache ASAP without blocking the UI
   setTimeout(() => {
-    lookups.primeAllCaches().catch(err => console.error('[prime lookups]', err));
+    lookups.primeAllCaches().catch(err => console.error('[prime lookups @800ms]', err));
   }, 800);
 });
 

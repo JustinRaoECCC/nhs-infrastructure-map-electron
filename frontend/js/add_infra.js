@@ -119,6 +119,8 @@
           const res = await window.electronAPI.upsertCompany(name, true);
           if (!res || res.success === false) return alertUser('Failed to create company.');
           state.company = name;
+          // reflect immediately in the filter tree
+          if (typeof window.refreshFilters === 'function') setTimeout(window.refreshFilters, 0);
           setActiveStep(1);
           return;
         }
@@ -130,6 +132,8 @@
           if (!state.company) return alertUser('Company is missing. Please complete Step 1 first.');
           const res = await window.electronAPI.upsertLocation(loc, state.company);
           if (!res || res.success === false) return alertUser('Failed to create location.');
+          // refresh filters so new location appears under company
+          if (typeof window.refreshFilters === 'function') setTimeout(window.refreshFilters, 0);
           state.location = loc;
           setActiveStep(2);
           return;
@@ -144,6 +148,8 @@
 
           const up = await window.electronAPI.upsertAssetType(assetName, state.location);
           if (!up || up.success === false) return alertUser('Failed to create asset type.');
+          // refresh filters so the new asset type checkbox appears
+          if (typeof window.refreshFilters === 'function') setTimeout(window.refreshFilters, 0);
           state.assetName = assetName;
 
           // Selecting a sheet doesn't import yet (Step 4 will do that later)

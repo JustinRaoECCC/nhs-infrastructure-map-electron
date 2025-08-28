@@ -1,8 +1,8 @@
 // backend/app.js
 const path = require('path');
-let ExcelJS = null;
 const { readJSON, writeJSON } = require('./utils/fs_utils');
 const lookupsRepo = require('./lookups_repo');
+const excel = require('./excel_worker_client');
 
 const STATE_PATH = path.join(__dirname, '..', 'data', 'app_state.json');
 let _state = null;
@@ -22,42 +22,6 @@ function hashColor(str) {
   let h = 0; for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0;
   const hue = Math.abs(h) % 360;
   return `hsl(${hue}, 70%, 45%)`;
-}
-
-/**
- * Convert the first worksheet to an array of objects using row 1 as headers.
- * Keeps exact header text (e.g., "Section – Field"), trims whitespace, and
- * stores displayed text for each cell (cell.text).
- */
-function sheetToObjects(worksheet) {
-  const headerRow = worksheet.getRow(1);
-  const maxCol   = worksheet.actualColumnCount || worksheet.columnCount || headerRow.cellCount || 0;
-  const lastRow  = worksheet.actualRowCount   || worksheet.rowCount    || 1;
-
-  // headers: [ "Station ID", "Category", ... , "Section – Field", ... ]
-  const headers = [];
-  for (let c = 1; c <= maxCol; c++) {
-    const key = String(headerRow.getCell(c)?.text ?? '').trim();
-    headers.push(key);
-  }
-
-  const out = [];
-  for (let r = 2; r <= lastRow; r++) {
-    const row = worksheet.getRow(r);
-    const obj = {};
-    let hasValue = false;
-
-    for (let c = 1; c <= maxCol; c++) {
-      const key = headers[c - 1];
-      if (!key) continue;
-      const val = row.getCell(c)?.text ?? '';
-      if (val !== '') hasValue = true;
-      obj[key] = val;
-    }
-
-    if (hasValue) out.push(obj);
-  }
-  return out;
 }
 
 // ─── Public API ────────────────────────────────────────────────────────────
@@ -169,15 +133,9 @@ async function setAssetTypeColorForLocation(assetType, loc, color) {
  */
 async function importMultipleStations(b64) {
   try {
-    if (!ExcelJS) ExcelJS = require('exceljs');
-    const buf = Buffer.from(b64, 'base64');
-    const wb  = new ExcelJS.Workbook();
-    await wb.xlsx.load(buf);
-
-    const ws = wb.worksheets[0];
-    if (!ws) return { success: false, message: 'No sheets found.' };
-
-    const rows = sheetToObjects(ws);
+    const parsed = await excel.parseRows(b64);
+    if (!parsed?.success) return { success:false, message: parsed?.message || 'Parse failed.' };
+    const rows = parsed.rows || [];
     const s = loadState();
     const byId = new Map((s.stations || []).map(st => [String(st.station_id), st]));
 
@@ -229,17 +187,8 @@ async function importMultipleStations(b64) {
  * Renderer calls this to populate the Step 3 sheet selector.
  */
 async function listExcelSheets(b64) {
-  try {
-    if (!ExcelJS) ExcelJS = require('exceljs');
-    const buf = Buffer.from(b64, 'base64');
-    const wb  = new ExcelJS.Workbook();
-    await wb.xlsx.load(buf);
-    const sheets = (wb.worksheets || []).map(ws => ws?.name || '').filter(Boolean);
-    return { success: true, sheets };
-  } catch (e) {
-    console.error('[listExcelSheets] failed:', e);
-    return { success: false, message: String(e) };
-  }
+  try { return await excel.listSheets(b64); }
+  catch (e) { console.error('[listExcelSheets] failed:', e); return { success:false, message:String(e) }; }
 }
 
 
