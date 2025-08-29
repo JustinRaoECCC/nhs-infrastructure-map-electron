@@ -26,6 +26,7 @@ let mapStationData = []; // we'll reload this from disk every refresh
 let FAST_BOOT = true;           // first couple seconds: simple pins, limited count
 const MAX_INITIAL_PINS = 800;   // tune for your dataset
 let DID_FIT_BOUNDS = false;     // only fit once on first real data
+let AUTO_SELECTED_FILTERS = false; // first-load safety
 
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -301,8 +302,22 @@ async function refreshMarkers() {
       // Filter UI hasn't mounted yet → show everything so map isn't blank.
       filtered = allValid;
     } else if (locations.size === 0 && assetTypes.size === 0) {
-      // Nothing explicitly selected → show everything (prevents blank map).
-      filtered = allValid;
+      // If it's the first time we see "nothing selected", auto-select all once.
+      if (!AUTO_SELECTED_FILTERS) {
+        try {
+          filterTreeEl.querySelectorAll('input.filter-checkbox').forEach(cb => {
+            cb.checked = true;
+            cb.indeterminate = false;
+          });
+          // notify listeners (list view, etc.)
+          setTimeout(() => filterTreeEl.dispatchEvent(new Event('change', { bubbles: true })), 0);
+        } catch (_) {}
+        AUTO_SELECTED_FILTERS = true;
+        filtered = allValid; // don't paint blank on first load
+      } else {
+        // After the first time, respect the user's explicit "show nothing".
+        filtered = [];
+      }
     } else {
       filtered = allValid.filter(stn => {
         // allow either Province (from data) OR file-derived location name

@@ -133,7 +133,11 @@
       );
     }
     filterTree.appendChild(frag);
-    filterTree.querySelectorAll('input.filter-checkbox').forEach(cb => { cb.checked = true; cb.indeterminate = false; });
+    // Force a known-good starting state: everything checked.
+    filterTree.querySelectorAll('input.filter-checkbox').forEach(cb => {
+      cb.checked = true;
+      cb.indeterminate = false;
+    });
     updateTriState(filterTree);
   }
 
@@ -193,8 +197,8 @@
     const tree = await fetchTree();
     render(tree);
     updateTriState(filterTree);
-    // kick the world once so map/list sync with initial “all checked” state
-    filterTree.dispatchEvent(new Event('change', { bubbles: true }));
+    // Kick once so map/list sync with initial “all checked”
+    setTimeout(() => filterTree.dispatchEvent(new Event('change', { bubbles: true })), 0);
   }
 
   document.addEventListener('DOMContentLoaded', () => {
