@@ -466,16 +466,58 @@ async function writeLocationRows(location, sheetName, sections, headers, rows) {
 // Utility: pull a field from an object regardless of section prefix
 function pick(obj, fieldName) {
   if (!obj) return '';
+  // Exact key first
   if (obj[fieldName] !== undefined) return obj[fieldName];
-  const suffix = ` – ${fieldName}`;
+  // Accept both en dash and hyphen composite headers, case-insensitive.
+  const want = String(fieldName || '').trim().toLowerCase();
+  if (!want) return '';
+  const sepVariants = [' – ', ' - ', '—', ' — ', '–', '-'];
   for (const k of Object.keys(obj)) {
-    if (k.endsWith(suffix)) return obj[k];
+    const kl = String(k).toLowerCase().trim();
+    if (kl === want) return obj[k];
+    for (const sep of sepVariants) {
+      if (kl.endsWith(sep + want)) return obj[k];
+    }
   }
-  // case-insensitive fallback
-  const want = fieldName.toLowerCase();
-  for (const k of Object.keys(obj)) {
-    if (k.toLowerCase() === want) return obj[k];
-    if (k.toLowerCase().endsWith((' – ' + want))) return obj[k];
+  return '';
+}
+
+// Utility: first non-empty match from a list of candidate field names
+function pickOne(obj, candidates) {
+  for (const name of candidates) {
+    const v = pick(obj, name);
+    if (v !== undefined && v !== null && String(v).trim() !== '') return v;
+  }
+  return '';
+}
+
+// Recursively list .xlsx files under a root, skipping Excel lock files (~$...)
+function listExcelFiles(root) {
+  const out = [];
+  try {
+    if (!fs.existsSync(root)) return out;
+    const entries = fs.readdirSync(root, { withFileTypes: true });
+    for (const ent of entries) {
+      const p = path.join(root, ent.name);
+      if (ent.isDirectory()) {
+        out.push(...listExcelFiles(p));
+      } else if (
+        ent.isFile() &&
+        /\.xlsx$/i.test(ent.name) &&
+        !ent.name.startsWith('~$')
+      ) {
+        out.push(p);
+      }
+    }
+  } catch (_) {}
+  return out;
+}
+
+// Utility: first non-empty match from a list of candidate field names
+function pickOne(obj, candidates) {
+  for (const name of candidates) {
+    const v = pick(obj, name);
+    if (v !== undefined && v !== null && String(v).trim() !== '') return v;
   }
   return '';
 }
@@ -484,13 +526,22 @@ function pick(obj, fieldName) {
 async function readStationsAggregate() {
   await ensureLookupsReady();
   ensureDir(LOCATIONS_DIR);
-  const files = fs.readdirSync(LOCATIONS_DIR).filter(fn => fn.toLowerCase().endsWith('.xlsx'));
+  const files = listExcelFiles(LOCATIONS_DIR);
   const _ExcelJS = getExcel();
   const out = [];
+  let totalFiles = 0, totalSheets = 0, totalRows = 0, totalValid = 0;
+  // Helpful diagnostics on startup
+  try { console.log('[excel_worker] LOCATIONS_DIR =', LOCATIONS_DIR); } catch (_) {}
   for (const fn of files) {
-    const full = path.join(LOCATIONS_DIR, fn);
+    totalFiles++;
+    const full = fn; // already absolute
+    const locationFile = path.basename(full, path.extname(full)); // e.g., "BC"
     const wb = new _ExcelJS.Workbook();
-    try { await wb.xlsx.readFile(full); } catch { continue; }
+    try { await wb.xlsx.readFile(full); }
+    catch (e) {
+      try { console.warn('[excel_worker] skip unreadable file:', full, String(e && e.message || e)); } catch (_) {}
+      continue;
+    }
     for (const ws of wb.worksheets) {
       if (!ws || ws.rowCount < 2) continue;
       const twoRow = (ws.getRow(2)?.actualCellCount || 0) > 0;
@@ -500,21 +551,29 @@ async function readStationsAggregate() {
       } else {
         rows = sheetToObjectsOneRow(ws);
       }
+      totalSheets++;
       for (const r of rows) {
+        totalRows++;
         const st = {
-          station_id: pick(r, 'Station ID'),
-          asset_type: pick(r, 'Category'),
-          name:       pick(r, 'Site Name'),
-          province:   pick(r, 'Province'),
-          lat:        pick(r, 'Latitude'),
-          lon:        pick(r, 'Longitude'),
-          status:     pick(r, 'Status'),
+          station_id: pickOne(r, ['Station ID','StationID','ID']),
+          asset_type: pickOne(r, ['Category','Asset Type','Type','Structure Type']),
+          name:       pickOne(r, ['Site Name','Name','Station Name']),
+          province:   pickOne(r, ['Province','Location','State','Region','General Information - Province','General Information – Province']),
+          lat:        pickOne(r, ['Latitude','Lat','Y']),
+          lon:        pickOne(r, ['Longitude','Long','Lng','X']),
+          status:     pickOne(r, ['Status']),
         };
-        // attach all original fields too, so “Section – Field” details show
-        out.push({ ...r, ...st });
+        const latOk = String(st.lat).trim() !== '' && !isNaN(Number(st.lat));
+        const lonOk = String(st.lon).trim() !== '' && !isNaN(Number(st.lon));
+        if (latOk && lonOk) totalValid++;
+        // attach all original fields too, plus the file-derived location tag
+        out.push({ ...r, ...st, location_file: locationFile });
       }
     }
   }
+  try {
+    console.log(`[excel_worker] loaded files=${totalFiles}, sheets=${totalSheets}, rows=${totalRows}, validCoords=${totalValid}`);
+  } catch (_) {}
   return { success:true, rows: out };
 }
 

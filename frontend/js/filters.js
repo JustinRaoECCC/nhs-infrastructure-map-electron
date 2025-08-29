@@ -41,12 +41,13 @@
     // Fallback: infer from current stations (one “NHS” company).
     try {
       const data = await window.electronAPI.getStationData({});
-      const locs = uniq((data || []).map(s => s.province).filter(Boolean))
+      const norm = s => String(s ?? '').trim();
+      const locs = uniq((data || []).map(s => norm(s.province || s.location || s.location_file)).filter(Boolean))
         .sort((a, b) => a.localeCompare(b));
       const assetsByLocation = {};
       (data || []).forEach(s => {
-        const loc = s.province || '';
-        const at  = s.asset_type || '';
+        const loc = norm(s.province || s.location || s.location_file || '');
+        const at  = norm(s.asset_type || '');
         if (!loc || !at) return;
         (assetsByLocation[loc] ||= new Set()).add(at);
       });
@@ -132,6 +133,7 @@
       );
     }
     filterTree.appendChild(frag);
+    filterTree.querySelectorAll('input.filter-checkbox').forEach(cb => { cb.checked = true; cb.indeterminate = false; });
     updateTriState(filterTree);
   }
 
@@ -191,6 +193,8 @@
     const tree = await fetchTree();
     render(tree);
     updateTriState(filterTree);
+    // kick the world once so map/list sync with initial “all checked” state
+    filterTree.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
   document.addEventListener('DOMContentLoaded', () => {

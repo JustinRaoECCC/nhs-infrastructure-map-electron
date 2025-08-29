@@ -92,9 +92,10 @@ window.showStationDetails = window.showStationDetails || function showStationDet
   });
 
   function getActiveFilters() {
-    const locs = Array.from(document.querySelectorAll('.filter-checkbox.location:checked')).map(cb => cb.value);
-    const ats  = Array.from(document.querySelectorAll('.filter-checkbox.asset-type:checked')).map(cb => cb.value);
-    return { locations: locs, assetTypes: ats };
+    const norm = s => String(s ?? '').trim().toLowerCase();
+    const locations = new Set(Array.from(document.querySelectorAll('.filter-checkbox.location:checked')).map(cb => norm(cb.value)));
+    const assetTypes = new Set(Array.from(document.querySelectorAll('.filter-checkbox.asset-type:checked')).map(cb => norm(cb.value)));
+    return { locations, assetTypes, _norm: norm };
   }
 
   function compare(a, b, key) {
@@ -109,13 +110,20 @@ window.showStationDetails = window.showStationDetails || function showStationDet
     tbody.innerHTML = '';
 
     const data = await window.electronAPI.getStationData();
-    const { locations, assetTypes } = getActiveFilters();
+    const { locations, assetTypes, _norm } = getActiveFilters();
+    const anySelected = (locations.size > 0) || (assetTypes.size > 0);
 
-    const filtered = (data || []).filter(stn => {
-      const locOk = !locations.length || locations.includes(stn.province);
-      const atOk  = !assetTypes.length || assetTypes.includes(stn.asset_type);
-      return locOk && atOk;
-    });
+    const filtered = anySelected
+      ? (data || []).filter(stn => {
+          // match by province, location, or file-derived tag
+          const locCandidates = [
+            _norm(stn.province), _norm(stn.location), _norm(stn.location_file)
+          ].filter(Boolean);
+          const locOk = (locations.size === 0) || locCandidates.some(v => locations.has(v));
+          const atOk  = (assetTypes.size === 0) || assetTypes.has(_norm(stn.asset_type));
+          return locOk && atOk;
+        })
+      : (data || []);
 
     filtered.sort((a, b) => {
       const dir = (sortDir === 'asc') ? 1 : -1;

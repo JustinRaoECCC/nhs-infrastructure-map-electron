@@ -22,9 +22,10 @@ function isFiniteCoord(v) {
 let map;                 // Leaflet map
 let markersLayer;        // Layer group for pins
 let canvasRenderer;      // Canvas renderer instance
-let mapStationData = []; // in-memory copy for quick redraws
+let mapStationData = []; // we'll reload this from disk every refresh
 let FAST_BOOT = true;           // first couple seconds: simple pins, limited count
 const MAX_INITIAL_PINS = 800;   // tune for your dataset
+let DID_FIT_BOUNDS = false;     // only fit once on first real data
 
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -158,13 +159,16 @@ function initMap() {
 // Filters state
 // ────────────────────────────────────────────────────────────────────────────
 function getActiveFilters() {
-  const locations = Array
-    .from(document.querySelectorAll('.filter-checkbox.location:checked'))
-    .map(cb => cb.value);
-  const assetTypes = Array
-    .from(document.querySelectorAll('.filter-checkbox.asset-type:checked'))
-    .map(cb => cb.value);
-  return { locations, assetTypes };
+  const norm = s => String(s ?? '').trim().toLowerCase();
+  const locations = new Set(
+    Array.from(document.querySelectorAll('.filter-checkbox.location:checked'))
+      .map(cb => norm(cb.value))
+  );
+  const assetTypes = new Set(
+    Array.from(document.querySelectorAll('.filter-checkbox.asset-type:checked'))
+      .map(cb => norm(cb.value))
+  );
+  return { locations, assetTypes, _norm: norm };
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -272,25 +276,61 @@ window.showStationDetails = window.showStationDetails || showStationDetails;
 // ────────────────────────────────────────────────────────────────────────────
 async function refreshMarkers() {
   try {
-    if (!mapStationData.length) {
-      // On first paint, skip expensive Excel/lookup reads for speed.
-      if (typeof window.electronAPI?.getStationData === 'function') {
-        mapStationData = await window.electronAPI.getStationData(FAST_BOOT ? { skipColors: true } : {});
-      }
+    // Always read fresh from <locations>.xlsx via the worker
+    if (typeof window.electronAPI?.getStationData === 'function') {
+      mapStationData = await window.electronAPI.getStationData(
+        FAST_BOOT ? { skipColors: true } : {}
+      );
     }
 
     markersLayer.clearLayers();
-    const { locations, assetTypes } = getActiveFilters();
+    const { locations, assetTypes, _norm } = getActiveFilters();
+    // Is the filter UI present (tree rendered) at all?
+    const filterTreeEl = document.getElementById('filterTree');
+    const filterUIReady = !!(filterTreeEl && filterTreeEl.querySelector('input.filter-checkbox'));
+    console.log('[map] filters:',
+      { filterUIReady, locations: locations.size, assetTypes: assetTypes.size });
 
-    let rows = mapStationData || [];
-    if (FAST_BOOT && map) {
-      // Show only what's on screen at first, and cap count
-      const b = map.getBounds();
-      rows = rows.filter(stn => {
-        const lat = parseFloat(stn.lat), lon = parseFloat(stn.lon);
-        return b.contains([lat, lon]);
-      }).slice(0, MAX_INITIAL_PINS);
+    const allValid = (mapStationData || []).filter(stn => {
+      const lat = Number(stn.lat), lon = Number(stn.lon);
+      return isFiniteCoord(lat) && isFiniteCoord(lon);
+    });
+    // Apply filter drawer selections
+    let filtered;
+    if (!filterUIReady) {
+      // Filter UI hasn't mounted yet → show everything so map isn't blank.
+      filtered = allValid;
+    } else if (locations.size === 0 && assetTypes.size === 0) {
+      // Nothing explicitly selected → show everything (prevents blank map).
+      filtered = allValid;
+    } else {
+      filtered = allValid.filter(stn => {
+        // allow either Province (from data) OR file-derived location name
+        const locCandidates = [
+          _norm(stn.province),
+          _norm(stn.location),
+          _norm(stn.location_file)
+        ].filter(Boolean);
+        const locOk = (locations.size === 0) || locCandidates.some(v => locations.has(v));
+        const atOk  = (assetTypes.size === 0) || assetTypes.has(_norm(stn.asset_type));
+        return locOk && atOk;
+      });
     }
+
+    let rows = filtered;
+    if (FAST_BOOT && map) {
+      // Trim to viewport *only if* that still leaves at least one pin.
+      const inView = [];
+      const b = map.getBounds();
+      for (const stn of filtered) {
+        if (b.contains([Number(stn.lat), Number(stn.lon)])) inView.push(stn);
+        if (inView.length >= MAX_INITIAL_PINS) break;
+      }
+      rows = inView.length ? inView : filtered.slice(0, MAX_INITIAL_PINS);
+    }
+
+    console.log('[map] drawing', rows.length, 'markers (filtered from', filtered.length, 'after filters; total', (mapStationData||[]).length, ')');
+
     const batchSize = 1000; // yield every N to keep UI responsive
     for (let i = 0; i < rows.length; i += batchSize) {
       const batch = rows.slice(i, i + batchSize);
@@ -299,8 +339,14 @@ async function refreshMarkers() {
         const lon = parseFloat(stn.lon);
         if (!isFiniteCoord(lat) || !isFiniteCoord(lon)) return;
 
-        if (locations.length && !locations.includes(stn.province)) return;
-        if (assetTypes.length && !assetTypes.includes(stn.asset_type)) return;
+        // Redundant (already filtered above), but keep as a guard using Set semantics.
+        if (locations.size) {
+          const locHit = [ _norm(stn.province), _norm(stn.location), _norm(stn.location_file) ]
+            .filter(Boolean)
+            .some(v => locations.has(v));
+          if (!locHit) return;
+        }
+        if (assetTypes.size && !assetTypes.has(_norm(stn.asset_type))) return;
 
         const marker = addTriRingMarker(lat, lon, stn.color);
         marker.bindPopup(
@@ -328,6 +374,15 @@ async function refreshMarkers() {
       await new Promise(r => setTimeout(r, 0));
     }
 
+    // On first successful paint with data, fit the map to it once
+    if (!DID_FIT_BOUNDS && filtered.length && map) {
+      const latlngs = filtered.map(s => [Number(s.lat), Number(s.lon)]);
+      try {
+        map.fitBounds(latlngs, { padding: [24, 24] });
+        DID_FIT_BOUNDS = true;
+      } catch (_) {}
+    }
+
   } catch (err) {
     console.error('[map_view] refreshMarkers failed:', err);
   } finally {
@@ -335,6 +390,11 @@ async function refreshMarkers() {
   }
 }
 window.refreshMarkers = debounce(refreshMarkers, 50);
+
+// Allow other modules (wizard, global import) to force a fresh re-read on next refresh.
+window.invalidateStationData = function invalidateStationData() {
+  try { mapStationData = []; } catch (_) {}
+};
 
 // ────────────────────────────────────────────────────────────────────────────
 function bindGlobalImportToolbar() {
@@ -368,8 +428,10 @@ function bindGlobalImportToolbar() {
           return;
         }
 
+        // Clear renderer-side data and (optionally) ping backend no-op invalidator.
+        if (typeof window.invalidateStationData === 'function') window.invalidateStationData();
         if (typeof window.electronAPI.invalidateStationCache === 'function') {
-          window.electronAPI.invalidateStationCache();
+          await window.electronAPI.invalidateStationCache();
         }
 
         await window.refreshMarkers();

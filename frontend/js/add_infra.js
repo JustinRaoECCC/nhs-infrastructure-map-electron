@@ -108,6 +108,7 @@
     const state = createState();
     state.previewRows = [];
     state.previewHeaders = [];
+    state.previewSections = [];
     state.selectedRowIdx = new Set();
 
     function setActiveStep(idx) {
@@ -130,16 +131,35 @@
       rowCountBadge.textContent = `${state.selectedRowIdx.size} selected`;
     }
 
-    function renderPreview(headers, rows) {
+    function renderPreview(sections, headers, rows) {
       if (!thead || !tbody) return;
       thead.innerHTML = '';
       tbody.innerHTML = '';
-      // header row (with a leading checkbox column)
-      const trh = document.createElement('tr');
-      trh.innerHTML = `<th style="width:36px;"><input id="chkAllRows" type="checkbox"/></th>` +
-        headers.map(h => `<th>${h}</th>`).join('');
-      thead.appendChild(trh);
-      const chkAll = trh.querySelector('#chkAllRows');
+      // ── Top header row: Sections (with colspans) + leading checkbox col
+      const trSec = document.createElement('tr');
+      const thLead = document.createElement('th');
+      thLead.style.width = '36px';
+      thLead.innerHTML = '<input id="chkAllRows" type="checkbox"/>';
+      trSec.appendChild(thLead);
+      // group contiguous identical section names
+      let i = 0;
+      while (i < headers.length) {
+        const sec = sections[i] || '';
+        let span = 1;
+        while (i + span < headers.length && (sections[i + span] || '') === sec) span++;
+        const th = document.createElement('th');
+        th.colSpan = span;
+        th.textContent = sec || '';
+        trSec.appendChild(th);
+        i += span;
+      }
+      thead.appendChild(trSec);
+      // ── Second header row: Fields
+      const trFld = document.createElement('tr');
+      trFld.innerHTML = '<th></th>' + headers.map(h => `<th>${h}</th>`).join('');
+      thead.appendChild(trFld);
+
+      const chkAll = trSec.querySelector('#chkAllRows');
       if (chkAll) {
         chkAll.addEventListener('change', () => {
           if (chkAll.checked) {
@@ -169,9 +189,11 @@
         });
         c0.appendChild(cb);
         tr.appendChild(c0);
-        headers.forEach(h => {
+        headers.forEach((h, idx) => {
+          const sec = sections[idx] || '';
+          const key = sec ? `${sec} – ${h}` : h;
           const td = document.createElement('td');
-          td.textContent = r?.[h] ?? '';
+          td.textContent = (r?.[key] ?? r?.[h] ?? '');
           tr.appendChild(td);
         });
         tbody.appendChild(tr);
@@ -192,12 +214,14 @@
           if (tbody) tbody.innerHTML = `<tr><td colspan="99">Failed to read sheet "${state.selectedSheet}".</td></tr>`;
           return;
         }
-        const rows = res.rows || [];
-        const headers = rows.length ? Object.keys(rows[0]) : [];
-        state.previewRows = rows;
-        state.previewHeaders = headers;
+        const rows    = res.rows || [];
+        const headers = res.headers || (rows.length ? Object.keys(rows[0]) : []);
+        const sections= res.sections || headers.map(()=>'');
+        state.previewRows     = rows;
+        state.previewHeaders  = headers;
+        state.previewSections = sections;
         state.selectedRowIdx = new Set(rows.map((_, i) => i)); // default: all selected
-        renderPreview(headers, rows);
+        renderPreview(sections, headers, rows);
       } catch (e) {
         console.error('[wizard] buildPreview error', e);
       }
@@ -260,6 +284,7 @@
           const payload = {
             location: state.location,
             sheetName: state.selectedSheet || 'Data',
+            sections: state.previewSections,
             headers: state.previewHeaders,
             rows: selected,
           };
@@ -267,13 +292,15 @@
           if (!res || res.success === false) {
             return alertUser('Import failed.');
           }
-          // Update UI: filters + pins + go back to map
+          // Update UI: clear renderer data → refresh filters/pins/list → go back to map
+          if (typeof window.invalidateStationData === 'function') window.invalidateStationData();
           if (typeof window.electronAPI.invalidateStationCache === 'function') {
             await window.electronAPI.invalidateStationCache();
           }
           if (typeof window.refreshFilters === 'function') setTimeout(window.refreshFilters, 0);
           if (typeof window.refreshMarkers === 'function') setTimeout(window.refreshMarkers, 0);
-          alertUser(`Imported ${res.added + res.merged} row(s) (${res.added} new).`);
+          if (typeof window.renderList === 'function') setTimeout(window.renderList, 0);
+          alertUser(`Imported ${res.added} row(s).`);
           handleCancel();           // reset wizard
           setActiveNav('navMap');   // show map
           showViews({ map:true, wizard:false });

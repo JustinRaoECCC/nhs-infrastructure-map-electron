@@ -17,7 +17,6 @@
   "author": "",
   "license": "ISC", 
   "dependencies": {
-    "better-sqlite3": "^12.2.0",
     "exceljs": "^4.4.0",
     "fs-extra": "^11.3.1",
     "leaflet": "^1.9.4",
