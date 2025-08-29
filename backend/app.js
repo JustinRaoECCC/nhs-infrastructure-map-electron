@@ -1,21 +1,7 @@
 // backend/app.js
 const path = require('path');
-const { readJSON, writeJSON } = require('./utils/fs_utils');
 const lookupsRepo = require('./lookups_repo');
 const excel = require('./excel_worker_client');
-
-const STATE_PATH = path.join(__dirname, '..', 'data', 'app_state.json');
-let _state = null;
-
-// shape: { stations: [], colors: { global: {...}, byLocation: { [loc]: { [assetType]: "#hex" } } }, companies: [] }
-function loadState() {
-  if (_state) return _state;
-  const s = readJSON(STATE_PATH, null) ||
-            { stations: [], colors: { global: {}, byLocation: {} }, companies: ['NHS'] };
-  _state = s;
-  return s;
-}
-function saveState(s) { _state = s; writeJSON(STATE_PATH, s); }
 
 // deterministic fallback color
 function hashColor(str) {
@@ -25,12 +11,11 @@ function hashColor(str) {
 }
 
 // ─── Public API ────────────────────────────────────────────────────────────
-// When opts.skipColors === true, we avoid touching lookups/excel and
-// synthesize colors deterministically for a *much faster* first paint.
 async function getStationData(opts = {}) {
   const skipColors = !!opts.skipColors;
-  const s = loadState();
-  const rows = s.stations || [];
+  // Always aggregate from location workbooks
+  const agg = await excel.readStationsAggregate().catch(() => ({ success:false, rows: [] }));
+  const rows = agg?.rows || [];
   const out = new Array(rows.length);
 
   // Resolve colors in ONE pass from cache (warm if needed)
@@ -54,7 +39,6 @@ async function getStationData(opts = {}) {
       const m = byLoc.get(loc);
       color = (m && m.get(at)) || globalMap.get(at) || null;
     } else {
-      // Fallback (should rarely happen)
       try {
         color = await lookupsRepo.getAssetTypeColorForLocation(at, loc)
               || await lookupsRepo.getAssetTypeColor(at);
@@ -73,8 +57,7 @@ async function getActiveCompanies() {
   } catch (e) {
     console.error('[lookups] getActiveCompanies failed:', e);
   }
-  const s = loadState();
-  return (s.companies && s.companies.length) ? s.companies : ['NHS'];
+  return ['NHS'];
 }
 
 async function getLocationsForCompany(_company) {
@@ -84,11 +67,7 @@ async function getLocationsForCompany(_company) {
   } catch (e) {
     console.error('[lookups] getLocationsForCompany failed:', e);
   }
-  // Legacy fallback: infer from station data (unscoped by company)
-  const s = loadState();
-  const locs = new Set();
-  (s.stations || []).forEach(st => { if (st.province) locs.add(st.province); });
-  return Array.from(locs).sort((a,b) => a.localeCompare(b));
+  return []; // lookups workbook is source of truth; no state fallback
 }
 
 async function getAssetTypesForLocation(_company, loc) {
@@ -98,13 +77,7 @@ async function getAssetTypesForLocation(_company, loc) {
   } catch (e) {
     console.error('[lookups] getAssetTypesForLocation failed:', e);
   }
-  // Legacy fallback: infer from station data
-  const s = loadState();
-  const ats = new Set();
-  (s.stations || []).forEach(st => {
-    if ((st.province || st.location) === loc && st.asset_type) ats.add(st.asset_type);
-  });
-  return Array.from(ats).sort((a,b) => a.localeCompare(b));
+  return []; // lookups workbook is source of truth; no state fallback
 }
 
 // Colors (global)
@@ -133,53 +106,79 @@ async function setAssetTypeColorForLocation(assetType, loc, color) {
  */
 async function importMultipleStations(b64) {
   try {
-    const parsed = await excel.parseRows(b64);
+    // Global import now routes data into <Province>.xlsx (or Location) files,
+    // preserving two-row headers from the source sheet (first sheet).
+    const sheets = await excel.listSheets(b64);
+    if (!sheets?.success || !sheets.sheets?.length) {
+      return { success:false, message:'No sheets to import.' };
+    }
+    const sheetName = sheets.sheets[0];
+    const parsed = await excel.parseRowsFromSheet(b64, sheetName);
     if (!parsed?.success) return { success:false, message: parsed?.message || 'Parse failed.' };
     const rows = parsed.rows || [];
-    const s = loadState();
-    const byId = new Map((s.stations || []).map(st => [String(st.station_id), st]));
+    const sections = parsed.sections || parsed.headers.map(()=>'');
+    const headers  = parsed.headers  || Object.keys(rows[0] || {});
 
-    let added = 0, merged = 0;
-
+    // Group rows by Province (acts as "Location")
+    const groups = new Map();
     for (const r of rows) {
-      const id = String(r['Station ID'] ?? r['station_id'] ?? '').trim();
-      if (!id) continue;
-
-      const norm = {
-        station_id: id,
-        asset_type: r['Category'] ?? r['asset_type'] ?? '',
-        name:       r['Site Name'] ?? r['name'] ?? '',
-        province:   r['Province']  ?? r['province'] ?? '',
-        lat:        r['Latitude']  ?? r['lat'] ?? '',
-        lon:        r['Longitude'] ?? r['lon'] ?? '',
-        status:     r['Status']    ?? r['status'] ?? '',
-      };
-
-      // include any "Section – Field" columns verbatim
-      Object.keys(r).forEach(k => { if (k.includes(' – ')) norm[k] = r[k]; });
-
-      const existing = byId.get(id);
-      if (!existing) {
-        s.stations.push(norm);
-        byId.set(id, norm);
-        added++;
-      } else {
-        let changed = 0;
-        for (const [k, v] of Object.entries(norm)) {
-          const cur = existing[k];
-          const empty = cur === undefined || cur === null || String(cur) === '';
-          if (empty && String(v) !== '') { existing[k] = v; changed++; }
-        }
-        if (changed) merged++;
-      }
+      const province = String(r['Province'] ?? r['province'] ?? r['General Information – Province'] ?? '').trim();
+      const key = province || 'Unknown';
+      (groups.get(key) || groups.set(key, []).get(key)).push(r);
     }
-
-    saveState(s);
-    return { success: true, added, merged, total: rows.length };
+    let total = 0;
+    for (const [loc, rowsForLoc] of groups.entries()) {
+      await excel.writeLocationRows(loc, sheetName, sections, headers, rowsForLoc);
+      total += rowsForLoc.length;
+    }
+    return { success:true, added: total, merged: 0, total };
   } catch (e) {
     console.error('[importMultipleStations] exceljs load/parse failed:', e);
     return { success: false, message: String(e) };
   }
+}
+
+// Normalize one row into our station shape (same rules as importMultipleStations)
+function normalizeRow(r) {
+  const id = String(r['Station ID'] ?? r['station_id'] ?? '').trim();
+  if (!id) return null;
+  const out = {
+    station_id: id,
+    asset_type: r['Category'] ?? r['asset_type'] ?? '',
+    name:       r['Site Name'] ?? r['name'] ?? '',
+    province:   r['Province']  ?? r['province'] ?? '',
+    lat:        r['Latitude']  ?? r['lat'] ?? '',
+    lon:        r['Longitude'] ?? r['lon'] ?? '',
+    status:     r['Status']    ?? r['status'] ?? '',
+  };
+  Object.keys(r).forEach(k => { if (k.includes(' – ')) out[k] = r[k]; });
+  return out;
+}
+
+/**
+ * Add a user-selected subset of rows to:
+ *  1) data/locations/<location>.xlsx (sheetName, headers preserved)
+ *  2) in-memory + app_state.json stations (pins appear)
+ */
+async function addStationsFromSelection(payload) {
+  const { location, sheetName, sections, headers, rows } = payload || {};
+  if (!Array.isArray(rows) || !rows.length) {
+    return { success:false, message:'No rows selected.' };
+  }
+  // 1) Persist to the location workbook
+  try {
+    const secs = Array.isArray(sections) && sections.length === headers.length
+      ? sections
+      : (headers || []).map(()=>'');
+    await excel.writeLocationRows(location, sheetName || 'Data', secs, headers || Object.keys(rows[0] || {}), rows);
+  } catch (e) {
+    console.error('[importSelection] writeLocationRows failed:', e);
+    return { success:false, message:'Failed writing to location workbook.' };
+  }
+
+  // No state writes. The map view will re-read from files.
+  const total = rows.length;
+  return { success:true, added: total, merged: 0, total };
 }
 
 /**
@@ -203,6 +202,7 @@ module.exports = {
   setAssetTypeColorForLocation,
   importMultipleStations,
   listExcelSheets,
+  addStationsFromSelection,
   upsertCompany: lookupsRepo.upsertCompany,
   upsertLocation: lookupsRepo.upsertLocation,
   upsertAssetType: lookupsRepo.upsertAssetType,
@@ -213,5 +213,5 @@ module.exports = {
   setAssetTypeColor,
   getAssetTypeColor,
   // misc
-  invalidateStationCache: () => { _state = null; },
+  invalidateStationCache: () => { /* no-op; we read fresh from files */ },
 };

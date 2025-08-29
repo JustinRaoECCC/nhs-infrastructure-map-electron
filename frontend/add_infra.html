@@ -74,7 +74,20 @@
     <!-- STEP 4: Select data -->
     <div class="wizard-step" id="stepSelectData">
       <h3>Select data</h3>
-      <p style="opacity:.7">Coming soon — not implemented yet.</p>
+      <div class="table-toolbar">
+        <div>
+          <button id="btnSelectAllRows" class="btn btn-ghost">Select all</button>
+          <button id="btnDeselectAllRows" class="btn btn-ghost">Deselect all</button>
+        </div>
+        <div id="rowCountBadge" class="badge">0 selected</div>
+      </div>
+      <div class="table-scroll">
+        <table id="sheetPreviewTable" class="data-table">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="hint">Tip: columns mirror your Excel sheet; only selected rows will be imported.</p>
     </div>
   </div>
 

@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ─── Excel helper for Step 3 sheet picker ───────────────────────────────
   excelListSheets: (b64)                      => ipcRenderer.invoke('excel:listSheets', b64),
+  excelParseRowsFromSheet: (b64, sheetName)   => ipcRenderer.invoke('excel:parseRowsFromSheet', b64, sheetName),
 
   // ─── Boot progress from the worker (UI progress bar) ────────────────────
   onExcelProgress: (handler) => {
@@ -28,4 +29,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // return an unsubscribe in case you want to detach later
     return () => ipcRenderer.removeListener('excel:progress', listener);
   },
+
+  // ─── Selections → file + pins ───────────────────────────────────────────
+  importSelection: (payload) => ipcRenderer.invoke('stations:importSelection', payload),
 });

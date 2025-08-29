@@ -94,6 +94,7 @@ app.on('window-all-closed', function () {
 // ─── IPC: Stations ─────────────────────────────────────────────────────────
 ipcMain.handle('stations:get', async (_evt, opts) => backend.getStationData(opts || {}));
 ipcMain.handle('stations:import', async (_evt, b64) => backend.importMultipleStations(b64));
+ipcMain.handle('stations:importSelection', async (_evt, payload) => backend.addStationsFromSelection(payload));
 ipcMain.handle('stations:invalidate', async () => backend.invalidateStationCache());
 
 // ─── IPC: Lookups (reads) ──────────────────────────────────────────────────
@@ -113,3 +114,6 @@ ipcMain.handle('lookups:setAssetTypeColor', async (_evt, assetType, color) => ba
 ipcMain.handle('lookups:getAssetTypeColorForLocation', async (_evt, assetType, location) => backend.getAssetTypeColorForLocation(assetType, location));
 ipcMain.handle('lookups:setAssetTypeColorForLocation', async (_evt, assetType, location, color) => backend.setAssetTypeColorForLocation(assetType, location, color));
 ipcMain.handle('excel:listSheets', async (_evt, b64) => backend.listExcelSheets(b64));
+ipcMain.handle('excel:parseRowsFromSheet', async (_evt, b64, sheetName) =>
+  excelClient.parseRowsFromSheet(b64, sheetName)
+);

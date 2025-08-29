@@ -49,6 +49,12 @@ module.exports = {
   // Excel from base64
   listSheets: (b64) => call('listSheets', b64),
   parseRows:  (b64) => call('parseRows',  b64),
+  // NEW: read a specific sheet with two-row headers (Section row + Field row)
+  parseRowsFromSheet: (b64, sheetName) => call('parseRowsFromSheet', b64, sheetName),
+  // Write selected rows to a location workbook preserving the two-row headers
+  writeLocationRows: (location, sheetName, sections, headers, rows) =>
+    call('writeLocationRows', location, sheetName, sections, headers, rows),
+  // NEW: aggregate all stations from every data/locations/*.xlsx
   // Lookups workbook
   ensureLookupsReady:   () => call('ensureLookupsReady'),
   readLookupsSnapshot:  () => call('readLookupsSnapshot'),

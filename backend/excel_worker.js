@@ -267,8 +267,9 @@ async function upsertAssetType(assetType, location) {
 
 // ─── Base64 helpers ───────────────────────────────────────────────────────
 async function listSheets(b64) {
+  const _ExcelJS = getExcel();
   const buf = Buffer.from(b64, 'base64');
-  const wb  = new ExcelJS.Workbook();
+  const wb  = new _ExcelJS.Workbook();
   await wb.xlsx.load(buf);
   const sheets = (wb.worksheets || []).map(ws => ws?.name || '').filter(Boolean);
   return { success: true, sheets };
@@ -298,13 +299,223 @@ function sheetToObjects(ws) {
 }
 
 async function parseRows(b64) {
+  const _ExcelJS = getExcel();
   const buf = Buffer.from(b64, 'base64');
-  const wb  = new ExcelJS.Workbook();
+  const wb  = new _ExcelJS.Workbook();
   await wb.xlsx.load(buf);
   const ws = wb.worksheets[0];
   if (!ws) return { success:false, message:'No sheets found.', rows: [] };
-  const rows = sheetToObjects(ws);
+  const rows = sheetToObjectsOneRow(ws);
   return { success:true, rows };
+}
+
+// Helpers for headers
+function takeText(cell) { return String(cell?.text ?? '').trim(); }
+function sheetToObjectsOneRow(ws) {
+  const headerRow = ws.getRow(1);
+  const maxCol = ws.actualColumnCount || ws.columnCount || headerRow.cellCount || 0;
+  const lastRow = ws.actualRowCount || ws.rowCount || 1;
+  const headers = [];
+  for (let c = 1; c <= maxCol; c++) headers.push(takeText(headerRow.getCell(c)));
+  const out = [];
+  for (let r = 2; r <= lastRow; r++) {
+    const row = ws.getRow(r);
+    const obj = {}; let has = false;
+    for (let c = 1; c <= maxCol; c++) {
+      const key = headers[c - 1]; if (!key) continue;
+      const val = takeText(row.getCell(c));
+      if (val !== '') has = true;
+      obj[key] = val;
+    }
+    if (has) out.push(obj);
+  }
+  return out;
+}
+
+function sheetTwoRowMeta(ws) {
+  const row1 = ws.getRow(1);
+  const row2 = ws.getRow(2);
+  const maxCol = Math.max(
+    ws.actualColumnCount || 0,
+    row1.actualCellCount || row1.cellCount || 0,
+    row2.actualCellCount || row2.cellCount || 0
+  );
+  const sections = [], fields = [], keys = [];
+  for (let c = 1; c <= maxCol; c++) {
+    const sec = takeText(row1.getCell(c));
+    const fld = takeText(row2.getCell(c));
+    if (!sec && !fld) continue; // ignore empty column
+    sections.push(sec);
+    fields.push(fld);
+    // we store both composite and plain so callers can find by field name alone
+    keys.push(sec ? `${sec} – ${fld}` : fld);
+  }
+  return { sections, fields, keys, maxCol };
+}
+
+function sheetToObjectsTwoRow(ws) {
+  const { sections, fields, keys, maxCol } = sheetTwoRowMeta(ws);
+  const lastRow = ws.actualRowCount || ws.rowCount || 2;
+  const out = [];
+  for (let r = 3; r <= lastRow; r++) {
+    const row = ws.getRow(r);
+    const obj = {}; let has = false;
+    for (let c = 1, k = 0; c <= maxCol; c++) {
+      const sec = takeText(ws.getRow(1).getCell(c));
+      const fld = takeText(ws.getRow(2).getCell(c));
+      if (!sec && !fld) continue;
+      const v = takeText(row.getCell(c));
+      if (v !== '') has = true;
+      const composite = sec ? `${sec} – ${fld}` : fld;
+      // Store under BOTH composite and plain field for easy lookups:
+      if (fld) obj[fld] = v;
+      obj[composite] = v;
+    }
+    if (has) out.push(obj);
+  }
+  return { rows: out, sections, fields };
+}
+
+// Parse a specific worksheet by name, preferring two-row headers.
+async function parseRowsFromSheet(b64, sheetName) {
+  const _ExcelJS = getExcel();
+  const buf = Buffer.from(b64, 'base64');
+  const wb  = new _ExcelJS.Workbook();
+  await wb.xlsx.load(buf);
+  const ws = wb.worksheets.find(w => w?.name === sheetName)
+          || wb.worksheets.find(w => lc(w?.name) === lc(sheetName));
+  if (!ws) return { success:false, message:`Sheet not found: ${sheetName}`, rows: [] };
+  // Decide if sheet has two header rows
+  const row2HasAny = (ws.getRow(2)?.actualCellCount || 0) > 0;
+  if (row2HasAny) {
+    const { rows, sections, fields } = sheetToObjectsTwoRow(ws);
+    return { success:true, rows, sections, headers: fields };
+  } else {
+    const rows = sheetToObjectsOneRow(ws);
+    const headerRow = ws.getRow(1);
+    const fields = [];
+    const maxCol = ws.actualColumnCount || headerRow.cellCount || 0;
+    for (let c = 1; c <= maxCol; c++) fields.push(takeText(headerRow.getCell(c)));
+    const sections = fields.map(() => '');
+    return { success:true, rows, sections, headers: fields };
+  }
+}
+
+// Write rows preserving TWO-ROW headers (sections + fields)
+async function writeLocationRows(location, sheetName, sections, headers, rows) {
+  if (!location) throw new Error('Location is required');
+  if (!Array.isArray(headers) || !headers.length) throw new Error('Headers are required');
+  if (!Array.isArray(sections) || sections.length !== headers.length)
+    throw new Error('Sections must align with headers');
+  const _ExcelJS = getExcel();
+  await ensureLookupsReady(); // guarantees DATA_DIR etc.
+
+  const locPath = path.join(LOCATIONS_DIR, `${normStr(location)}.xlsx`);
+  const wb = new _ExcelJS.Workbook();
+  if (fs.existsSync(locPath)) {
+    await wb.xlsx.readFile(locPath);
+  }
+  let ws = getSheet(wb, sheetName) || wb.getWorksheet(sheetName);
+  if (!ws) {
+    ws = wb.addWorksheet(sheetName || 'Data');
+    ws.addRow(sections);
+    ws.addRow(headers);
+  }
+
+  // Build the existing two-row header, if present
+  let curSecs = [], curFlds = [];
+  if (ws.rowCount >= 2) {
+    const r1 = ws.getRow(1), r2 = ws.getRow(2);
+    const maxCol = Math.max(r1.actualCellCount || r1.cellCount || 0,
+                            r2.actualCellCount || r2.cellCount || 0,
+                            headers.length);
+    for (let c = 1; c <= maxCol; c++) {
+      curSecs.push(takeText(r1.getCell(c)));
+      curFlds.push(takeText(r2.getCell(c)));
+    }
+  }
+  if (!curFlds.some(Boolean)) { curSecs = sections.slice(); curFlds = headers.slice(); }
+
+  // Union existing header pairs with incoming header pairs (preserve existing order)
+  const pairKey = (s, h) => `${s}|||${h}`;
+  const have = new Set(curFlds.map((h, i) => pairKey(curSecs[i], h)));
+  sections.forEach((s, i) => {
+    const k = pairKey(s, headers[i]);
+    if (!have.has(k)) {
+      curSecs.push(s); curFlds.push(headers[i]); have.add(k);
+    }
+  });
+  // Rewrite header rows to final union
+  ws.getRow(1).values = [ , ...curSecs ];
+  ws.getRow(2).values = [ , ...curFlds ];
+
+  // Append rows mapping object keys -> [composite or plain] header positions
+  const compositeKeys = curFlds.map((h, i) => (curSecs[i] ? `${curSecs[i]} – ${h}` : h));
+  for (const obj of rows) {
+    const arr = compositeKeys.map((k, i) => {
+      const plain = curFlds[i];
+      return (obj?.[k] ?? obj?.[plain] ?? '');
+    });
+    ws.addRow(arr);
+  }
+
+  await wb.xlsx.writeFile(locPath);
+  return { success:true, file: locPath, sheet: ws.name, added: rows.length };
+}
+
+// Utility: pull a field from an object regardless of section prefix
+function pick(obj, fieldName) {
+  if (!obj) return '';
+  if (obj[fieldName] !== undefined) return obj[fieldName];
+  const suffix = ` – ${fieldName}`;
+  for (const k of Object.keys(obj)) {
+    if (k.endsWith(suffix)) return obj[k];
+  }
+  // case-insensitive fallback
+  const want = fieldName.toLowerCase();
+  for (const k of Object.keys(obj)) {
+    if (k.toLowerCase() === want) return obj[k];
+    if (k.toLowerCase().endsWith((' – ' + want))) return obj[k];
+  }
+  return '';
+}
+
+// Aggregate stations from all location files for map pins
+async function readStationsAggregate() {
+  await ensureLookupsReady();
+  ensureDir(LOCATIONS_DIR);
+  const files = fs.readdirSync(LOCATIONS_DIR).filter(fn => fn.toLowerCase().endsWith('.xlsx'));
+  const _ExcelJS = getExcel();
+  const out = [];
+  for (const fn of files) {
+    const full = path.join(LOCATIONS_DIR, fn);
+    const wb = new _ExcelJS.Workbook();
+    try { await wb.xlsx.readFile(full); } catch { continue; }
+    for (const ws of wb.worksheets) {
+      if (!ws || ws.rowCount < 2) continue;
+      const twoRow = (ws.getRow(2)?.actualCellCount || 0) > 0;
+      let rows = [];
+      if (twoRow) {
+        rows = sheetToObjectsTwoRow(ws).rows;
+      } else {
+        rows = sheetToObjectsOneRow(ws);
+      }
+      for (const r of rows) {
+        const st = {
+          station_id: pick(r, 'Station ID'),
+          asset_type: pick(r, 'Category'),
+          name:       pick(r, 'Site Name'),
+          province:   pick(r, 'Province'),
+          lat:        pick(r, 'Latitude'),
+          lon:        pick(r, 'Longitude'),
+          status:     pick(r, 'Status'),
+        };
+        // attach all original fields too, so “Section – Field” details show
+        out.push({ ...r, ...st });
+      }
+    }
+  }
+  return { success:true, rows: out };
 }
 
 // ─── RPC shim ─────────────────────────────────────────────────────────────
@@ -319,6 +530,9 @@ const handlers = {
   upsertAssetType,
   listSheets,
   parseRows,
+  parseRowsFromSheet,
+  writeLocationRows,
+  readStationsAggregate,
 };
 
 parentPort.on('message', async (msg) => {

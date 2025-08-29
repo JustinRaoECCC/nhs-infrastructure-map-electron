@@ -97,18 +97,111 @@
     const chkMethodImport  = root.querySelector('#methodImport');
     const inputAssetName   = root.querySelector('#assetName');
     const selectSheet      = root.querySelector('#sheetSelect');
+    // Step 4
+    const table            = root.querySelector('#sheetPreviewTable');
+    const thead            = table ? table.querySelector('thead') : null;
+    const tbody            = table ? table.querySelector('tbody') : null;
+    const btnSelAll        = root.querySelector('#btnSelectAllRows');
+    const btnDeselAll      = root.querySelector('#btnDeselectAllRows');
+    const rowCountBadge    = root.querySelector('#rowCountBadge');
 
     const state = createState();
+    state.previewRows = [];
+    state.previewHeaders = [];
+    state.selectedRowIdx = new Set();
 
     function setActiveStep(idx) {
       state.current = Math.max(0, Math.min(stepEls.length - 1, idx));
       stepEls.forEach((el, i) => el.classList.toggle('active', i === state.current));
       stepIndicator.forEach((el, i) => el.classList.toggle('active', i === state.current));
       if (btnBack) btnBack.disabled = state.current === 0;
-      if (btnNext) btnNext.textContent = (state.current === stepEls.length - 1) ? 'FINISH' : 'NEXT';
+      if (btnNext) btnNext.textContent = (state.current === stepEls.length - 1) ? 'IMPORT SELECTED' : 'NEXT';
+
+      // If we've just navigated to Step 4, load the preview table
+      if (state.current === 3) {
+        buildPreview();
+      }
     }
 
     function alertUser(msg) { alert(msg); }
+
+    function updateSelectedBadge() {
+      if (!rowCountBadge) return;
+      rowCountBadge.textContent = `${state.selectedRowIdx.size} selected`;
+    }
+
+    function renderPreview(headers, rows) {
+      if (!thead || !tbody) return;
+      thead.innerHTML = '';
+      tbody.innerHTML = '';
+      // header row (with a leading checkbox column)
+      const trh = document.createElement('tr');
+      trh.innerHTML = `<th style="width:36px;"><input id="chkAllRows" type="checkbox"/></th>` +
+        headers.map(h => `<th>${h}</th>`).join('');
+      thead.appendChild(trh);
+      const chkAll = trh.querySelector('#chkAllRows');
+      if (chkAll) {
+        chkAll.addEventListener('change', () => {
+          if (chkAll.checked) {
+            state.selectedRowIdx = new Set(rows.map((_, i) => i));
+          } else {
+            state.selectedRowIdx.clear();
+          }
+          // Update all row checkboxes
+          tbody.querySelectorAll('input[type=checkbox].rowchk').forEach((cb, i) => {
+            cb.checked = chkAll.checked;
+          });
+          updateSelectedBadge();
+        });
+      }
+      // body rows
+      rows.forEach((r, i) => {
+        const tr = document.createElement('tr');
+        const c0 = document.createElement('td');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'rowchk';
+        cb.checked = true; // default selected
+        state.selectedRowIdx.add(i);
+        cb.addEventListener('change', () => {
+          if (cb.checked) state.selectedRowIdx.add(i); else state.selectedRowIdx.delete(i);
+          updateSelectedBadge();
+        });
+        c0.appendChild(cb);
+        tr.appendChild(c0);
+        headers.forEach(h => {
+          const td = document.createElement('td');
+          td.textContent = r?.[h] ?? '';
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      updateSelectedBadge();
+    }
+
+    async function buildPreview() {
+      if (!state.excelB64 || !state.selectedSheet) {
+        if (thead) thead.innerHTML = '';
+        if (tbody) tbody.innerHTML = '<tr><td colspan="99" style="opacity:.7;padding:.75em;">Select an Excel file and sheet first.</td></tr>';
+        return;
+      }
+      try {
+        const res = await window.electronAPI.excelParseRowsFromSheet(state.excelB64, state.selectedSheet);
+        if (!res || res.success === false) {
+          console.error('[wizard] parseRowsFromSheet failed:', res?.message);
+          if (tbody) tbody.innerHTML = `<tr><td colspan="99">Failed to read sheet "${state.selectedSheet}".</td></tr>`;
+          return;
+        }
+        const rows = res.rows || [];
+        const headers = rows.length ? Object.keys(rows[0]) : [];
+        state.previewRows = rows;
+        state.previewHeaders = headers;
+        state.selectedRowIdx = new Set(rows.map((_, i) => i)); // default: all selected
+        renderPreview(headers, rows);
+      } catch (e) {
+        console.error('[wizard] buildPreview error', e);
+      }
+    }
 
     async function handleNext() {
       try {
@@ -159,10 +252,34 @@
         }
 
         if (state.current === 3) {
-          // STEP 4: (intentionally left as-is)
-          alertUser('Step 4 is not implemented yet.');
+          // STEP 4: Import selected rows → file & pins
+          if (!state.previewRows.length) return alertUser('Nothing to import.');
+          const idxs = Array.from(state.selectedRowIdx.values()).sort((a,b)=>a-b);
+          if (!idxs.length) return alertUser('Please select at least one row.');
+          const selected = idxs.map(i => state.previewRows[i]).filter(Boolean);
+          const payload = {
+            location: state.location,
+            sheetName: state.selectedSheet || 'Data',
+            headers: state.previewHeaders,
+            rows: selected,
+          };
+          const res = await window.electronAPI.importSelection(payload);
+          if (!res || res.success === false) {
+            return alertUser('Import failed.');
+          }
+          // Update UI: filters + pins + go back to map
+          if (typeof window.electronAPI.invalidateStationCache === 'function') {
+            await window.electronAPI.invalidateStationCache();
+          }
+          if (typeof window.refreshFilters === 'function') setTimeout(window.refreshFilters, 0);
+          if (typeof window.refreshMarkers === 'function') setTimeout(window.refreshMarkers, 0);
+          alertUser(`Imported ${res.added + res.merged} row(s) (${res.added} new).`);
+          handleCancel();           // reset wizard
+          setActiveNav('navMap');   // show map
+          showViews({ map:true, wizard:false });
           return;
         }
+
       } catch (err) {
         console.error('[wizard] NEXT failed', err);
         alertUser('Unexpected error. See console for details.');
@@ -257,6 +374,22 @@
         state.selectedSheet = selectSheet.value || null;
       });
     }
+
+    if (btnSelAll) {
+      btnSelAll.addEventListener('click', () => {
+        state.selectedRowIdx = new Set(state.previewRows.map((_, i) => i));
+        tbody?.querySelectorAll('input[type=checkbox].rowchk').forEach(cb => cb.checked = true);
+        updateSelectedBadge();
+      });
+    }
+    if (btnDeselAll) {
+      btnDeselAll.addEventListener('click', () => {
+        state.selectedRowIdx.clear();
+        tbody?.querySelectorAll('input[type=checkbox].rowchk').forEach(cb => cb.checked = false);
+        updateSelectedBadge();
+      });
+    }
+
 
     if (btnNext)   btnNext.addEventListener('click', handleNext);
     if (btnBack)   btnBack.addEventListener('click', handleBack);
