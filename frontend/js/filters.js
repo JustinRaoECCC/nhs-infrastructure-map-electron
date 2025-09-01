@@ -1,6 +1,7 @@
 // frontend/js/filters.js
 // Collapsible, tri-state filter tree:
 // Company ▸ Locations ▸ Asset Types, with blue checkboxes.
+// FIXED: Prevents initial change event from clearing map pins
 (function () {
   'use strict';
 
@@ -29,42 +30,81 @@
   function uniq(arr) { return Array.from(new Set((arr || []).filter(Boolean))); }
 
   async function fetchTree() {
-    // Primary: read from lookups workbook (Companies/Locations/AssetTypes)
+    // 1) Try Lookups first (source of truth for hierarchy)
+    let treeFromLookups = null;
     try {
       if (window.electronAPI?.getLookupTree) {
         const t = await window.electronAPI.getLookupTree();
-        if (t && Array.isArray(t.companies) && t.companies.length) return t;
+        if (t && Array.isArray(t.companies)) treeFromLookups = t;
       }
     } catch (e) {
       console.error('[filters] getLookupTree failed', e);
     }
-    // Fallback: infer from current stations (one “NHS” company).
+
+    // 2) Always read current stations so we can union file-derived locations
+    //    (ensures the filter UI contains values that actually exist on disk).
+    let dataLocs = [], assetsByLocData = {};
     try {
       const data = await window.electronAPI.getStationData({});
       const norm = s => String(s ?? '').trim();
-      const locs = uniq((data || []).map(s => norm(s.province || s.location || s.location_file)).filter(Boolean))
-        .sort((a, b) => a.localeCompare(b));
-      const assetsByLocation = {};
+      dataLocs = uniq((data || [])
+        .map(s => norm(s.province || s.location || s.location_file))
+        .filter(Boolean)).sort((a, b) => a.localeCompare(b));
       (data || []).forEach(s => {
         const loc = norm(s.province || s.location || s.location_file || '');
         const at  = norm(s.asset_type || '');
         if (!loc || !at) return;
-        (assetsByLocation[loc] ||= new Set()).add(at);
+        (assetsByLocData[loc] ||= new Set()).add(at);
       });
-      Object.keys(assetsByLocation).forEach(k => {
-        assetsByLocation[k] = Array.from(assetsByLocation[k]).sort((a, b) => a.localeCompare(b));
+      Object.keys(assetsByLocData).forEach(k => {
+        assetsByLocData[k] = Array.from(assetsByLocData[k]).sort((a, b) => a.localeCompare(b));
       });
-      const companies = locs.length ? ['NHS'] : [];
-      return { companies, locationsByCompany: { 'NHS': locs }, assetsByLocation };
     } catch (e) {
-      console.error('[filters] fallback build failed', e);
-      return { companies: [], locationsByCompany: {}, assetsByLocation: {} };
+      console.error('[filters] data introspection failed', e);
     }
+
+    // 3) If we have a Lookups tree, merge in data-derived locations/assets.
+    if (treeFromLookups && treeFromLookups.companies.length) {
+      const tree = {
+        companies: [...treeFromLookups.companies],
+        locationsByCompany: { ...(treeFromLookups.locationsByCompany || {}) },
+        assetsByLocation:   { ...(treeFromLookups.assetsByLocation   || {}) },
+      };
+      // Ensure there is a bucket to drop data-only locations into.
+      if (!tree.companies.includes('NHS')) tree.companies.push('NHS');
+      tree.locationsByCompany['NHS'] ||= [];
+
+      dataLocs.forEach(loc => {
+        const exists = Object.values(tree.locationsByCompany)
+          .some(arr => Array.isArray(arr) && arr.includes(loc));
+        if (!exists) {
+          tree.locationsByCompany['NHS'].push(loc);
+          tree.locationsByCompany['NHS'].sort((a,b)=>a.localeCompare(b));
+        }
+        if (!tree.assetsByLocation[loc]) {
+          tree.assetsByLocation[loc] = assetsByLocData[loc] || [];
+        }
+      });
+      return tree;
+    }
+
+    // 4) If no Lookups hierarchy yet, fall back to a simple inferred tree.
+    const companies = dataLocs.length ? ['NHS'] : [];
+    return { companies,
+             locationsByCompany: dataLocs.length ? { 'NHS': dataLocs } : {},
+             assetsByLocation: assetsByLocData };
   }
 
+  // ADDED: Flag to track if this is the initial render
+  let INITIAL_RENDER = true;
+
   function render(tree) {
+    console.log('[filters] render() called, INITIAL_RENDER:', INITIAL_RENDER);
+    
     filterTree.innerHTML = '';
     const frag = document.createDocumentFragment();
+    // mark UI as "not ready" while we build (map should ignore)
+    filterTree.dataset.ready = '0';
 
     const companies     = tree.companies || [];
     const locsByCompany = tree.locationsByCompany || {};
@@ -133,12 +173,32 @@
       );
     }
     filterTree.appendChild(frag);
-    // Force a known-good starting state: everything checked.
-    filterTree.querySelectorAll('input.filter-checkbox').forEach(cb => {
-      cb.checked = true;
-      cb.indeterminate = false;
-    });
+    
+    // Force a known-good starting state (EVERYTHING CHECKED) before we signal ready.
+    const all = filterTree.querySelectorAll('input.filter-checkbox');
+    all.forEach(cb => { cb.checked = true; cb.indeterminate = false; });
     updateTriState(filterTree);
+
+    // CRITICAL FIX: Only fire initial change event after map has had time to render
+    requestAnimationFrame(() => {
+      filterTree.dataset.ready = '1';
+      
+      // FIXED: Don't fire change event on initial render - let the map render first
+      if (!INITIAL_RENDER) {
+        console.log('[filters] Firing change event (not initial render)');
+        filterTree.dispatchEvent(new Event('change', { bubbles: true }));
+      } else {
+        console.log('[filters] Skipping initial change event to prevent clearing map pins');
+        // Mark initial render as complete, future renders will fire change events
+        INITIAL_RENDER = false;
+        
+        // OPTIONAL: Fire change event after a longer delay to allow map to fully render
+        setTimeout(() => {
+          console.log('[filters] Firing delayed initial change event');
+          filterTree.dispatchEvent(new Event('change', { bubbles: true }));
+        }, 3000); // 3 second delay to ensure map is fully rendered
+      }
+    });
   }
 
   function updateTriState(scope) {
@@ -169,6 +229,7 @@
   }
 
   const dispatchChange = debounce(() => {
+    console.log('[filters] dispatchChange called');
     // Let map_view/list_view listen and redraw
     filterTree.dispatchEvent(new Event('change', { bubbles: true }));
   }, 50);
@@ -176,6 +237,9 @@
   function onTreeChange(e) {
     const t = e.target;
     if (!(t instanceof HTMLInputElement) || t.type !== 'checkbox') return;
+    
+    console.log('[filters] User changed filter:', t.value || t.dataset.company);
+    
     if (t.classList.contains('company')) {
       const details = t.closest('details.ft-company');
       if (details) {
@@ -194,14 +258,15 @@
   }
 
   async function build() {
+    console.log('[filters] build() called');
     const tree = await fetchTree();
     render(tree);
-    updateTriState(filterTree);
-    // Kick once so map/list sync with initial “all checked”
-    setTimeout(() => filterTree.dispatchEvent(new Event('change', { bubbles: true })), 0);
+    // tri-state is handled in render(); initial change may fire after delay
   }
 
   document.addEventListener('DOMContentLoaded', () => {
+    console.log('[filters] DOMContentLoaded - setting up filters');
+    
     // Top-of-drawer shortcuts open the wizard
     const openWizard = () => {
       const el = document.getElementById('navNewCompany');

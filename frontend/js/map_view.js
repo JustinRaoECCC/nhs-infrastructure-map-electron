@@ -1,10 +1,6 @@
-// frontend/js/map_view.js
-// Full Map View (Electron) — Leaflet + filters + quick-view + global import
-// (psst: invisible hogs fixed your 0-width lane)
+// frontend/js/map_view.js - FINAL FIX
+// The issue is in the filter evaluation logic during full render
 
-// ────────────────────────────────────────────────────────────────────────────
-// Strict mode & utilities
-// ────────────────────────────────────────────────────────────────────────────
 'use strict';
 
 const debounce = (fn, ms = 150) => {
@@ -26,11 +22,10 @@ let mapStationData = []; // we'll reload this from disk every refresh
 let FAST_BOOT = true;           // first couple seconds: simple pins, limited count
 const MAX_INITIAL_PINS = 800;   // tune for your dataset
 let DID_FIT_BOUNDS = false;     // only fit once on first real data
-let AUTO_SELECTED_FILTERS = false; // first-load safety
-
+let RENDER_IN_PROGRESS = false; // Prevent concurrent renders
 
 // ────────────────────────────────────────────────────────────────────────────
-// Init
+// Init (same as before)
 // ────────────────────────────────────────────────────────────────────────────
 function initMap() {
   console.log('[map] initMap()');
@@ -43,8 +38,6 @@ function initMap() {
     return;
   }
 
-  // Hard guards vs 0 width columns due to grid sizing
-  // (win-condition: the center column must have a measurable width)
   const ensureColumnWidth = () => {
     const w = mapCol.offsetWidth;
     const h = mapCol.offsetHeight;
@@ -53,20 +46,17 @@ function initMap() {
       console.warn('[map] map column width is 0 — forcing min widths');
       mapCol.style.minWidth = '400px';
       mapCol.style.width = '100%';
-      // Also ensure #map fills whatever we give it
       mapEl.style.width = '100%';
     }
   };
   ensureColumnWidth();
 
-  // Create map
   map = L.map('map', {
     maxBounds: [[-90, -180], [90, 180]],
     maxBoundsViscosity: 1.0,
     zoomControl: true
   }).setView([54.5, -119], 5);
 
-  // Basemap (retry once if network service restarts during init)
   function addTiles() {
     try {
       L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -89,7 +79,9 @@ function initMap() {
   }
   addTiles();
 
-  // Grey outside maxBounds
+  const maskPane = map.createPane('maskPane');
+  maskPane.style.zIndex = 350;
+
   (function addGreyMask() {
     const bounds = map.options.maxBounds;
     const sw = bounds.getSouthWest();
@@ -97,26 +89,32 @@ function initMap() {
     const outer = [[-90,-360],[90,-360],[90,360],[-90,360]];
     const inner = [[sw.lat, sw.lng],[sw.lat, ne.lng],[ne.lat, ne.lng],[ne.lat, sw.lng]];
     L.polygon([outer, inner], {
-      fillRule:'evenodd', fillColor:'#DDD', fillOpacity:1, stroke:false, interactive:false
+      pane: 'maskPane',
+      fillRule: 'evenodd',
+      fillColor: '#DDD',
+      fillOpacity: 1,
+      stroke: false,
+      interactive: false
     }).addTo(map);
   })();
 
-  // Markers layer
-  canvasRenderer = L.canvas({ padding: 0.5 });
-  markersLayer = L.layerGroup().addTo(map);
-  console.log('[map] markers layer ready');
+  canvasRenderer = L.canvas({ 
+    pane: 'markerPane', 
+    padding: 0.5,
+    tolerance: 0
+  });
+  
+  markersLayer = L.layerGroup();
+  markersLayer.addTo(map);
+  
+  console.log('[map] markers layer and canvas renderer ready');
 
-  // Resizing — keep the map fresh after layout changes
   const ensureMapSize = () => {
     try {
       map.invalidateSize();
-      const dims = { w: mapEl.offsetWidth, h: mapEl.offsetHeight };
-      // Rage Barbarian: log once in a while
-      // console.log('[map] invalidateSize()', dims);
     } catch (_) {}
   };
 
-  // Observe column size changes (e.g., when filters drawer opens)
   const resizeObs = new ResizeObserver(() => {
     if (mapCol.offsetWidth === 0) {
       mapCol.style.minWidth = '400px';
@@ -131,93 +129,138 @@ function initMap() {
   window.addEventListener('load', () => setTimeout(ensureMapSize, 0));
   window.addEventListener('resize', ensureMapSize);
 
-  // Also watch the drawer toggles
   const drawer = document.getElementById('filterDrawer');
   if (drawer) {
     new MutationObserver(() => setTimeout(ensureMapSize, 120))
       .observe(drawer, { attributes:true, attributeFilter:['class'] });
   }
 
-  // Click map clears right panel placeholder
   map.on('click', () => {
     const container = document.getElementById('station-details');
     if (container) container.innerHTML = `<p><em>Click a pin to see details</em></p>`;
   });
 
-  map.on('tileload', () => {
-    // Mini Pekka approves.
-  });
+  map.on('tileload', () => {});
   map.on('tileerror', (e) => {
     console.error('[map] tile error', e);
   });
 
-  // A couple more reflows for late fonts/GPU
   setTimeout(ensureMapSize, 300);
   setTimeout(ensureMapSize, 800);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Filters state
+// FIXED: Improved filter state detection
 // ────────────────────────────────────────────────────────────────────────────
 function getActiveFilters() {
   const norm = s => String(s ?? '').trim().toLowerCase();
-  const locations = new Set(
-    Array.from(document.querySelectorAll('.filter-checkbox.location:checked'))
-      .map(cb => norm(cb.value))
-  );
-  const assetTypes = new Set(
-    Array.from(document.querySelectorAll('.filter-checkbox.asset-type:checked'))
-      .map(cb => norm(cb.value))
-  );
-  return { locations, assetTypes, _norm: norm };
+  const locCbs = Array.from(document.querySelectorAll('.filter-checkbox.location'));
+  const atCbs  = Array.from(document.querySelectorAll('.filter-checkbox.asset-type'));
+  
+  // CRITICAL FIX: Handle case where checkboxes exist but aren't checked yet
+  const locations = new Set();
+  const assetTypes = new Set();
+  
+  locCbs.forEach(cb => {
+    if (cb.checked) locations.add(norm(cb.value));
+  });
+  
+  atCbs.forEach(cb => {
+    if (cb.checked) assetTypes.add(norm(cb.value));
+  });
+  
+  const allLocationsSelected  = locCbs.length > 0 && locations.size === locCbs.length;
+  const allAssetTypesSelected = atCbs.length  > 0 && assetTypes.size === atCbs.length;
+  
+  console.log('[map] Filter state:', {
+    locCbs: locCbs.length,
+    atCbs: atCbs.length,
+    locationsSelected: locations.size,
+    assetTypesSelected: assetTypes.size,
+    allLocationsSelected,
+    allAssetTypesSelected
+  });
+  
+  return { locations, assetTypes, allLocationsSelected, allAssetTypesSelected, totalLocs: locCbs.length, totalAts: atCbs.length, _norm: norm };
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Icons & station details
-// ────────────────────────────────────────────────────────────────────────────
-// Pretty tri-ring pin: thin BLACK outer ring -> slightly thicker WHITE ring -> COLORED core
-// Returns the top (interactive) inner marker so we can bind popups/clicks.
-function addTriRingMarker(lat, lon, color) {
-  const rCore = FAST_BOOT ? 3 : 4; // slightly smaller during fast boot
-  const ringBlack = 1;     // very thin black outline
-  const ringWhite = 1;     // slightly thicker white ring than black
+// Check if filters are actually restricting anything
+function areFiltersActuallyRestricting() {
+  const filterTreeEl = document.getElementById('filterTree');
+  
+  // If no filter tree, no restriction
+  if (!filterTreeEl || filterTreeEl.dataset.ready !== '1') {
+    console.log('[map] Filters not ready, no restriction');
+    return false;
+  }
+  
+  const { locations, assetTypes, totalLocs, totalAts } = getActiveFilters();
+  
+  // If no checkboxes exist yet, no restriction
+  if (totalLocs === 0 && totalAts === 0) {
+    console.log('[map] No filter checkboxes exist, no restriction');
+    return false;
+  }
+  
+  // If nothing is selected, show everything (no restriction)
+  if (locations.size === 0 && assetTypes.size === 0) {
+    console.log('[map] Nothing selected in filters, no restriction (show all)');
+    return false;
+  }
+  
+  // If everything is selected, no restriction
+  if ((totalLocs === 0 || locations.size === totalLocs) && 
+      (totalAts === 0 || assetTypes.size === totalAts)) {
+    console.log('[map] Everything selected in filters, no restriction');
+    return false;
+  }
+  
+  // Otherwise, we are restricting
+  console.log('[map] Filters are actively restricting');
+  return true;
+}
 
-  // Outer black ring (no fill)
-  if (!FAST_BOOT) { // skip outer/mid rings during fast boot
+function addTriRingMarker(lat, lon, color) {
+  const rCore = FAST_BOOT ? 3 : 4;
+  const ringBlack = 1;
+  const ringWhite = 1;
+
+  if (!FAST_BOOT) {
     const outer = L.circleMarker([lat, lon], {
       renderer: canvasRenderer,
       radius: rCore + ringWhite + (ringBlack * 0.5),
       color: '#000',
       weight: ringBlack,
-      fill: false
+      fill: false,
+      interactive: false
     });
 
-    // Inner white ring (no fill)
     const mid = L.circleMarker([lat, lon], {
       renderer: canvasRenderer,
       radius: rCore + (ringWhite * 0.5),
       color: '#fff',
       weight: ringWhite,
-      fill: false
+      fill: false,
+      interactive: false
     });
+    
     outer.addTo(markersLayer);
     mid.addTo(markersLayer);
   }
 
-  // Colored core (fill only)
   const inner = L.circleMarker([lat, lon], {
     renderer: canvasRenderer,
     radius: rCore,
     fill: true,
     fillColor: color || '#4b5563',
     fillOpacity: 1,
-    stroke: false
+    stroke: false,
+    interactive: true
   });
 
   inner.addTo(markersLayer);
   return inner;
 }
-
 
 function showStationDetails(stn) {
   const container = document.getElementById('station-details');
@@ -273,68 +316,72 @@ function showStationDetails(stn) {
 window.showStationDetails = window.showStationDetails || showStationDetails;
 
 // ────────────────────────────────────────────────────────────────────────────
-// Markers
+// FIXED: Completely rewritten filter logic
 // ────────────────────────────────────────────────────────────────────────────
 async function refreshMarkers() {
+  if (RENDER_IN_PROGRESS) {
+    console.log('[map] Refresh already in progress, skipping');
+    return;
+  }
+  
+  RENDER_IN_PROGRESS = true;
+  console.log('[map] refreshMarkers called, FAST_BOOT:', FAST_BOOT);
+  
   try {
-    // Always read fresh from <locations>.xlsx via the worker
+    // Load station data
     if (typeof window.electronAPI?.getStationData === 'function') {
       mapStationData = await window.electronAPI.getStationData(
         FAST_BOOT ? { skipColors: true } : {}
       );
     }
 
-    markersLayer.clearLayers();
-    const { locations, assetTypes, _norm } = getActiveFilters();
-    // Is the filter UI present (tree rendered) at all?
-    const filterTreeEl = document.getElementById('filterTree');
-    const filterUIReady = !!(filterTreeEl && filterTreeEl.querySelector('input.filter-checkbox'));
-    console.log('[map] filters:',
-      { filterUIReady, locations: locations.size, assetTypes: assetTypes.size });
-
+    // Validate coordinates
     const allValid = (mapStationData || []).filter(stn => {
       const lat = Number(stn.lat), lon = Number(stn.lon);
-      return isFiniteCoord(lat) && isFiniteCoord(lon);
+      return Number.isFinite(lat) && Number.isFinite(lon) &&
+             Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
     });
-    // Apply filter drawer selections
-    let filtered;
-    if (!filterUIReady) {
-      // Filter UI hasn't mounted yet → show everything so map isn't blank.
-      filtered = allValid;
-    } else if (locations.size === 0 && assetTypes.size === 0) {
-      // If it's the first time we see "nothing selected", auto-select all once.
-      if (!AUTO_SELECTED_FILTERS) {
-        try {
-          filterTreeEl.querySelectorAll('input.filter-checkbox').forEach(cb => {
-            cb.checked = true;
-            cb.indeterminate = false;
-          });
-          // notify listeners (list view, etc.)
-          setTimeout(() => filterTreeEl.dispatchEvent(new Event('change', { bubbles: true })), 0);
-        } catch (_) {}
-        AUTO_SELECTED_FILTERS = true;
-        filtered = allValid; // don't paint blank on first load
-      } else {
-        // After the first time, respect the user's explicit "show nothing".
-        filtered = [];
-      }
-    } else {
+
+    console.log('[map] Valid stations with coords:', allValid.length);
+
+    // CRITICAL FIX: Default to showing ALL stations, only filter if explicitly restricting
+    let filtered = allValid;
+    
+    // Only apply filters if they are actually restricting something
+    if (areFiltersActuallyRestricting()) {
+      const { locations, assetTypes, _norm } = getActiveFilters();
+      
+      console.log('[map] Applying active filters');
+      
       filtered = allValid.filter(stn => {
-        // allow either Province (from data) OR file-derived location name
-        const locCandidates = [
-          _norm(stn.province),
-          _norm(stn.location),
-          _norm(stn.location_file)
-        ].filter(Boolean);
-        const locOk = (locations.size === 0) || locCandidates.some(v => locations.has(v));
-        const atOk  = (assetTypes.size === 0) || assetTypes.has(_norm(stn.asset_type));
+        // Location filter
+        let locOk = true;
+        if (locations.size > 0) {
+          const locCandidates = [
+            _norm(stn.province),
+            _norm(stn.location),
+            _norm(stn.location_file)
+          ].filter(Boolean);
+          locOk = locCandidates.some(v => locations.has(v));
+        }
+        
+        // Asset type filter
+        let atOk = true;
+        if (assetTypes.size > 0) {
+          atOk = assetTypes.has(_norm(stn.asset_type));
+        }
+        
         return locOk && atOk;
       });
+      
+      console.log('[map] After filtering:', filtered.length, 'stations');
+    } else {
+      console.log('[map] No active filters, showing all', filtered.length, 'stations');
     }
 
+    // Fast-boot trimming for initial render performance
     let rows = filtered;
     if (FAST_BOOT && map) {
-      // Trim to viewport *only if* that still leaves at least one pin.
       const inView = [];
       const b = map.getBounds();
       for (const stn of filtered) {
@@ -344,71 +391,92 @@ async function refreshMarkers() {
       rows = inView.length ? inView : filtered.slice(0, MAX_INITIAL_PINS);
     }
 
-    console.log('[map] drawing', rows.length, 'markers (filtered from', filtered.length, 'after filters; total', (mapStationData||[]).length, ')');
+    console.log('[map] Drawing', rows.length, 'markers');
 
-    const batchSize = 1000; // yield every N to keep UI responsive
+    // Clear existing markers
+    markersLayer.clearLayers();
+    
+    // Small delay to ensure canvas is ready
+    await new Promise(resolve => setTimeout(resolve, 10));
+
+    // Draw markers
+    const batchSize = 200;
+    let markersAdded = 0;
+    
     for (let i = 0; i < rows.length; i += batchSize) {
       const batch = rows.slice(i, i + batchSize);
-      batch.forEach(stn => {
-        const lat = parseFloat(stn.lat);
-        const lon = parseFloat(stn.lon);
-        if (!isFiniteCoord(lat) || !isFiniteCoord(lon)) return;
+      
+      for (const stn of batch) {
+        const lat = Number(stn.lat);
+        const lon = Number(stn.lon);
+        
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+        if (Math.abs(lat) > 90 || Math.abs(lon) > 180) continue;
 
-        // Redundant (already filtered above), but keep as a guard using Set semantics.
-        if (locations.size) {
-          const locHit = [ _norm(stn.province), _norm(stn.location), _norm(stn.location_file) ]
-            .filter(Boolean)
-            .some(v => locations.has(v));
-          if (!locHit) return;
-        }
-        if (assetTypes.size && !assetTypes.has(_norm(stn.asset_type))) return;
+        try {
+          const marker = addTriRingMarker(lat, lon, stn.color);
+          if (marker) {
+            marker.bindPopup(
+              `<a href="#" class="popup-link" data-id="${stn.station_id}">${stn.name || stn.station_id}</a>`
+            );
 
-        const marker = addTriRingMarker(lat, lon, stn.color);
-        marker.bindPopup(
-          `<a href="#" class="popup-link" data-id="${stn.station_id}">${stn.name || stn.station_id}</a>`
-        );
+            marker.on('click', (e) => {
+              if (e.originalEvent && e.originalEvent.target.tagName === 'A') return;
+              marker.openPopup();
+              showStationDetails(stn);
+            });
 
-        marker.on('click', (e) => {
-          if (e.originalEvent && e.originalEvent.target.tagName === 'A') return;
-          marker.openPopup();
-          showStationDetails(stn);
-        });
-
-        marker.on('popupopen', () => {
-          const link = document.querySelector('.leaflet-popup a.popup-link');
-          if (link) {
-            link.addEventListener('click', (ev) => {
-              ev.preventDefault();
-              if (window.loadStationPage) window.loadStationPage(stn.station_id);
-            }, { once: true });
+            marker.on('popupopen', () => {
+              const link = document.querySelector('.leaflet-popup a.popup-link');
+              if (link) {
+                link.addEventListener('click', (ev) => {
+                  ev.preventDefault();
+                  if (window.loadStationPage) window.loadStationPage(stn.station_id);
+                }, { once: true });
+              }
+            });
+            
+            markersAdded++;
           }
-        });
-      });
-      // yield to the renderer so first paint isn’t blocked
-      /* eslint-disable no-await-in-loop */
-      await new Promise(r => setTimeout(r, 0));
+        } catch (error) {
+          console.error('[map] Error adding marker for station:', stn.station_id, error);
+        }
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, 1));
     }
+    
+    console.log('[map] Successfully added', markersAdded, 'markers to map');
 
-    // On first successful paint with data, fit the map to it once
+    // Fit bounds once
     if (!DID_FIT_BOUNDS && filtered.length && map) {
       const latlngs = filtered.map(s => [Number(s.lat), Number(s.lon)]);
       try {
         map.fitBounds(latlngs, { padding: [24, 24] });
         DID_FIT_BOUNDS = true;
-      } catch (_) {}
+        console.log('[map] Bounds fitted');
+      } catch (e) {
+        console.error('[map] Error fitting bounds:', e);
+      }
     }
 
   } catch (err) {
     console.error('[map_view] refreshMarkers failed:', err);
   } finally {
-    try { map.invalidateSize(); } catch(_) {}
+    RENDER_IN_PROGRESS = false;
+    try { 
+      map.invalidateSize(); 
+    } catch(_) {}
   }
 }
-window.refreshMarkers = debounce(refreshMarkers, 50);
 
-// Allow other modules (wizard, global import) to force a fresh re-read on next refresh.
+const debouncedRefreshMarkers = debounce(refreshMarkers, 200);
+window.refreshMarkers = debouncedRefreshMarkers;
+
 window.invalidateStationData = function invalidateStationData() {
-  try { mapStationData = []; } catch (_) {}
+  try { 
+    mapStationData = []; 
+  } catch (_) {}
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -443,13 +511,12 @@ function bindGlobalImportToolbar() {
           return;
         }
 
-        // Clear renderer-side data and (optionally) ping backend no-op invalidator.
         if (typeof window.invalidateStationData === 'function') window.invalidateStationData();
         if (typeof window.electronAPI.invalidateStationCache === 'function') {
           await window.electronAPI.invalidateStationCache();
         }
 
-        await window.refreshMarkers();
+        await refreshMarkers();
         if (typeof window.renderList === 'function') await window.renderList();
       } catch (err) {
         console.error('[GlobalImport] unexpected error:', err);
@@ -476,42 +543,45 @@ document.addEventListener('DOMContentLoaded', () => {
     initMap();
     bindGlobalImportToolbar();
 
-    // Fast boot: paint instantly with visible/simple pins
-    setTimeout(() => window.refreshMarkers(), 0);
-    // After a beat, render the full dataset with fancy pins
+    console.log('[map] Starting initial fast render');
+    refreshMarkers();
+
+    const filterTree = document.getElementById('filterTree');
+    if (filterTree) {
+      filterTree.addEventListener('change', () => {
+        console.log('[map] Filter change detected, refreshing markers');
+        debouncedRefreshMarkers();
+      });
+    }
+
+    // Switch to full render mode
     setTimeout(async () => {
+      console.log('[map] Switching to full render mode');
       FAST_BOOT = false;
-      // Always refresh with full colors after fast boot (replaces hash colors)
+      
       try {
         if (typeof window.electronAPI?.getStationData === 'function') {
           mapStationData = await window.electronAPI.getStationData({});
         }
-      } catch (_) {
-        // keep whatever we had; color upgrade can happen later
+      } catch (e) {
+        console.error('[map] Error reloading station data:', e);
       }
-      await window.refreshMarkers();
-    }, 1200);
+      
+      await refreshMarkers();
+    }, 2000);
 
-    // Extra reflows to handle late layout/font/GPU changes
-    setTimeout(() => { try { map.invalidateSize(); } catch(_) {} }, 300);
-    setTimeout(() => { try { map.invalidateSize(); } catch(_) {} }, 800);
-
-    // Re-render when filters change
-    const filterTree = document.getElementById('filterTree');
-    if (filterTree) {
-      filterTree.addEventListener('change', () => window.refreshMarkers());
-    }
+    setTimeout(() => { try { map.invalidateSize(); } catch(_) {} }, 500);
+    setTimeout(() => { try { map.invalidateSize(); } catch(_) {} }, 1000);
   };
 
-  // Poll until Leaflet is present (handles slow disk/IO)
   (function waitForLeaflet(tries = 0){
     if (window.L && typeof window.L.map === 'function') {
-      console.log('[map] Leaflet detected, boot now');
+      console.log('[map] Leaflet detected, starting boot');
       boot();
     } else if (tries < 60) {
       setTimeout(() => waitForLeaflet(tries + 1), 50);
     } else {
-      console.error('[map] Leaflet failed to load — check vendor copy or CDN reachability.');
+      console.error('[map] Leaflet failed to load');
     }
   })();
 });
