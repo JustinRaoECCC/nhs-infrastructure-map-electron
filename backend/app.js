@@ -161,16 +161,25 @@ function normalizeRow(r) {
  *  2) in-memory + app_state.json stations (pins appear)
  */
 async function addStationsFromSelection(payload) {
-  const { location, sheetName, sections, headers, rows } = payload || {};
+  const { location, sheetName, sections, headers, rows, assetType } = payload || {};
   if (!Array.isArray(rows) || !rows.length) {
     return { success:false, message:'No rows selected.' };
   }
-  // 1) Persist to the location workbook
+  // 1) Prepare headers/rows: force Category = typed assetType
   try {
-    const secs = Array.isArray(sections) && sections.length === headers.length
-      ? sections
-      : (headers || []).map(()=>'');
-    await excel.writeLocationRows(location, sheetName || 'Data', secs, headers || Object.keys(rows[0] || {}), rows);
+    const at = String(assetType || '').trim();
+    // Build working headers/sections
+    let hdrs = Array.isArray(headers) && headers.length ? headers.slice() : Object.keys(rows[0] || {});
+    let secs = Array.isArray(sections) && sections.length === hdrs.length ? sections.slice() : hdrs.map(()=>'');
+    // Ensure there is a "Category" field
+    const idxCategory = hdrs.findIndex(h => String(h || '').trim().toLowerCase() === 'category');
+    if (idxCategory === -1) {
+      hdrs.push('Category');
+      secs.push(''); // no section required; reader matches by field suffix anyway
+    }
+    // Stamp Category for every row (overrides any incoming Structure Type etc.)
+    const rowsStamped = rows.map(r => ({ ...r, Category: at }));
+    await excel.writeLocationRows(location, sheetName || 'Data', secs, hdrs, rowsStamped);
   } catch (e) {
     console.error('[importSelection] writeLocationRows failed:', e);
     return { success:false, message:'Failed writing to location workbook.' };

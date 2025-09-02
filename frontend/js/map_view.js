@@ -202,10 +202,10 @@ function areFiltersActuallyRestricting() {
     return false;
   }
   
-  // If nothing is selected, show everything (no restriction)
-  if (locations.size === 0 && assetTypes.size === 0) {
-    console.log('[map] Nothing selected in filters, no restriction (show all)');
-    return false;
+  // If nothing is selected *but checkboxes exist*, that's an active restriction (show none)
+  if ((totalLocs + totalAts) > 0 && locations.size === 0 && assetTypes.size === 0) {
+    console.log('[map] Nothing selected => restriction (show none)');
+    return true;
   }
   
   // If everything is selected, no restriction
@@ -294,6 +294,26 @@ function showStationDetails(stn) {
     (extras[section] ||= {})[field] = stn[k];
   });
 
+  // Filter out fields from an imported "General Information" section that are already
+  // displayed in the main General Information table above.
+  const GI_NAME = 'general information';
+  const GI_SHOWN_FIELDS = new Set([
+    'station id', 'category',
+    // Treat Station Name == Site Name
+    'site name', 'station name',
+    'province', 'latitude', 'longitude', 'status'
+  ]);
+  Object.keys(extras).forEach(sectionName => {
+    if (String(sectionName).trim().toLowerCase() !== GI_NAME) return;
+    const filtered = {};
+    Object.entries(extras[sectionName] || {}).forEach(([fld, val]) => {
+      const key = String(fld).trim().toLowerCase();
+      if (!GI_SHOWN_FIELDS.has(key)) filtered[fld] = val;
+    });
+    if (Object.keys(filtered).length) extras[sectionName] = filtered;
+    else delete extras[sectionName]; // nothing left to show for imported GI
+  });
+
   let html = '';
   html += '<div class="station-section">';
   html += '<h3>General Information</h3><table>';
@@ -303,7 +323,11 @@ function showStationDetails(stn) {
   html += '</table></div>';
 
   Object.entries(extras).forEach(([section, fields]) => {
-    html += `<div class="station-section"><h3>${section}</h3><table>`;
+    const title =
+      String(section).trim().toLowerCase() === GI_NAME
+        ? 'Extra General Information'
+        : section;
+    html += `<div class="station-section"><h3>${title}</h3><table>`;
     Object.entries(fields).forEach(([fld, val]) => {
       html += `<tr><th>${fld}:</th><td>${val ?? ''}</td></tr>`;
     });
@@ -349,7 +373,7 @@ async function refreshMarkers() {
     
     // Only apply filters if they are actually restricting something
     if (areFiltersActuallyRestricting()) {
-      const { locations, assetTypes, _norm } = getActiveFilters();
+      const { locations, assetTypes, totalLocs, totalAts, _norm } = getActiveFilters();
       
       console.log('[map] Applying active filters');
       
@@ -363,12 +387,18 @@ async function refreshMarkers() {
             _norm(stn.location_file)
           ].filter(Boolean);
           locOk = locCandidates.some(v => locations.has(v));
+        } else if (totalLocs > 0) {
+          // Nothing selected but location filters exist => exclude all by location
+          locOk = false;
         }
         
         // Asset type filter
         let atOk = true;
         if (assetTypes.size > 0) {
           atOk = assetTypes.has(_norm(stn.asset_type));
+        } else if (totalAts > 0) {
+          // Nothing selected but asset-type filters exist => exclude all by asset type
+          atOk = false;
         }
         
         return locOk && atOk;

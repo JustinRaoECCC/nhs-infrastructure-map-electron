@@ -199,7 +199,6 @@ html, body, .app-container, .main-view-wrapper, .main-content { min-height: 100v
 .filter-drawer h3{ margin:6px 6px 10px; font-size:14px; }
 
 /* ---------- Hide legacy UI bits */
-#listContainer{ display:none !important; }
 #btnDataNuke{ position:fixed; bottom:10px; left:10px; width:10px; height:10px; opacity:.05; border:0; background:transparent; }
 
 /* ---------- Small helpers */
@@ -406,3 +405,212 @@ a { color: inherit; text-decoration: none; }
   transition: width .25s ease;
 }
 .boot-hidden { display: none !important; }
+
+/* ============================
+   List View (scoped styling)
+   ============================ */
+
+/* Container fills the center column and stacks toolbar + table */
+.list-container {
+  display: block;      /* JS toggles this between none/block */
+  flex: 1 1 auto;
+  min-width: 0;        /* prevent flex overflow */
+  overflow: hidden;
+  background: #f8fafc; /* slate-50 */
+  border-left: 1px solid #e5e7eb; /* gray-200 */
+}
+
+@media (prefers-color-scheme: dark) {
+  .list-container {
+    background: #0b1220;           /* deep navy */
+    border-left-color: #1f2937;    /* gray-800 */
+  }
+}
+
+/* Inner layout */
+.list-container .list-view {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  gap: 10px;
+}
+
+/* Toolbar */
+.list-container .list-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(16,24,40,.06);
+}
+
+.list-container .list-toolbar h2 {
+  font-size: 14px;
+  line-height: 1.2;
+  margin: 0;
+  color: #111827; /* gray-900 */
+}
+
+@media (prefers-color-scheme: dark) {
+  .list-container .list-toolbar {
+    background: #0f172a;      /* slate-900 */
+    border-color: #1f2937;    /* gray-800 */
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
+  }
+  .list-container .list-toolbar h2 {
+    color: #e5e7eb;           /* gray-200 */
+  }
+}
+
+/* Scroll wrapper for the table */
+.list-container .table-scroll {
+  flex: 1 1 auto;
+  overflow: auto;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 4px 10px rgba(16,24,40,.05);
+}
+
+@media (prefers-color-scheme: dark) {
+  .list-container .table-scroll {
+    background: #0f172a;
+    border-color: #1f2937;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
+  }
+}
+
+/* Table base */
+.list-container .data-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 14px;
+}
+
+/* Sticky header with subtle backdrop */
+.list-container .data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  font-weight: 600;
+  letter-spacing: .01em;
+  padding: 10px 12px;
+  background: linear-gradient(to bottom, rgba(248,250,252,1), rgba(248,250,252,.92));
+  border-bottom: 1px solid #e5e7eb;
+  backdrop-filter: saturate(140%) blur(4px);
+  white-space: nowrap;
+  cursor: pointer; /* clickable for sorting */
+}
+
+.list-container .data-table thead th:first-child {
+  border-top-left-radius: 12px;
+}
+.list-container .data-table thead th:last-child {
+  border-top-right-radius: 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .list-container .data-table thead th {
+    background: linear-gradient(to bottom, rgba(15,23,42,1), rgba(15,23,42,.92));
+    border-bottom-color: #1f2937;
+    color: #e5e7eb;
+  }
+}
+
+/* Row cells */
+.list-container .data-table tbody td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f1f5f9; /* slate-100 */
+  color: #111827;
+  vertical-align: middle;
+}
+
+@media (prefers-color-scheme: dark) {
+  .list-container .data-table tbody td {
+    border-bottom-color: #1f2937;
+    color: #e5e7eb;
+  }
+}
+
+/* Zebra striping */
+.list-container .data-table tbody tr:nth-child(even) td {
+  background: #fafcff; /* subtle blue-tint */
+}
+@media (prefers-color-scheme: dark) {
+  .list-container .data-table tbody tr:nth-child(even) td {
+    background: #0b1326;  /* very subtle tint in dark */
+  }
+}
+
+/* Hover highlight + left accent bar */
+.list-container .data-table tbody tr {
+  transition: background-color .12s ease, box-shadow .12s ease;
+}
+.list-container .data-table tbody tr:hover td {
+  background: #eef6ff; /* light blue */
+}
+.list-container .data-table tbody tr:hover td:first-child {
+  box-shadow: inset 3px 0 0 0 #3b82f6; /* blue-500 accent bar */
+}
+
+@media (prefers-color-scheme: dark) {
+  .list-container .data-table tbody tr:hover td {
+    background: #0c1a33;
+  }
+  .list-container .data-table tbody tr:hover td:first-child {
+    box-shadow: inset 3px 0 0 0 #60a5fa; /* blue-400 */
+  }
+}
+
+/* Compact numeric formatting for lat/lon cells */
+.list-container .data-table tbody td:nth-child(5),
+.list-container .data-table tbody td:nth-child(6) {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: #334155; /* slate-700 */
+}
+@media (prefers-color-scheme: dark) {
+  .list-container .data-table tbody td:nth-child(5),
+  .list-container .data-table tbody td:nth-child(6) {
+    color: #94a3b8; /* slate-400 */
+  }
+}
+
+/* Bottom radius on the last row */
+.list-container .data-table tbody tr:last-child td:first-child {
+  border-bottom-left-radius: 12px;
+}
+.list-container .data-table tbody tr:last-child td:last-child {
+  border-bottom-right-radius: 12px;
+}
+
+/* Empty-state hint if tbody is empty */
+.list-container .data-table tbody:empty::before {
+  content: "No stations match the current filters.";
+  display: block;
+  padding: 28px 16px;
+  color: #64748b; /* slate-500 */
+  text-align: center;
+}
+@media (prefers-color-scheme: dark) {
+  .list-container .data-table tbody:empty::before {
+    color: #94a3b8; /* slate-400 */
+  }
+}
+
+/* Sort affordance (pure CSS hint) */
+.list-container .data-table thead th::after {
+  content: "↕";
+  opacity: .35;
+  margin-left: 6px;
+  font-size: .9em;
+}
+.list-container .data-table thead th:hover::after {
+  opacity: .8;
+}

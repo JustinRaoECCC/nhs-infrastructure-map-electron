@@ -1,0 +1,28 @@
+<!-- frontend/list.html -->
+<div id="listPage" class="list-view">
+  <div class="list-toolbar" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem;">
+    <h2 style="margin:0;font-size:1rem;">Stations</h2>
+    <div id="listCount" class="badge" style="display:none;"></div>
+  </div>
+
+  <div class="table-scroll">
+    <table id="stationTable" class="data-table">
+      <thead>
+        <tr>
+          <th>Station ID</th>
+          <th>Category</th>
+          <th>Site Name</th>
+          <th>Province</th>
+          <th>Latitude</th>
+          <th>Longitude</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <p class="hint" style="opacity:.75;margin-top:.5rem;">
+    Tip: Click a column header to sort. Hover a row to see quick details on the right.
+  </p>
+</div>

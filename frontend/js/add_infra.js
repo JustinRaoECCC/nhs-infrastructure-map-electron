@@ -6,7 +6,7 @@
   'use strict';
 
   const WIZARD_ROOT_ID = 'addInfraPage';
-  const NAV_IDS = ['navMap', 'navList', 'navDocs', 'navNewCompany'];
+  const NAV_IDS = ['navMap', 'navList', 'navDash', 'navNewCompany'];
 
   function createState() {
     return {
@@ -65,12 +65,57 @@
   async function showListView() {
     setActiveNav('navList');
     showViews({ map: false, list: true, docs: false, wizard: false });
-    // If listContainer doesn't exist yet, just fall back to map (graceful)
-    if (!document.getElementById('listContainer')) showMapView();
+
+    const listEl = document.getElementById('listContainer');
+    if (!listEl) return;
+
+    if (!listEl.dataset.loaded) {
+      try {
+        const resp = await fetch('list.html');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        listEl.innerHTML = await resp.text();
+        listEl.dataset.loaded = '1';
+
+        // Now that the table exists, boot the list JS
+        if (window.initListView) requestAnimationFrame(() => window.initListView());
+      } catch (e) {
+        console.error('[showListView] failed to load list.html:', e);
+        // Fallback: create the markup inline so we can still render
+        listEl.innerHTML = `
+          <div id="listPage" class="list-view">
+            <div class="list-toolbar" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem;">
+              <h2 style="margin:0;font-size:1rem;">Stations</h2>
+              <div id="listCount" class="badge" style="display:none;"></div>
+            </div>
+            <div class="table-scroll">
+              <table id="stationTable" class="data-table">
+                <thead>
+                  <tr>
+                    <th>Station ID</th>
+                    <th>Category</th>
+                    <th>Site Name</th>
+                    <th>Province</th>
+                    <th>Latitude</th>
+                    <th>Longitude</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <p class="hint" style="opacity:.75;margin-top:.5rem;">Tip: Click a column header to sort. Hover a row to see quick details on the right.</p>
+          </div>`;
+        if (window.initListView) requestAnimationFrame(() => window.initListView());
+      }
+    } else {
+      // Already loaded; ensure it’s initialized
+      if (window.initListView) window.initListView();
+    }
   }
 
+
   async function showDocsView() {
-    setActiveNav('navDocs');
+    setActiveNav('navDash');
     showViews({ map: false, list: false, docs: true, wizard: false });
     if (!document.getElementById('dashboardContentContainer')) showMapView();
   }
@@ -217,6 +262,7 @@
         const rows    = res.rows || [];
         const headers = res.headers || (rows.length ? Object.keys(rows[0]) : []);
         const sections= res.sections || headers.map(()=>'');
+
         state.previewRows     = rows;
         state.previewHeaders  = headers;
         state.previewSections = sections;
@@ -287,6 +333,8 @@
             sections: state.previewSections,
             headers: state.previewHeaders,
             rows: selected,
+            // NEW: ensure Category is exactly what was typed in Step 3
+            assetType: state.assetName,
           };
           const res = await window.electronAPI.importSelection(payload);
           if (!res || res.success === false) {
@@ -490,7 +538,7 @@
     // Wire up Map/List/Docs to bring those views back and set active color
     const navMap  = document.getElementById('navMap');
     const navList = document.getElementById('navList');
-    const navDocs = document.getElementById('navDocs');
+    const navDash = document.getElementById('navDash');
 
     if (navMap && !navMap.dataset.bound) {
       navMap.addEventListener('click', (e) => {
@@ -506,12 +554,12 @@
       });
       navList.dataset.bound = '1';
     }
-    if (navDocs && !navDocs.dataset.bound) {
-      navDocs.addEventListener('click', (e) => {
+    if (navDash && !navDash.dataset.bound) {
+      navDash.addEventListener('click', (e) => {
         e.preventDefault();
         showDocsView();
       });
-      navDocs.dataset.bound = '1';
+      navDash.dataset.bound = '1';
     }
 
     tryInitIfPresent();
