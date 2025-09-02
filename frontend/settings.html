@@ -1,0 +1,41 @@
+<div id="settingsPage" class="settings-view">
+  <div class="settings-header">
+    <h2 style="margin:0;font-size:1rem;">Settings</h2>
+  </div>
+
+  <div class="settings-body">
+    <div class="settings-tabs">
+      <button class="tab-btn active" data-tab="mapPin">Map Pin</button>
+      <button class="tab-btn" data-tab="comingSoon" disabled>Coming Soon</button>
+    </div>
+
+    <div class="tab-panel" id="tab-mapPin" data-tab="mapPin" style="display:block;">
+      <p class="hint" style="opacity:.8;margin:.25rem 0 .5rem;">
+        Change the map pin color for each asset type. Colors are saved to Lookups → <strong>AssetTypes</strong>.
+      </p>
+
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width:40%;">Asset Type</th>
+              <th style="width:30%;">Location</th>
+              <th style="width:30%;">Color</th>
+            </tr>
+          </thead>
+          <tbody id="mapPinTbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="tab-panel" id="tab-comingSoon" data-tab="comingSoon" style="display:none;">
+      <p>More settings coming soon…</p>
+    </div>
+  </div>
+
+  <div class="settings-footer">
+    <button id="settingsSaveBtn" class="btn btn-primary">Save</button>
+    <button id="settingsCancelBtn" class="btn btn-ghost">Cancel</button>
+    <span id="settingsSaveStatus" class="hint" style="margin-left:.5rem;"></span>
+  </div>
+</div>

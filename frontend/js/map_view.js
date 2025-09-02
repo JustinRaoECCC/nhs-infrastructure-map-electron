@@ -149,29 +149,31 @@ function initMap() {
   setTimeout(ensureMapSize, 800);
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// FIXED: Improved filter state detection
-// ────────────────────────────────────────────────────────────────────────────
 function getActiveFilters() {
   const norm = s => String(s ?? '').trim().toLowerCase();
   const locCbs = Array.from(document.querySelectorAll('.filter-checkbox.location'));
   const atCbs  = Array.from(document.querySelectorAll('.filter-checkbox.asset-type'));
-  
-  // CRITICAL FIX: Handle case where checkboxes exist but aren't checked yet
-  const locations = new Set();
+
+  const locations  = new Set();
   const assetTypes = new Set();
-  
+
+  // Explicitly checked locations
   locCbs.forEach(cb => {
     if (cb.checked) locations.add(norm(cb.value));
   });
-  
+
+  // Checked asset types + ensure their parent locations are included
   atCbs.forEach(cb => {
-    if (cb.checked) assetTypes.add(norm(cb.value));
+    if (cb.checked) {
+      assetTypes.add(norm(cb.value));
+      const parentLoc = cb.dataset.location ? norm(cb.dataset.location) : '';
+      if (parentLoc) locations.add(parentLoc);
+    }
   });
-  
+
   const allLocationsSelected  = locCbs.length > 0 && locations.size === locCbs.length;
   const allAssetTypesSelected = atCbs.length  > 0 && assetTypes.size === atCbs.length;
-  
+
   console.log('[map] Filter state:', {
     locCbs: locCbs.length,
     atCbs: atCbs.length,
@@ -180,8 +182,13 @@ function getActiveFilters() {
     allLocationsSelected,
     allAssetTypesSelected
   });
-  
-  return { locations, assetTypes, allLocationsSelected, allAssetTypesSelected, totalLocs: locCbs.length, totalAts: atCbs.length, _norm: norm };
+
+  return {
+    locations, assetTypes,
+    allLocationsSelected, allAssetTypesSelected,
+    totalLocs: locCbs.length, totalAts: atCbs.length,
+    _norm: norm
+  };
 }
 
 // Check if filters are actually restricting anything

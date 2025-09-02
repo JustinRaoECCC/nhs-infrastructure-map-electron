@@ -25,16 +25,28 @@
     const locCbs = Array.from(document.querySelectorAll('.filter-checkbox.location'));
     const atCbs  = Array.from(document.querySelectorAll('.filter-checkbox.asset-type'));
 
-    const locations = new Set();
+    const locations  = new Set();
     const assetTypes = new Set();
+    const toNorm = (s) => String(s ?? '').trim().toLowerCase();
 
-    locCbs.forEach(cb => { if (cb.checked) locations.add(norm(cb.value)); });
-    atCbs.forEach(cb => { if (cb.checked) assetTypes.add(norm(cb.value)); });
+    locCbs.forEach(cb => { if (cb.checked) locations.add(toNorm(cb.value)); });
+    atCbs.forEach(cb => {
+      if (cb.checked) {
+        assetTypes.add(toNorm(cb.value));
+        const parentLoc = cb.dataset.location ? toNorm(cb.dataset.location) : '';
+        if (parentLoc) locations.add(parentLoc);
+      }
+    });
 
     const allLocationsSelected  = locCbs.length > 0 && locations.size === locCbs.length;
     const allAssetTypesSelected = atCbs.length  > 0 && assetTypes.size === atCbs.length;
 
-    return { locations, assetTypes, allLocationsSelected, allAssetTypesSelected, totalLocs: locCbs.length, totalAts: atCbs.length, _norm: norm };
+    return {
+      locations, assetTypes,
+      allLocationsSelected, allAssetTypesSelected,
+      totalLocs: locCbs.length, totalAts: atCbs.length,
+      _norm: toNorm
+    };
   }
 
   function areFiltersActuallyRestricting() {

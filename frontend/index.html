@@ -52,7 +52,7 @@
 
           <div class="footer">
             <ul class="nav-list">
-              <li class="nav-item">⚙ Settings</li>
+              <li class="nav-item" id="navSettings">⚙ Settings</li>
               <li class="nav-item">👤 Users</li>
               <li class="nav-item">⏻ Logout</li>
             </ul>
@@ -69,6 +69,9 @@
 
         <!-- Add Infra / New Company (content loaded from add_infra.html) -->
         <div id="addInfraContainer" style="display:none;"></div>
+
+        <!-- Settings (content loaded from settings.html) -->
+        <div id="settingsContainer" style="display:none;"></div>
 
         <!-- Right Panel -->
         <aside class="right-panel" id="rightPanel">
@@ -121,6 +124,7 @@
   <script defer src="js/list_view.js"></script>
   <script defer src="js/add_infra.js"></script>
   <script defer src="js/station.js"></script>
+  <script defer src="js/settings.js"></script>
   <!-- If Leaflet still missing, show banner -->
   <script>
     // gentler warn: give CDN time to load

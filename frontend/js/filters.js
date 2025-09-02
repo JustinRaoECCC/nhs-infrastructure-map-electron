@@ -28,6 +28,13 @@
   };
 
   function uniq(arr) { return Array.from(new Set((arr || []).filter(Boolean))); }
+   
+  // Remember the user's explicit choice for company/location checkboxes so
+  // asset-type toggles can't visually override them later.
+  function setUserChecked(cb, val) {
+    if (!cb) return;
+    cb.dataset.userchecked = val ? '1' : '0';
+  }
 
   async function fetchTree() {
     // 1) Try Lookups first (source of truth for hierarchy)
@@ -177,6 +184,12 @@
     // Force a known-good starting state (EVERYTHING CHECKED) before we signal ready.
     const all = filterTree.querySelectorAll('input.filter-checkbox');
     all.forEach(cb => { cb.checked = true; cb.indeterminate = false; });
+
+    // Initialize user intent on parents as "checked"
+    filterTree.querySelectorAll('input.company, input.location').forEach(cb => {
+      setUserChecked(cb, true);
+    });
+    // Paint parent visuals from remembered user intent
     updateTriState(filterTree);
 
     // CRITICAL FIX: Only fire initial change event after map has had time to render
@@ -202,31 +215,24 @@
   }
 
   function updateTriState(scope) {
-    // Location box reflects its asset-type children
-    scope.querySelectorAll('details.ft-location').forEach(d => {
-      const locCb = d.querySelector('input.location');
-      const assetCbs = d.querySelectorAll('input.asset-type');
-      if (!locCb || !assetCbs.length) return;
-      const total = assetCbs.length;
-      const checked = Array.from(assetCbs).filter(cb => cb.checked).length;
-      locCb.indeterminate = checked > 0 && checked < total;
-      locCb.checked = checked === total;
+    // Keep Company/Location visual state exactly as the user last set it.
+    // Do NOT flip parent .checked when children change; avoid indeterminate dash.
+
+    // Restore user's last explicit choice on locations
+    scope.querySelectorAll('input.location').forEach(locCb => {
+      const mark = locCb.dataset.userchecked;
+      if (mark != null) locCb.checked = (mark === '1');
+      locCb.indeterminate = false; // no dash visuals
     });
-    // Company box reflects all descendant locations/assets
-    scope.querySelectorAll('details.ft-company').forEach(d => {
-      const coCb = d.querySelector('input.company');
-      if (!coCb) return;
-      const assetCbs = d.querySelectorAll('input.asset-type');
-      const locCbs   = d.querySelectorAll('input.location');
-      const pool = assetCbs.length ? assetCbs : locCbs;
-      const total = pool.length;
-      if (!total) { coCb.indeterminate = false; coCb.checked = false; return; }
-      const allChecked = Array.from(pool).every(cb => cb.checked);
-      const anyChecked = Array.from(pool).some(cb => cb.checked);
-      coCb.indeterminate = anyChecked && !allChecked;
-      coCb.checked = allChecked;
+
+    // Restore user's last explicit choice on companies
+    scope.querySelectorAll('input.company').forEach(coCb => {
+      const mark = coCb.dataset.userchecked;
+      if (mark != null) coCb.checked = (mark === '1');
+      coCb.indeterminate = false; // no dash visuals
     });
   }
+
 
   const dispatchChange = debounce(() => {
     console.log('[filters] dispatchChange called');
@@ -242,13 +248,22 @@
     
     if (t.classList.contains('company')) {
       const details = t.closest('details.ft-company');
+      // Remember user's explicit company choice
+      setUserChecked(t, t.checked);
       if (details) {
+        // Cascade visual + value to all descendants
         details.querySelectorAll('input.location, input.asset-type').forEach(cb => {
           cb.checked = t.checked; cb.indeterminate = false;
+        });
+        // CRITICAL: also remember user's intent for all descendant LOCATIONS,
+        // so updateTriState() doesn't restore an old "off" state after a company toggle.
+        details.querySelectorAll('input.location').forEach(locCb => {
+          setUserChecked(locCb, t.checked);
         });
       }
     } else if (t.classList.contains('location')) {
       const locDet = t.closest('details.ft-location');
+      setUserChecked(t, t.checked); // remember user's explicit location choice
       if (locDet) {
         locDet.querySelectorAll('input.asset-type').forEach(cb => { cb.checked = t.checked; });
       }

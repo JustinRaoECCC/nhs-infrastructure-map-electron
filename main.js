@@ -6,6 +6,7 @@ const os   = require('os');
 const backend     = require('./backend/app');
 const lookups     = require('./backend/lookups_repo');
 const excelClient = require('./backend/excel_worker_client');
+const dataApi = require('./backend/data_manager');
 
 
 app.disableHardwareAcceleration();
@@ -107,6 +108,24 @@ ipcMain.handle('lookups:getTree', async () => backend.getLookupTree());
 ipcMain.handle('lookups:upsertCompany', async (_evt, name, active) => backend.upsertCompany(name, !!active));
 ipcMain.handle('lookups:upsertLocation', async (_evt, location, company) => backend.upsertLocation(location, company));
 ipcMain.handle('lookups:upsertAssetType', async (_evt, assetType, location) => backend.upsertAssetType(assetType, location));
+
+// Colors
+ipcMain.handle('getColorMaps', async () => {
+  const maps = await lookups.getColorMaps();
+  // Convert Maps to plain objects for IPC safety
+  const toObj = (m) => Object.fromEntries(m instanceof Map ? m : new Map(Object.entries(m || {})));
+  const byLocObj = {};
+  for (const [loc, inner] of maps.byLocation.entries()) {
+    byLocObj[loc] = toObj(inner);
+  }
+  return { global: toObj(maps.global), byLocation: byLocObj };
+});
+ipcMain.handle('setAssetTypeColor', async (_, assetType, color) =>
+  lookups.setAssetTypeColor(assetType, color)
+);
+ipcMain.handle('setAssetTypeColorForLocation', async (_, assetType, location, color) =>
+  lookups.setAssetTypeColorForLocation(assetType, location, color)
+);
 
 // ─── IPC: Colors ───────────────────────────────────────────────────────────
 ipcMain.handle('lookups:getAssetTypeColor', async (_evt, assetType) => backend.getAssetTypeColor(assetType));

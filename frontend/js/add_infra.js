@@ -36,19 +36,21 @@
   }
 
   // Generic show/hide with graceful fallbacks
-  function showViews({ map = false, list = false, docs = false, wizard = false }) {
+  function showViews({ map = false, list = false, docs = false, wizard = false, settings = false }) {
     const mapEl   = document.getElementById('mapContainer');
     const listEl  = document.getElementById('listContainer');              // may not exist yet
     const docsEl  = document.getElementById('dashboardContentContainer');  // may not exist yet
     const wizWrap = document.getElementById('addInfraContainer');
+    const settingsEl = document.getElementById('settingsContainer');
     const station = document.getElementById('stationContentContainer');    // station detail
 
     if (mapEl)   mapEl.style.display   = map   ? 'block' : 'none';
     if (listEl)  listEl.style.display  = list  ? 'block' : 'none';
     if (docsEl)  docsEl.style.display  = docs  ? 'block' : 'none';
     if (wizWrap) wizWrap.style.display = wizard? 'block' : 'none';
+    if (settingsEl) settingsEl.style.display = settings ? 'block' : 'none';
     // If station page is open, hide it unless we're explicitly in that flow
-    if (station && (map || list || docs || wizard)) station.style.display = 'none';
+    if (station && (map || list || docs || wizard || settings)) station.style.display = 'none';
   }
 
   // Public-ish view switches used by nav bindings
@@ -113,6 +115,36 @@
     }
   }
 
+  // Settings
+  async function showSettingsView() {
+    setActiveNav('navSettings');
+    showViews({ map: false, list: false, docs: false, wizard: false, settings: true });
+
+    const container = document.getElementById('settingsContainer');
+    if (!container) return;
+
+    if (!container.dataset.loaded) {
+      try {
+        const resp = await fetch('settings.html');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        container.innerHTML = await resp.text();
+        container.dataset.loaded = '1';
+
+        // Boot the settings JS
+        if (window.initSettingsView) requestAnimationFrame(() => window.initSettingsView());
+      } catch (e) {
+        console.error('[showSettingsView] failed to load settings.html:', e);
+        container.innerHTML = `
+          <div id="settingsPage" class="settings-view">
+            <h2>Settings</h2>
+            <p>Failed to load settings.</p>
+          </div>`;
+        if (window.initSettingsView) requestAnimationFrame(() => window.initSettingsView());
+      }
+    } else {
+      if (window.initSettingsView) window.initSettingsView();
+    }
+  }
 
   async function showDocsView() {
     setActiveNav('navDash');
@@ -150,11 +182,33 @@
     const btnDeselAll      = root.querySelector('#btnDeselectAllRows');
     const rowCountBadge    = root.querySelector('#rowCountBadge');
 
+    // NEW: mode toggles + selects
+    const coModeExisting  = root.querySelector('#coModeExisting');
+    const coModeNew       = root.querySelector('#coModeNew');
+    const rowCompanySelect= root.querySelector('#rowCompanySelect');
+    const rowCompanyName  = root.querySelector('#rowCompanyName');
+    const companySelect   = root.querySelector('#companySelect');
+
+    const locModeExisting = root.querySelector('#locModeExisting');
+    const locModeNew      = root.querySelector('#locModeNew');
+    const rowLocationSelect = root.querySelector('#rowLocationSelect');
+    const rowLocationName   = root.querySelector('#rowLocationName');
+    const locationSelect  = root.querySelector('#locationSelect');
+
+    const atModeExisting  = root.querySelector('#atModeExisting');
+    const atModeNew       = root.querySelector('#atModeNew');
+    const rowAssetTypeSelect = root.querySelector('#rowAssetTypeSelect');
+    const assetTypeSelect = root.querySelector('#assetTypeSelect');
+
     const state = createState();
     state.previewRows = [];
     state.previewHeaders = [];
     state.previewSections = [];
     state.selectedRowIdx = new Set();
+    
+    // Extend state
+    state.modes = { company: 'new', location: 'new', asset: 'new' };
+    state.lookups = { companies: [], locationsByCompany: {}, assetsByLocation: {} };
 
     function setActiveStep(idx) {
       state.current = Math.max(0, Math.min(stepEls.length - 1, idx));
@@ -276,44 +330,68 @@
     async function handleNext() {
       try {
         if (state.current === 0) {
-          // STEP 1: Create Company
-          const name = (inputCompanyName?.value || '').trim();
-          if (!name) return alertUser('Please enter a company name.');
-          const res = await window.electronAPI.upsertCompany(name, true);
-          if (!res || res.success === false) return alertUser('Failed to create company.');
-          state.company = name;
-          // reflect immediately in the filter tree
-          if (typeof window.refreshFilters === 'function') setTimeout(window.refreshFilters, 0);
+          // STEP 1: Company (new or existing)
+          if (state.modes.company === 'existing') {
+            const val = (companySelect?.value || '').trim();
+            if (!val) return alertUser('Please select a company.');
+            state.company = val;
+          } else {
+            const name = (inputCompanyName?.value || '').trim();
+            if (!name) return alertUser('Please enter a company name.');
+            const res = await window.electronAPI.upsertCompany(name, true);
+            if (!res || res.success === false) return alertUser('Failed to create company.');
+            state.company = name;
+            if (typeof window.refreshFilters === 'function') setTimeout(window.refreshFilters, 0);
+            // reflect in lookups for downstream selects
+            await loadLookups();
+          }
           setActiveStep(1);
           return;
         }
 
         if (state.current === 1) {
-          // STEP 2: Create Project (Location)
-          const loc = (inputProjectName?.value || '').trim();
-          if (!loc) return alertUser('Please enter a location.');
-          if (!state.company) return alertUser('Company is missing. Please complete Step 1 first.');
-          const res = await window.electronAPI.upsertLocation(loc, state.company);
-          if (!res || res.success === false) return alertUser('Failed to create location.');
-          // refresh filters so new location appears under company
-          if (typeof window.refreshFilters === 'function') setTimeout(window.refreshFilters, 0);
-          state.location = loc;
+          // STEP 2: Location (new or existing)
+          if (!state.company) return alertUser('Please complete Step 1 (Company) first.');
+
+          if (state.modes.location === 'existing') {
+            const loc = (locationSelect?.value || '').trim();
+            if (!loc) return alertUser('Please select a location.');
+            state.location = loc;
+          } else {
+            const loc = (inputProjectName?.value || '').trim();
+            if (!loc) return alertUser('Please enter a location.');
+            const res = await window.electronAPI.upsertLocation(loc, state.company);
+            if (!res || res.success === false) return alertUser('Failed to create location.');
+            state.location = loc;
+            if (typeof window.refreshFilters === 'function') setTimeout(window.refreshFilters, 0);
+            // refresh lookups and asset types under the new location
+            await loadLookups();
+            refreshLocationSelect();
+          }
+
           setActiveStep(2);
           return;
         }
 
         if (state.current === 2) {
-          // STEP 3: Create Assets
+          // STEP 3: Asset Type (new or existing)
           if (!chkMethodImport?.checked) return alertUser('Currently only "Import from Sheet" is supported.');
-          const assetName = (inputAssetName?.value || '').trim();
-          if (!assetName) return alertUser('Please enter an asset name.');
-          if (!state.location) return alertUser('Location is missing. Please complete Step 2 first.');
+          if (!state.location) return alertUser('Please complete Step 2 (Location) first.');
 
-          const up = await window.electronAPI.upsertAssetType(assetName, state.location);
-          if (!up || up.success === false) return alertUser('Failed to create asset type.');
-          // refresh filters so the new asset type checkbox appears
-          if (typeof window.refreshFilters === 'function') setTimeout(window.refreshFilters, 0);
-          state.assetName = assetName;
+          if (state.modes.asset === 'existing') {
+            const at = (assetTypeSelect?.value || '').trim();
+            if (!at) return alertUser('Please select an asset type.');
+            state.assetName = at;
+          } else {
+            const assetName = (inputAssetName?.value || '').trim();
+            if (!assetName) return alertUser('Please enter an asset name.');
+            const up = await window.electronAPI.upsertAssetType(assetName, state.location);
+            if (!up || up.success === false) return alertUser('Failed to create asset type.');
+            state.assetName = assetName;
+            if (typeof window.refreshFilters === 'function') setTimeout(window.refreshFilters, 0);
+            await loadLookups();
+            refreshAssetTypeSelect();
+          }
 
           // Selecting a sheet doesn't import yet (Step 4 will do that later)
           state.selectedSheet = (selectSheet && selectSheet.value) ? selectSheet.value : null;
@@ -373,6 +451,18 @@
       }
       if (lblProjectExcel) lblProjectExcel.textContent = 'Select Excel File';
       Object.assign(state, createState());
+
+      state.modes = { company:'new', location:'new', asset:'new' };
+      if (coModeNew) coModeNew.checked = true;
+      if (locModeNew) locModeNew.checked = true;
+      if (atModeNew)  atModeNew.checked  = true;
+      setCompanyMode('new');
+      setLocationMode('new');
+      setAssetMode('new');
+      fillSelect(companySelect, state.lookups.companies || [], 'Select company');
+      fillSelect(locationSelect, [], 'Select a company first');
+      fillSelect(assetTypeSelect, [], 'Select a location first');
+
       setActiveStep(0);
     }
 
@@ -470,6 +560,133 @@
     if (btnBack)   btnBack.addEventListener('click', handleBack);
     if (btnCancel) btnCancel.addEventListener('click', handleCancel);
 
+    function fillSelect(sel, items, placeholder='Select…') {
+      if (!sel) return;
+      sel.innerHTML = '';
+      if (!items || !items.length) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = placeholder;
+        opt.disabled = true; opt.selected = true;
+        sel.appendChild(opt);
+        sel.disabled = true;
+        return;
+      }
+      const opt0 = document.createElement('option');
+      opt0.value = ''; opt0.textContent = placeholder; opt0.disabled = true; opt0.selected = true;
+      sel.appendChild(opt0);
+      items.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v; opt.textContent = v;
+        sel.appendChild(opt);
+      });
+      sel.disabled = false;
+    }
+
+    async function loadLookups() {
+      try {
+        if (window.electronAPI?.getLookupTree) {
+          const t = await window.electronAPI.getLookupTree();
+          if (t && Array.isArray(t.companies)) {
+            state.lookups = {
+              companies: t.companies || [],
+              locationsByCompany: t.locationsByCompany || {},
+              assetsByLocation: t.assetsByLocation || {}
+            };
+          }
+        }
+      } catch (e) {
+        console.error('[wizard] getLookupTree failed', e);
+      }
+
+      // Populate company select
+      fillSelect(companySelect, (state.lookups.companies || []).slice().sort((a,b)=>a.localeCompare(b)), 'Select company');
+    }
+
+    function setCompanyMode(mode) {
+      state.modes.company = mode;
+      if (mode === 'existing') {
+        rowCompanySelect.style.display = '';
+        rowCompanyName.style.display = 'none';
+      } else {
+        rowCompanySelect.style.display = 'none';
+        rowCompanyName.style.display = '';
+      }
+    }
+
+    function setLocationMode(mode) {
+      state.modes.location = mode;
+      if (mode === 'existing') {
+        rowLocationSelect.style.display = '';
+        rowLocationName.style.display = 'none';
+      } else {
+        rowLocationSelect.style.display = 'none';
+        rowLocationName.style.display = '';
+      }
+    }
+
+    function setAssetMode(mode) {
+      state.modes.asset = mode;
+      if (mode === 'existing') {
+        rowAssetTypeSelect.style.display = '';
+        rowAssetName.style.display = 'none';
+      } else {
+        rowAssetTypeSelect.style.display = 'none';
+        rowAssetName.style.display = '';
+      }
+    }
+
+    // Populate location select based on chosen company
+    function refreshLocationSelect() {
+      const co = state.company || companySelect?.value || '';
+      const locs = (state.lookups.locationsByCompany?.[co] || []).slice().sort((a,b)=>a.localeCompare(b));
+      fillSelect(locationSelect, locs, co ? 'Select location' : 'Select a company first');
+    }
+
+    // Populate asset type select based on chosen location
+    function refreshAssetTypeSelect() {
+      const loc = state.location || locationSelect?.value || '';
+      const ats = (state.lookups.assetsByLocation?.[loc] || []).slice().sort((a,b)=>a.localeCompare(b));
+      fillSelect(assetTypeSelect, ats, loc ? 'Select asset type' : 'Select a location first');
+    }
+
+    // Default modes
+    setCompanyMode('new');
+    setLocationMode('new');
+    setAssetMode('new');
+
+    // Toggle handlers
+    coModeExisting?.addEventListener('change', () => { if (coModeExisting.checked) setCompanyMode('existing'); });
+    coModeNew?.addEventListener('change',      () => { if (coModeNew.checked)      setCompanyMode('new'); });
+
+    locModeExisting?.addEventListener('change', () => { if (locModeExisting.checked) setLocationMode('existing'); });
+    locModeNew?.addEventListener('change',      () => { if (locModeNew.checked)      setLocationMode('new'); });
+
+    atModeExisting?.addEventListener('change', () => { if (atModeExisting.checked) setAssetMode('existing'); });
+    atModeNew?.addEventListener('change',      () => { if (atModeNew.checked)      setAssetMode('new'); });
+
+    // Select dependencies
+    companySelect?.addEventListener('change', () => {
+      state.company = companySelect.value || '';
+      refreshLocationSelect();
+      // Clear downstream when company changes
+      state.location = '';
+      fillSelect(assetTypeSelect, [], 'Select a location first');
+    });
+
+    locationSelect?.addEventListener('change', () => {
+      state.location = locationSelect.value || '';
+      refreshAssetTypeSelect();
+    });
+
+    assetTypeSelect?.addEventListener('change', () => {
+      // just store name; import payload uses state.assetName
+      state.assetName = assetTypeSelect.value || '';
+    });
+
+    // Load lookups initially
+    loadLookups();
+
     // Kick off at step 0
     setActiveStep(0);
   }
@@ -560,6 +777,16 @@
         showDocsView();
       });
       navDash.dataset.bound = '1';
+    }
+
+    // Wire up Settings → open settings page
+    const navSettings = document.getElementById('navSettings');
+    if (navSettings && !navSettings.dataset.bound) {
+      navSettings.addEventListener('click', (e) => {
+        e.preventDefault();
+        showSettingsView();
+      });
+      navSettings.dataset.bound = '1';
     }
 
     tryInitIfPresent();
