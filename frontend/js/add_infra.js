@@ -427,6 +427,7 @@
           if (typeof window.refreshMarkers === 'function') setTimeout(window.refreshMarkers, 0);
           if (typeof window.renderList === 'function') setTimeout(window.renderList, 0);
           alertUser(`Imported ${res.added} row(s).`);
+          window.dispatchEvent(new CustomEvent('lookups:changed'));
           handleCancel();           // reset wizard
           setActiveNav('navMap');   // show map
           showViews({ map:true, wizard:false });

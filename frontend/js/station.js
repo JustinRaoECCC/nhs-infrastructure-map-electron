@@ -1,5 +1,5 @@
 // frontend/js/station.js
-async function loadStationPage(stationId) {
+async function loadStationPage(stationId, origin = 'map') {
   // Fetch station data
   const all = await window.electronAPI.getStationData();
   const stn = (all || []).find(s => String(s.station_id) === String(stationId));
@@ -10,6 +10,7 @@ async function loadStationPage(stationId) {
   const mainMap  = document.getElementById('mapContainer');
   const listCont = document.getElementById('listContainer');
   const dashboardCont = document.getElementById('dashboardContentContainer');
+  const rightPanel = document.getElementById('rightPanel');
 
   const resp = await fetch('station_specific.html');
   if (!resp.ok) {
@@ -20,10 +21,14 @@ async function loadStationPage(stationId) {
   container.innerHTML = html;
 
   // Show station view, hide others
+  // Remember where we came from
+  container.dataset.origin = origin === 'list' ? 'list' : 'map';
   if (mainMap) mainMap.style.display = 'none';
   if (listCont) listCont.style.display = 'none';
   if (dashboardCont) dashboardCont.style.display = 'none';
   container.style.display = 'block';
+  // Hide the RHS quick-view panel while in the station page
+  if (rightPanel) rightPanel.style.display = 'none';
 
   // Populate basics
   const setVal = (id, v) => { const el = container.querySelector('#'+id); if (el) el.value = v ?? ''; };
@@ -42,13 +47,110 @@ async function loadStationPage(stationId) {
   const statusSel = container.querySelector('#giStatus');
   if (statusSel) statusSel.value = stn.status || 'Unknown';
 
+  // Status + Type pills
+  (function setHeaderPills() {
+    const pill = container.querySelector('#statusPill');
+    const type = container.querySelector('#typePill');
+    const sRaw = stn.status || 'Unknown';
+    const s = String(sRaw).trim().toLowerCase();
+    if (pill) {
+      pill.textContent = sRaw;
+      pill.classList.remove('pill--green','pill--red','pill--amber');
+      pill.classList.add(s === 'active' ? 'pill--green' : s === 'inactive' ? 'pill--red' : 'pill--amber');
+    }
+    if (type) type.textContent = stn.asset_type || '—';
+  })();
+
+  // Photos: simple placeholders for now
+  (function renderPhotoPlaceholders() {
+    const row = container.querySelector('#photosRow');
+    if (!row) return;
+    row.innerHTML = '';
+    const N = 5;
+   for (let i = 0; i < N; i++) {
+      const d = document.createElement('div');
+      d.className = 'photo-thumb skeleton';
+      row.appendChild(d);
+    }
+  })();
+
+  // Collapsible Extra Sections (accordion), same grouping as RHS quick view
+  (function renderExtrasAccordion() {
+    const host = container.querySelector('#extraAccordion');
+    if (!host) return;
+    const SEP = ' – ';
+
+    // Build groups from keys like "Section – Field"
+    const extras = {};
+    Object.keys(stn || {}).forEach(k => {
+      if (!k.includes(SEP)) return;
+      const [section, field] = k.split(SEP);
+      (extras[String(section).trim()] ||= {})[field] = stn[k];
+    });
+
+    // Remove duplicates already shown in Site Information (formerly General Information)
+    const GI_NAME = 'general information';
+    const GI_SHOWN_FIELDS = new Set(['station id','category','site name','station name','province','latitude','longitude','status']);
+    Object.keys(extras).forEach(sectionName => {
+      if (String(sectionName).trim().toLowerCase() !== GI_NAME) return;
+      const filtered = {};
+      Object.entries(extras[sectionName]).forEach(([fld, val]) => {
+        if (!GI_SHOWN_FIELDS.has(String(fld).trim().toLowerCase())) filtered[fld] = val;
+      });
+      if (Object.keys(filtered).length) extras[sectionName] = filtered;
+      else delete extras[sectionName];
+    });
+
+    // Render accordion items as pretty stacked rows (label over value)
+    const escape = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+    const fmt = (v) => (v === null || v === undefined || String(v).trim() === '') ? '<span class="kv-empty">—</span>' : escape(v);
+    const toRows = (fields) => {
+      let rows = '';
+      Object.entries(fields).forEach(([fld, val]) => {
+        rows += `
+          <li class="kv-row">
+            <div class="kv-label">${escape(fld)}</div>
+            <div class="kv-value">${fmt(val)}</div>
+          </li>`;
+      });
+      return `<ul class="kv-list">${rows}</ul>`;
+    };
+
+    let html = '';
+    Object.entries(extras).forEach(([section, fields]) => {
+      const title = String(section).trim().toLowerCase() === GI_NAME ? 'Extra General Information' : section;
+      html += `
+        <div class="accordion-item">
+          <button type="button" class="accordion-header">${title}<span class="chev"></span></button>
+          <div class="accordion-content">${toRows(fields)}</div>
+        </div>`;
+    });
+    host.innerHTML = html;
+
+    // Bind toggles
+    host.querySelectorAll('.accordion-item .accordion-header').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const item = btn.closest('.accordion-item');
+        item.classList.toggle('open');
+      });
+    });
+  })();
+
   // Back button
   const backBtn = container.querySelector('#backButton');
   if (backBtn) {
     backBtn.addEventListener('click', () => {
       container.style.display = 'none';
-      if (mainMap) mainMap.style.display = 'block';
-      if (listCont) listCont.style.display = ''; // let CSS handle
+      const from = container.dataset.origin || 'map';
+      if (from === 'list') {
+        if (listCont) listCont.style.display = '';    // return to list
+        if (mainMap)  mainMap.style.display  = 'none';
+      } else {
+        if (mainMap)  mainMap.style.display  = 'block'; // return to map
+        if (listCont) listCont.style.display = 'none';
+      }
+      // Restore RHS quick-view panel
+      if (rightPanel) rightPanel.style.display = '';
     });
   }
 }

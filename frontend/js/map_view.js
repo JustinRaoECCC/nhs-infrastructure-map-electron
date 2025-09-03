@@ -361,9 +361,7 @@ async function refreshMarkers() {
   try {
     // Load station data
     if (typeof window.electronAPI?.getStationData === 'function') {
-      mapStationData = await window.electronAPI.getStationData(
-        FAST_BOOT ? { skipColors: true } : {}
-      );
+      mapStationData = await window.electronAPI.getStationData({});
     }
 
     // Validate coordinates
@@ -463,14 +461,38 @@ async function refreshMarkers() {
               showStationDetails(stn);
             });
 
-            marker.on('popupopen', () => {
-              const link = document.querySelector('.leaflet-popup a.popup-link');
-              if (link) {
-                link.addEventListener('click', (ev) => {
-                  ev.preventDefault();
-                  if (window.loadStationPage) window.loadStationPage(stn.station_id);
-                }, { once: true });
-              }
+            // Bind click to the *current* popup DOM (more reliable than document.querySelector)
+            marker.on('popupopen', (evt) => {
+              // Wait a tick to ensure Leaflet has inserted the popup content
+              setTimeout(() => {
+                const popupEl = evt && evt.popup ? evt.popup.getElement() : null;
+                if (!popupEl) return;
+                const link = popupEl.querySelector('a.popup-link');
+                if (!link) return;
+
+                const openDetails = (e) => {
+                  // Completely stop the event so Leaflet doesn't re-handle it
+                  if (window.L && window.L.DomEvent) window.L.DomEvent.stop(e);
+                  e?.preventDefault?.();
+                  if (typeof window.loadStationPage === 'function') {
+                    window.loadStationPage(stn.station_id, 'map'); // remember origin
+                  }
+                };
+
+                // Use Leaflet’s DOM event system to avoid propagation to the map
+                if (window.L && window.L.DomEvent) {
+                  L.DomEvent.on(link, 'click', openDetails);
+                  // Be extra-safe on different inputs
+                  L.DomEvent.on(link, 'mousedown', L.DomEvent.stopPropagation);
+                  L.DomEvent.on(link, 'dblclick', L.DomEvent.stopPropagation);
+                  L.DomEvent.on(link, 'keydown', (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') openDetails(e);
+                  });
+                } else {
+                  // Fallback, just in case
+                  link.addEventListener('click', openDetails, { once: true });
+                }
+              }, 0);
             });
             
             markersAdded++;

@@ -11,40 +11,84 @@ function hashColor(str) {
 }
 
 // ─── Public API ────────────────────────────────────────────────────────────
+// ─── Public API ────────────────────────────────────────────────────────────
+// backend/app.js
 async function getStationData(opts = {}) {
   const skipColors = !!opts.skipColors;
-  // Always aggregate from location workbooks
   const agg = await excel.readStationsAggregate().catch(() => ({ success:false, rows: [] }));
   const rows = agg?.rows || [];
   const out = new Array(rows.length);
 
-  // Resolve colors in ONE pass from cache (warm if needed)
-  let globalMap = null, byLoc = null;
+  const norm = s => String(s ?? '').trim().toLowerCase();
+
+  // Build normalized color maps (case/space insensitive)
+  let gMapN = null;           // Map<assetType_norm, color>
+  let byLocN = null;          // Map<location_norm OR "company@@location"_norm, Map<assetType_norm, color>>
+  // Also invert Locations→Company to know which company a given location belongs to.
+  let companyForLoc = null;   // Map<location_norm, company_norm>
+
   if (!skipColors) {
     try {
       const maps = await lookupsRepo.getColorMaps();
-      globalMap = maps.global;
-      byLoc     = maps.byLocation;
-    } catch(_) {}
+      // tolerate plain objects coming over IPC
+      const gSrc = maps?.global instanceof Map ? maps.global : new Map(Object.entries(maps?.global || {}));
+      const lSrc = maps?.byLocation instanceof Map ? maps.byLocation : new Map(Object.entries(maps?.byLocation || {}));
+
+      gMapN = new Map();
+      for (const [at, col] of gSrc.entries()) gMapN.set(norm(at), col);
+
+      byLocN = new Map();
+      for (const [locKeyRaw, inner] of lSrc.entries()) {
+        const innerMap = inner instanceof Map ? inner : new Map(Object.entries(inner || {}));
+        const nInner = new Map();
+        for (const [at, col] of innerMap.entries()) nInner.set(norm(at), col);
+        byLocN.set(norm(locKeyRaw), nInner); // supports "BC" or "NHS@@BC"
+      }
+
+      // Invert locationsByCompany so we can try "company@@location" first
+      const tree = await lookupsRepo.getLookupTree();
+      const inv = new Map();
+      Object.entries(tree?.locationsByCompany || {}).forEach(([company, locs]) => {
+        const coN = norm(company);
+        (locs || []).forEach(l => inv.set(norm(l), coN));
+      });
+      companyForLoc = inv;
+    } catch (_) {}
   }
 
   for (let i = 0; i < rows.length; i++) {
     const st = rows[i];
-    const loc = st.province || st.location || '';
-    const at  = st.asset_type || 'Unknown';
+    const locCandidates = [st.province, st.location, st.location_file].map(norm).filter(Boolean);
+    const atRaw = st.asset_type || 'Unknown';
+    const atKey = norm(atRaw);
     let color = null;
-    if (skipColors) {
-      color = hashColor(`${loc}:${at}`);
-    } else if (globalMap && byLoc) {
-      const m = byLoc.get(loc);
-      color = (m && m.get(at)) || globalMap.get(at) || null;
+
+    if (skipColors || !gMapN || !byLocN) {
+      color = hashColor(`${locCandidates[0] || ''}:${atRaw}`);
     } else {
-      try {
-        color = await lookupsRepo.getAssetTypeColorForLocation(at, loc)
-              || await lookupsRepo.getAssetTypeColor(at);
-      } catch(_) {}
+      // 1) Company+Location override (if AssetTypes used "COMPANY@@LOCATION" as the location key)
+      for (const L of locCandidates) {
+        if (color) break;
+        const co = companyForLoc?.get(L);
+        if (!co) continue;
+        const compKey = `${co}@@${L}`;
+        const m = byLocN.get(compKey);
+        if (m && m.has(atKey)) { color = m.get(atKey); break; }
+      }
+      // 2) Location-only override
+      if (!color) {
+        for (const L of locCandidates) {
+          const m = byLocN.get(L);
+          if (m && m.has(atKey)) { color = m.get(atKey); break; }
+        }
+      }
+      // 3) Global color
+      if (!color) color = gMapN.get(atKey) || null;
+      // 4) Deterministic fallback
+      if (!color) color = hashColor(`${locCandidates[0] || ''}:${atRaw}`);
     }
-    out[i] = { ...st, color: color || hashColor(`${loc}:${at}`) };
+
+   out[i] = { ...st, color };
   }
   return out;
 }

@@ -1,20 +1,29 @@
 <!-- frontend/station_specific.html -->
-<div id="stationPage">
-  <button id="backButton">&larr; Back to Main View</button>
-  <h1 id="stationTitle">STATION NAME (ID)</h1>
+<div id="stationPage" class="detail-page">
+  <button id="backButton" class="btn btn-ghost">&larr; Back to Main View</button>
+  <h1 id="stationTitle" class="page-title">STATION NAME (ID)</h1>
+
+  <!-- status + type pills -->
+  <div class="meta-row">
+    <span id="statusPill" class="pill">Status</span>
+    <span id="typePill" class="pill pill--muted">Type</span>
+  </div>
+
+  <!-- tabs (unchanged wiring) -->
   <div class="tabs">
     <button class="tab active" data-target="overview">Overview</button>
     <button class="tab" data-target="inspection-history">Inspection History</button>
     <button class="tab" data-target="construction-history">Construction History</button>
-    <button class="tab" data-target="high-priority-repairs">High Priority Repairs</button>
     <button class="tab" data-target="documents">Documents</button>
     <button class="tab" data-target="photos">Photos</button>
   </div>
+
   <div id="overview" class="tab-content active">
+    <!-- “Site Information” = your General Information -->
     <div class="station-section">
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <h3>General Information</h3>
-        <button id="unlockEditing" class="open-modal-button">🔒 Unlock Editing</button>
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <h3>Site Information</h3>
+        <button id="unlockEditing" class="btn btn-ghost">🔒 Unlock Editing</button>
       </div>
       <table>
         <tr><th>Station ID:</th> <td><input id="giStationId" type="text" disabled /></td></tr>
@@ -36,48 +45,18 @@
       </table>
     </div>
 
-    <button id="btnStationAddSection">+ Add Section</button>
-    <div id="stationSectionsContainer"></div>
-
-    <div style="margin-top:1em;">
-      <button id="saveChanges">Save Changes</button>
-      <button id="deleteStation" style="margin-left:1em;">Delete Station</button>
+    <!-- Photos strip (placeholder only for now) -->
+    <div class="card photos-card">
+      <h3>Recent Photos</h3>
+      <div class="photo-row" id="photosRow"></div>
     </div>
+
+    <!-- Collapsible Extra Sections -->
+    <div id="extraAccordion" class="accordion"></div>
   </div>
 
   <div id="inspection-history" class="tab-content"></div>
   <div id="construction-history" class="tab-content"></div>
-  <div id="high-priority-repairs" class="tab-content">
-    <h3>Existing Repairs</h3>
-    <table id="existingRepairsTable" class="repairs-table">
-      <thead><tr><th>Repair Name</th><th>Severity</th><th>Priority</th><th>Cost</th><th>Category</th></tr></thead>
-      <tbody></tbody>
-    </table>
-    <div id="repairsSection">
-      <button id="btnAddRepair" class="btn-primary">+ Add Repair</button>
-      <button id="btnSaveRepairs" class="btn-primary">Save Changes</button>
-      <button id="btnResolveRepairs" class="btn-primary">Resolve Repairs</button>
-      <button id="btnExportRepairs">Export Repairs to Dashboard</button>
-      <div id="repairFormsContainer"></div>
-    </div>
-    <div id="addRepairModal" class="modal" style="display:none;">
-      <div class="modal-content">
-        <span class="close-modal" id="closeAddRepairModal">&times;</span>
-        <h2>Add Repair</h2>
-        <label>Repair Name</label><input type="text" id="inputRepairName"/><br/>
-        <label>Severity Ranking</label><input type="number" id="inputSeverityRanking"/><br/>
-        <label>Priority Ranking</label><input type="number" id="inputPriorityRanking"/><br/>
-        <label>Repair Cost</label><input type="number" step="any" id="inputRepairCost"/><br/>
-        <label>Category</label>
-        <select id="selectRepairCategory">
-          <option value="Capital">Capital</option>
-          <option value="O&M">O&M</option>
-        </select><br/>
-        <button id="confirmAddRepair">Add</button>
-      </div>
-    </div>
-  </div>
-
   <div id="documents" class="tab-content"></div>
   <div id="photos" class="tab-content"></div>
 </div>

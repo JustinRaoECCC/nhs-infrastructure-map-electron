@@ -115,10 +115,19 @@ ipcMain.handle('getColorMaps', async () => {
   // Convert Maps to plain objects for IPC safety
   const toObj = (m) => Object.fromEntries(m instanceof Map ? m : new Map(Object.entries(m || {})));
   const byLocObj = {};
+  const byCoLocObj = {};
   for (const [loc, inner] of maps.byLocation.entries()) {
     byLocObj[loc] = toObj(inner);
+    // If the key was stored as "COMPANY@@LOCATION", also expose a company→location tree
+    if (typeof loc === 'string' && loc.includes('@@')) {
+      const [co, plainLoc] = loc.split('@@');
+      if (co && plainLoc) {
+        byCoLocObj[co] ||= {};
+        byCoLocObj[co][plainLoc] = toObj(inner);
+      }
+    }
   }
-  return { global: toObj(maps.global), byLocation: byLocObj };
+  return { global: toObj(maps.global), byLocation: byLocObj, byCompanyLocation: byCoLocObj };
 });
 ipcMain.handle('setAssetTypeColor', async (_, assetType, color) =>
   lookups.setAssetTypeColor(assetType, color)
@@ -126,6 +135,11 @@ ipcMain.handle('setAssetTypeColor', async (_, assetType, color) =>
 ipcMain.handle('setAssetTypeColorForLocation', async (_, assetType, location, color) =>
   lookups.setAssetTypeColorForLocation(assetType, location, color)
 );
+// Allow saving colors at Company+Location granularity by encoding key as "COMPANY@@LOCATION"
+ipcMain.handle('setAssetTypeColorForCompanyLocation', async (_evt, assetType, company, location, color) => {
+  const combined = `${company}@@${location}`;
+  return lookups.setAssetTypeColorForLocation(assetType, combined, color);
+});
 
 // ─── IPC: Colors ───────────────────────────────────────────────────────────
 ipcMain.handle('lookups:getAssetTypeColor', async (_evt, assetType) => backend.getAssetTypeColor(assetType));

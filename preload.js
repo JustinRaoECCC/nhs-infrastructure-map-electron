@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getColorMaps:       () => ipcRenderer.invoke('getColorMaps'),
   setAssetTypeColor:  (assetType, color) => ipcRenderer.invoke('setAssetTypeColor', assetType, color),
   setAssetTypeColorForLocation: (assetType, location, color) => ipcRenderer.invoke('setAssetTypeColorForLocation', assetType, location, color),
+  setAssetTypeColorForCompanyLocation: (assetType, company, location, color) =>
+    ipcRenderer.invoke('setAssetTypeColorForCompanyLocation', assetType, company, location, color),
   getLookupTree:          ()      => ipcRenderer.invoke('lookups:getTree'),
 
   // ─── Lookups (writes only — used by Add Infrastructure wizard) ──────────

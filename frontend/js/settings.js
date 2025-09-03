@@ -20,8 +20,8 @@
     return ('#' + padded).toLowerCase();
   }
 
-  function rowKey(assetType, location) {
-    return `${assetType}@@${location}`;
+  function rowKey(assetType, company, location) {
+    return `${assetType}@@${company}@@${location}`;
   }
 
   async function getColorMapFromBackend() {
@@ -31,13 +31,26 @@
     try {
       const maps = await api.getColorMaps(); // { global: Map, byLocation: Map<Location, Map<AT, Color>> }
       const out = {};
+      if (maps && maps.byCompanyLocation) {
+        const byCo = maps.byCompanyLocation instanceof Map ? maps.byCompanyLocation : new Map(Object.entries(maps.byCompanyLocation));
+        for (const [co, locMapLike] of byCo.entries()) {
+          const locMap = locMapLike instanceof Map ? locMapLike : new Map(Object.entries(locMapLike));
+          for (const [loc, innerLike] of locMap.entries()) {
+            const inner = innerLike instanceof Map ? innerLike : new Map(Object.entries(innerLike));
+            for (const [at, color] of inner.entries()) {
+              out[rowKey(at, co, loc)] = normalizeHex(color);
+            }
+          }
+        }
+      }
       if (maps && maps.byLocation) {
         // maps.byLocation can arrive as plain objects depending on IPC
         const byLoc = maps.byLocation instanceof Map ? maps.byLocation : new Map(Object.entries(maps.byLocation));
         for (const [loc, inner] of byLoc.entries()) {
           const innerMap = inner instanceof Map ? inner : new Map(Object.entries(inner));
           for (const [at, color] of innerMap.entries()) {
-            out[rowKey(at, loc)] = normalizeHex(color);
+            // company-agnostic location fallback: mark with '*' company
+            out[rowKey(at, '*', loc)] = normalizeHex(color);
           }
         }
       }
@@ -46,7 +59,7 @@
         const g = maps.global instanceof Map ? maps.global : new Map(Object.entries(maps.global));
         for (const [at, color] of g.entries()) {
           // Use a special '*' location key only if no per-location color exists
-          const k = rowKey(at, '*');
+          const k = rowKey(at, '*', '*')
           if (!out[k]) out[k] = normalizeHex(color);
         }
       }
@@ -71,9 +84,18 @@
     return empty;
   }
 
-  async function persistColorChange(assetType, location, color) {
+  async function persistColorChange(assetType, company, location, color) {
     const api = window.electronAPI || {};
-    // 1) Preferred: per-location setter
+    // 1) Preferred: company+location setter
+    if (typeof api.setAssetTypeColorForCompanyLocation === 'function') {
+      try {
+        const res = await api.setAssetTypeColorForCompanyLocation(assetType, company, location, color);
+        if (res && res.success !== false) return true;
+      } catch (e) {
+        console.warn('[settings] setAssetTypeColorForCompanyLocation failed', e);
+      }
+    }
+    // 2) Fallback: per-location
     if (typeof api.setAssetTypeColorForLocation === 'function') {
       try {
         const res = await api.setAssetTypeColorForLocation(assetType, location, color);
@@ -82,7 +104,7 @@
         console.warn('[settings] setAssetTypeColorForLocation failed', e);
       }
     }
-    // 2) Fallback: global color (if your schema sometimes ignores location)
+    // 3) Fallback: global color (if your schema sometimes ignores location)
     if (typeof api.setAssetTypeColor === 'function') {
       try {
         const res = await api.setAssetTypeColor(assetType, color);
@@ -116,6 +138,7 @@
     state.rows.forEach((r) => {
       const tr = document.createElement('tr');
       tr.innerHTML = `
+        <td>${r.company}</td>
         <td>${r.asset_type}</td>
         <td>${r.location}</td>
         <td>
@@ -134,13 +157,14 @@
       if (!(inp instanceof HTMLInputElement) || inp.type !== 'color') return;
       const at  = inp.dataset.asset || '';
       const loc = inp.dataset.location || '';
+      const co  = inp.closest('tr')?.children?.[0]?.textContent?.trim() || '';
       const val = normalizeHex(inp.value);
       // keep the hex text beside the picker in sync
       const code = inp.parentElement?.querySelector('code');
       if (code) code.textContent = val;
 
-      const k = rowKey(at, loc);
-      state.changes.set(k, { asset_type: at, location: loc, color: val });
+      const k = rowKey(at, co, loc);
+      state.changes.set(k, { asset_type: at, company: co, location: loc, color: val });
     }, { passive: true });
   }
 
@@ -174,8 +198,8 @@
     if (status) status.textContent = 'Saving…';
 
     let ok = 0, fail = 0;
-    for (const { asset_type, location, color } of entries) {
-      const success = await persistColorChange(asset_type, location, color);
+    for (const { asset_type, company, location, color } of entries) {
+      const success = await persistColorChange(asset_type, company, location, color);
       if (success) ok++; else fail++;
     }
 
@@ -204,20 +228,20 @@
     const lookups = await getLookupTreeSafe();
     const colorMap = await getColorMapFromBackend();
 
-    // Build rows from lookups tree (authoritative for which pairs exist)
+    // Build rows: Company ▸ Location ▸ AssetType
     const rows = [];
-    const locs = lookups.assetsByLocation || {};
-    Object.keys(locs).sort((a, b) => a.localeCompare(b)).forEach(loc => {
-      (locs[loc] || []).slice().sort((a, b) => a.localeCompare(b)).forEach(at => {
-        const key = rowKey(at, loc);
-        let color = colorMap[key];
-        if (!color) {
-          // fallback to global if present
-          const g = colorMap[rowKey(at, '*')];
-          color = g || HEX_DEFAULT;
-        }
-        color = normalizeHex(color);
-        rows.push({ asset_type: at, location: loc, color });
+    const byCo = lookups.locationsByCompany || {};
+    Object.keys(byCo).sort().forEach(company => {
+      (byCo[company] || []).slice().sort().forEach(loc => {
+        const ats = (lookups.assetsByLocation?.[loc] || []).slice().sort();
+        ats.forEach(at => {
+          // prefer company+location, then location, then global
+          const c1 = colorMap[rowKey(at, company, loc)];
+          const c2 = colorMap[rowKey(at, '*', loc)];
+          const c3 = colorMap[rowKey(at, '*', '*')];
+          const color = normalizeHex(c1 || c2 || c3 || HEX_DEFAULT);
+          rows.push({ company, asset_type: at, location: loc, color });
+        });
       });
     });
 
@@ -241,6 +265,8 @@
     if (cancelBtn) cancelBtn.addEventListener('click', () => loadAndRender(root)); // revert to disk
 
     loadAndRender(root);
+
+    window.addEventListener('lookups:changed', () => loadAndRender(root));
   }
 
   // Public API for add_infra.js

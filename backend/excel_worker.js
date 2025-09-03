@@ -100,18 +100,31 @@ async function readLookupsSnapshot() {
 
   const colorsGlobal = {};            // { assetType: color }
   const colorsByLoc  = {};            // { location: { assetType: color } }
+  const colorsByCompanyLoc = {};           // { company: { location: { assetType: color } } }
   if (wsA) {
     wsA.eachRow({ includeEmpty:false }, (row, i) => {
       if (i === 1) return;
-      const at  = normStr(row.getCell(1)?.text);
-      const loc = normStr(row.getCell(2)?.text);
-      const col = normStr(row.getCell(3)?.text);
+      const at   = normStr(row.getCell(1)?.text);
+      const loc2 = normStr(row.getCell(2)?.text);   // can be "", "<LOC>", or "<COMPANY>@@<LOC>"
+      const col  = normStr(row.getCell(3)?.text);
       if (!at || !col) return;
-      if (!loc) {
+      if (!loc2) {
         if (!colorsGlobal[at]) colorsGlobal[at] = col;
       } else {
-        (colorsByLoc[loc] ||= {});
-        if (!colorsByLoc[loc][at]) colorsByLoc[loc][at] = col;
+        // company-scoped?
+        const split = loc2.split('@@');
+        if (split.length === 2) {
+          const company = normStr(split[0]);
+          const loc = normStr(split[1]);
+          if (company && loc) {
+            ((colorsByCompanyLoc[company] ||= {})[loc] ||= {});
+            if (!colorsByCompanyLoc[company][loc][at]) colorsByCompanyLoc[company][loc][at] = col;
+            return;
+          }
+        }
+        // fall back to plain per-location
+        (colorsByLoc[loc2] ||= {});
+        if (!colorsByLoc[loc2][at]) colorsByLoc[loc2][at] = col;
       }
     });
   }
@@ -149,7 +162,10 @@ async function readLookupsSnapshot() {
   Object.keys(locsByCompany).forEach(k => { locsByCompany[k] = Array.from(locsByCompany[k]).sort((a,b)=>a.localeCompare(b)); });
   Object.keys(assetsByLocation).forEach(k => { assetsByLocation[k] = Array.from(assetsByLocation[k]).sort((a,b)=>a.localeCompare(b)); });
 
-  const payload = { mtimeMs, colorsGlobal, colorsByLoc, companies: uniqSorted(companies), locsByCompany, assetsByLocation };
+  const payload = {
+    mtimeMs, colorsGlobal, colorsByLoc, colorsByCompanyLoc,
+    companies: uniqSorted(companies), locsByCompany, assetsByLocation
+  };
   progress('done', 100, 'Excel ready');
   return payload;
 }
@@ -577,6 +593,28 @@ async function readStationsAggregate() {
   return { success:true, rows: out };
 }
 
+// NEW: set color scoped to company+location (stored as "<COMPANY>@@<LOCATION>")
+async function setAssetTypeColorForCompanyLocation(assetType, company, location, color) {
+  await ensureLookupsReady();
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(LOOKUPS_PATH);
+  const ws = getSheet(wb, 'AssetTypes');
+  if (!ws) throw new Error('Missing AssetTypes sheet');
+  const tgtAt = lc(assetType);
+  const tgtKey = `${normStr(company)}@@${normStr(location)}`.toLowerCase();
+  let updated = false;
+  ws.eachRow({ includeEmpty:false }, (row, idx) => {
+    if (idx === 1) return;
+    const at  = lc(row.getCell(1)?.text);
+    const loc = lc(normStr(row.getCell(2)?.text));
+    if (at === tgtAt && loc === tgtKey) { row.getCell(3).value = color; updated = true; }
+  });
+  if (!updated) ws.addRow([normStr(assetType), `${normStr(company)}@@${normStr(location)}`, color]);
+  await wb.xlsx.writeFile(LOOKUPS_PATH);
+  return { success: true };
+}
+
 // ─── RPC shim ─────────────────────────────────────────────────────────────
 const handlers = {
   ping: async () => 'pong',
@@ -584,6 +622,7 @@ const handlers = {
   readLookupsSnapshot,
   setAssetTypeColor,
   setAssetTypeColorForLocation,
+  setAssetTypeColorForCompanyLocation,
   upsertCompany,
   upsertLocation,
   upsertAssetType,

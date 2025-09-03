@@ -1,1 +1,1 @@
-{"mtimeMs":1756855883446.9084,"colorsGlobal":{},"colorsByLoc":{"BC":{"Cableway":"#0088ff","Weir":"#eeff00"}},"companies":["NHS"],"locsByCompany":{"NHS":["BC"]},"assetsByLocation":{"BC":["Cableway","Weir"]}}
+{"mtimeMs":1756917290050.0732,"colorsGlobal":{},"colorsByLoc":{"BC":{"Cableway":"#0088ff","Weir":"#ff0000"},"AB":{"Cableway":"#3eead6"},"YT":{"Cableway":"#c425c8"}},"companies":["NHS","WSC"],"locsByCompany":{"NHS":["AB","BC"],"WSC":["YT"]},"assetsByLocation":{"BC":["Cableway","Weir"],"AB":["Cableway"],"YT":["Cableway"]}}

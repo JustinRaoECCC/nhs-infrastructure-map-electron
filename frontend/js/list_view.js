@@ -246,6 +246,23 @@
     tbodyEl.dataset.bound = '1';
   }
 
+  // NEW: clicking a row opens the station detail page
+  function attachRowClicks(tbodyEl) {
+    if (!tbodyEl || tbodyEl.dataset.clickBound === '1') return;
+    tbodyEl.addEventListener('click', (e) => {
+      const tr = e.target.closest('tr[data-idx]');
+      if (!tr) return;
+      const idx = Number(tr.dataset.idx);
+      if (!Number.isFinite(idx)) return;
+      const stn = currentRows[idx];
+      if (!stn) return;
+      if (typeof window.loadStationPage === 'function') {
+        window.loadStationPage(stn.station_id, 'list'); // pass origin
+      }
+    });
+    tbodyEl.dataset.clickBound = '1';
+  }
+
   function updateCountBadge(n) {
     const badge = document.getElementById('listCount');
     if (!badge) return;
@@ -289,6 +306,7 @@
 
     tbody.appendChild(frag);
     attachHover(tbody);
+    attachRowClicks(tbody);
     updateCountBadge(limit);
   }
 

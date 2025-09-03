@@ -39,6 +39,7 @@ let _cache = {
   mtimeMs: -1,
   colorsGlobal: new Map(),         // Map<assetType, color>
   colorsByLoc: new Map(),          // Map<location, Map<assetType, color>>
+  colorsByCompanyLoc: new Map(),   // Map<company, Map<location, Map<assetType, color>>>
   companies: [],
   locsByCompany: {},               // { [company]: string[] }
   assetsByLocation: {},            // { [location]: string[] }
@@ -95,6 +96,11 @@ async function _primeAllCaches() {
   const byLoc  = new Map(
     Object.entries(snap.colorsByLoc || {}).map(([loc, obj]) => [loc, new Map(Object.entries(obj))])
   );
+  const byCoLoc = new Map(
+    Object.entries(snap.colorsByCompanyLoc || {}).map(([co, locObj]) => {
+      return [co, new Map(Object.entries(locObj).map(([loc, obj]) => [loc, new Map(Object.entries(obj))]))];
+    })
+  );
 
   // Companies
   const companies = snap.companies || [];
@@ -107,6 +113,7 @@ async function _primeAllCaches() {
     mtimeMs,
     colorsGlobal: global,
     colorsByLoc: byLoc,
+    colorsByCompanyLoc: byCoLoc,
     companies: uniqSorted(companies),
     locsByCompany,
     assetsByLocation,
@@ -120,6 +127,7 @@ async function getColorMaps() {
   return {
     global: _cache.colorsGlobal,
     byLocation: _cache.colorsByLoc,
+    byCompanyLocation: _cache.colorsByCompanyLoc,
   };
 }
 
@@ -160,6 +168,18 @@ async function getAssetTypeColorForLocation(assetType, location) {
   return col || null;
 }
 
+async function getAssetTypeColorForCompanyLocation(assetType, company, location) {
+  await _primeAllCaches();
+  const co = normStr(company);
+  const loc = normStr(location);
+  const at = normStr(assetType);
+  const coMap = _cache.colorsByCompanyLoc.get(co);
+  if (!coMap) return null;
+  const locMap = coMap.get(loc);
+  if (!locMap) return null;
+  return locMap.get(at) || null;
+}
+
 async function setAssetTypeColor(assetType, color) {
   const res = await excel.setAssetTypeColor(assetType, color);
   _invalidateAllCaches();
@@ -168,6 +188,12 @@ async function setAssetTypeColor(assetType, color) {
 
 async function setAssetTypeColorForLocation(assetType, location, color) {
   const res = await excel.setAssetTypeColorForLocation(assetType, location, color);
+  _invalidateAllCaches();
+  return res;
+}
+
+async function setAssetTypeColorForCompanyLocation(assetType, company, location, color) {
+  const res = await excel.setAssetTypeColorForCompanyLocation(assetType, company, location, color);
   _invalidateAllCaches();
   return res;
 }
@@ -211,12 +237,14 @@ module.exports = {
   getAssetTypesForLocation,
   getAssetTypeColor,
   getAssetTypeColorForLocation,
+  getAssetTypeColorForCompanyLocation,
   // writes
   upsertCompany,
   upsertLocation,
   upsertAssetType,
   setAssetTypeColor,
   setAssetTypeColorForLocation,
+  setAssetTypeColorForCompanyLocation,
   // paths
   LOOKUPS_PATH,
   DATA_DIR, LOCATIONS_DIR, REPAIRS_DIR,
