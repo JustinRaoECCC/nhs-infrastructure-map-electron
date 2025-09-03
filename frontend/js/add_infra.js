@@ -407,6 +407,7 @@
           const selected = idxs.map(i => state.previewRows[i]).filter(Boolean);
           const payload = {
             location: state.location,
+            company:  state.company,
             sheetName: state.selectedSheet || 'Data',
             sections: state.previewSections,
             headers: state.previewHeaders,

@@ -200,29 +200,57 @@ function normalizeRow(r) {
 }
 
 /**
- * Add a user-selected subset of rows to:
- *  1) data/locations/<location>.xlsx (sheetName, headers preserved)
- *  2) in-memory + app_state.json stations (pins appear)
+ * Add a user-selected subset of rows to the chosen location workbook.
+ * - Auto-creates the <location> under <company> if missing.
+ * - Ensures a Province/Location column exists; fills blanks with the chosen location.
+ * - Forces Category to the selected asset type.
  */
 async function addStationsFromSelection(payload) {
-  const { location, sheetName, sections, headers, rows, assetType } = payload || {};
+  const { location, company, sheetName, sections, headers, rows, assetType } = payload || {};
   if (!Array.isArray(rows) || !rows.length) {
     return { success:false, message:'No rows selected.' };
   }
-  // 1) Prepare headers/rows: force Category = typed assetType
+  // 0) Make sure the location exists (creates workbook too)
+  try {
+    if (location && company && lookupsRepo?.upsertLocation) {
+      await lookupsRepo.upsertLocation(location, company);
+    }
+  } catch (e) {
+    console.warn('[importSelection] upsertLocation failed (continuing):', e?.message || e);
+  }
+
+  // 1) Prepare headers/rows: ensure Category + Province/Location headers and values
   try {
     const at = String(assetType || '').trim();
     // Build working headers/sections
     let hdrs = Array.isArray(headers) && headers.length ? headers.slice() : Object.keys(rows[0] || {});
     let secs = Array.isArray(sections) && sections.length === hdrs.length ? sections.slice() : hdrs.map(()=>'');
-    // Ensure there is a "Category" field
-    const idxCategory = hdrs.findIndex(h => String(h || '').trim().toLowerCase() === 'category');
-    if (idxCategory === -1) {
+
+    // Ensure "Category" exists
+    const hLower = hdrs.map(h => String(h || '').trim().toLowerCase());
+    if (!hLower.includes('category')) {
       hdrs.push('Category');
-      secs.push(''); // no section required; reader matches by field suffix anyway
+      secs.push('');
+      hLower.push('category');
     }
-    // Stamp Category for every row (overrides any incoming Structure Type etc.)
-    const rowsStamped = rows.map(r => ({ ...r, Category: at }));
+
+    // Ensure a Province/Location field exists; prefer "Province"
+    const hasProvince = hLower.includes('province');
+    const hasLocation = hLower.includes('location');
+    const locFieldName = hasProvince ? 'Province' : (hasLocation ? 'Location' : 'Province');
+    if (!hasProvince && !hasLocation) {
+      hdrs.push(locFieldName);
+      secs.push('');
+    }
+
+    // Stamp Category and default Province/Location value when blank
+    const rowsStamped = rows.map(r => {
+      const out = { ...r, Category: at };
+      const cur = (r['Province'] ?? r['province'] ?? r['Location'] ?? r['location'] ?? '').toString().trim();
+      if (!cur && location) out[locFieldName] = location;
+      return out;
+    });
+
     await excel.writeLocationRows(location, sheetName || 'Data', secs, hdrs, rowsStamped);
   } catch (e) {
     console.error('[importSelection] writeLocationRows failed:', e);
