@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  const HEX_DEFAULT = '#4b5563'; // slate-ish fallback
+  const HEX_DEFAULT = '#4b5563'; // only for UI input fallback; not written unless user saves
 
   function normalizeHex(s) {
     // Ensure a valid #RRGGBB; fix common #RRGGg (6th missing) by padding.
@@ -31,6 +31,7 @@
     try {
       const maps = await api.getColorMaps(); // { global: Map, byLocation: Map<Location, Map<AT, Color>> }
       const out = {};
+      // STRICT: only consume byCompanyLocation
       if (maps && maps.byCompanyLocation) {
         const byCo = maps.byCompanyLocation instanceof Map ? maps.byCompanyLocation : new Map(Object.entries(maps.byCompanyLocation));
         for (const [co, locMapLike] of byCo.entries()) {
@@ -41,26 +42,6 @@
               out[rowKey(at, co, loc)] = normalizeHex(color);
             }
           }
-        }
-      }
-      if (maps && maps.byLocation) {
-        // maps.byLocation can arrive as plain objects depending on IPC
-        const byLoc = maps.byLocation instanceof Map ? maps.byLocation : new Map(Object.entries(maps.byLocation));
-        for (const [loc, inner] of byLoc.entries()) {
-          const innerMap = inner instanceof Map ? inner : new Map(Object.entries(inner));
-          for (const [at, color] of innerMap.entries()) {
-            // company-agnostic location fallback: mark with '*' company
-            out[rowKey(at, '*', loc)] = normalizeHex(color);
-          }
-        }
-      }
-      // Fill from global if a per-location override is missing
-      if (maps && maps.global) {
-        const g = maps.global instanceof Map ? maps.global : new Map(Object.entries(maps.global));
-        for (const [at, color] of g.entries()) {
-          // Use a special '*' location key only if no per-location color exists
-          const k = rowKey(at, '*', '*')
-          if (!out[k]) out[k] = normalizeHex(color);
         }
       }
       return out;
@@ -86,41 +67,13 @@
 
   async function persistColorChange(assetType, company, location, color) {
     const api = window.electronAPI || {};
-    // 1) Preferred: company+location setter
+    // STRICT: always write at company+location level
     if (typeof api.setAssetTypeColorForCompanyLocation === 'function') {
       try {
         const res = await api.setAssetTypeColorForCompanyLocation(assetType, company, location, color);
         if (res && res.success !== false) return true;
       } catch (e) {
         console.warn('[settings] setAssetTypeColorForCompanyLocation failed', e);
-      }
-    }
-    // 2) Fallback: per-location
-    if (typeof api.setAssetTypeColorForLocation === 'function') {
-      try {
-        const res = await api.setAssetTypeColorForLocation(assetType, location, color);
-        if (res && res.success !== false) return true;
-      } catch (e) {
-        console.warn('[settings] setAssetTypeColorForLocation failed', e);
-      }
-    }
-    // 3) Fallback: global color (if your schema sometimes ignores location)
-    if (typeof api.setAssetTypeColor === 'function') {
-      try {
-        const res = await api.setAssetTypeColor(assetType, color);
-        if (res && res.success !== false) return true;
-      } catch (e) {
-        console.warn('[settings] setAssetTypeColor failed', e);
-      }
-    }
-    // 3) Last resort: upsert the row with color if your backend supports it
-    if (typeof api.upsertAssetType === 'function') {
-      try {
-        // Some backends accept a third "color" arg; if not, this will no-op but stay safe
-        const res = await api.upsertAssetType(assetType, location, color);
-        if (res && res.success !== false) return true;
-      } catch (e) {
-        console.warn('[settings] upsertAssetType(color) fallback failed', e);
       }
     }
     return false;
@@ -235,11 +188,8 @@
       (byCo[company] || []).slice().sort().forEach(loc => {
         const ats = (lookups.assetsByLocation?.[loc] || []).slice().sort();
         ats.forEach(at => {
-          // prefer company+location, then location, then global
-          const c1 = colorMap[rowKey(at, company, loc)];
-          const c2 = colorMap[rowKey(at, '*', loc)];
-          const c3 = colorMap[rowKey(at, '*', '*')];
-          const color = normalizeHex(c1 || c2 || c3 || HEX_DEFAULT);
+          const c = colorMap[rowKey(at, company, loc)];
+          const color = normalizeHex(c || HEX_DEFAULT); // UI shows something; save writes the strict triple only
           rows.push({ company, asset_type: at, location: loc, color });
         });
       });

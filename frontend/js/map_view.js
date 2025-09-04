@@ -28,7 +28,6 @@ let RENDER_IN_PROGRESS = false; // Prevent concurrent renders
 // Init (same as before)
 // ────────────────────────────────────────────────────────────────────────────
 function initMap() {
-  console.log('[map] initMap()');
 
   const mapEl = document.getElementById('map');
   const mapCol = document.getElementById('mapContainer');
@@ -41,7 +40,6 @@ function initMap() {
   const ensureColumnWidth = () => {
     const w = mapCol.offsetWidth;
     const h = mapCol.offsetHeight;
-    console.log('[map] container dims (pre-init): ' + JSON.stringify({ width: w, height: h }));
     if (w === 0) {
       console.warn('[map] map column width is 0 — forcing min widths');
       mapCol.style.minWidth = '400px';
@@ -107,8 +105,6 @@ function initMap() {
   markersLayer = L.layerGroup();
   markersLayer.addTo(map);
   
-  console.log('[map] markers layer and canvas renderer ready');
-
   const ensureMapSize = () => {
     try {
       map.invalidateSize();
@@ -174,15 +170,6 @@ function getActiveFilters() {
   const allLocationsSelected  = locCbs.length > 0 && locations.size === locCbs.length;
   const allAssetTypesSelected = atCbs.length  > 0 && assetTypes.size === atCbs.length;
 
-  console.log('[map] Filter state:', {
-    locCbs: locCbs.length,
-    atCbs: atCbs.length,
-    locationsSelected: locations.size,
-    assetTypesSelected: assetTypes.size,
-    allLocationsSelected,
-    allAssetTypesSelected
-  });
-
   return {
     locations, assetTypes,
     allLocationsSelected, allAssetTypesSelected,
@@ -197,7 +184,6 @@ function areFiltersActuallyRestricting() {
   
   // If no filter tree, no restriction
   if (!filterTreeEl || filterTreeEl.dataset.ready !== '1') {
-    console.log('[map] Filters not ready, no restriction');
     return false;
   }
   
@@ -205,25 +191,21 @@ function areFiltersActuallyRestricting() {
   
   // If no checkboxes exist yet, no restriction
   if (totalLocs === 0 && totalAts === 0) {
-    console.log('[map] No filter checkboxes exist, no restriction');
     return false;
   }
   
   // If nothing is selected *but checkboxes exist*, that's an active restriction (show none)
   if ((totalLocs + totalAts) > 0 && locations.size === 0 && assetTypes.size === 0) {
-    console.log('[map] Nothing selected => restriction (show none)');
     return true;
   }
   
   // If everything is selected, no restriction
   if ((totalLocs === 0 || locations.size === totalLocs) && 
       (totalAts === 0 || assetTypes.size === totalAts)) {
-    console.log('[map] Everything selected in filters, no restriction');
     return false;
   }
   
   // Otherwise, we are restricting
-  console.log('[map] Filters are actively restricting');
   return true;
 }
 
@@ -351,12 +333,10 @@ window.showStationDetails = window.showStationDetails || showStationDetails;
 // ────────────────────────────────────────────────────────────────────────────
 async function refreshMarkers() {
   if (RENDER_IN_PROGRESS) {
-    console.log('[map] Refresh already in progress, skipping');
     return;
   }
   
   RENDER_IN_PROGRESS = true;
-  console.log('[map] refreshMarkers called, FAST_BOOT:', FAST_BOOT);
   
   try {
     // Load station data
@@ -371,17 +351,13 @@ async function refreshMarkers() {
              Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
     });
 
-    console.log('[map] Valid stations with coords:', allValid.length);
-
     // CRITICAL FIX: Default to showing ALL stations, only filter if explicitly restricting
     let filtered = allValid;
     
     // Only apply filters if they are actually restricting something
     if (areFiltersActuallyRestricting()) {
       const { locations, assetTypes, totalLocs, totalAts, _norm } = getActiveFilters();
-      
-      console.log('[map] Applying active filters');
-      
+            
       filtered = allValid.filter(stn => {
         // Location filter
         let locOk = true;
@@ -409,9 +385,7 @@ async function refreshMarkers() {
         return locOk && atOk;
       });
       
-      console.log('[map] After filtering:', filtered.length, 'stations');
     } else {
-      console.log('[map] No active filters, showing all', filtered.length, 'stations');
     }
 
     // Fast-boot trimming for initial render performance
@@ -425,8 +399,6 @@ async function refreshMarkers() {
       }
       rows = inView.length ? inView : filtered.slice(0, MAX_INITIAL_PINS);
     }
-
-    console.log('[map] Drawing', rows.length, 'markers');
 
     // Clear existing markers
     markersLayer.clearLayers();
@@ -505,15 +477,12 @@ async function refreshMarkers() {
       await new Promise(resolve => setTimeout(resolve, 1));
     }
     
-    console.log('[map] Successfully added', markersAdded, 'markers to map');
-
     // Fit bounds once
     if (!DID_FIT_BOUNDS && filtered.length && map) {
       const latlngs = filtered.map(s => [Number(s.lat), Number(s.lon)]);
       try {
         map.fitBounds(latlngs, { padding: [24, 24] });
         DID_FIT_BOUNDS = true;
-        console.log('[map] Bounds fitted');
       } catch (e) {
         console.error('[map] Error fitting bounds:', e);
       }
@@ -597,25 +566,21 @@ document.addEventListener('DOMContentLoaded', () => {
       console.error('[map] Leaflet still undefined at boot');
       return;
     }
-    console.log('[map] booting with Leaflet', L.version);
 
     initMap();
     bindGlobalImportToolbar();
 
-    console.log('[map] Starting initial fast render');
     refreshMarkers();
 
     const filterTree = document.getElementById('filterTree');
     if (filterTree) {
       filterTree.addEventListener('change', () => {
-        console.log('[map] Filter change detected, refreshing markers');
         debouncedRefreshMarkers();
       });
     }
 
     // Switch to full render mode
     setTimeout(async () => {
-      console.log('[map] Switching to full render mode');
       FAST_BOOT = false;
       
       try {
@@ -635,7 +600,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   (function waitForLeaflet(tries = 0){
     if (window.L && typeof window.L.map === 'function') {
-      console.log('[map] Leaflet detected, starting boot');
       boot();
     } else if (tries < 60) {
       setTimeout(() => waitForLeaflet(tries + 1), 50);

@@ -59,6 +59,16 @@ function _loadJsonCache(mtimeMs) {
       colorsByLoc: new Map(Object.entries(raw.colorsByLoc || {}).map(
         ([loc, obj]) => [loc, new Map(Object.entries(obj))]
       )),
+      colorsByCompanyLoc: new Map(
+        Object.entries(raw.colorsByCompanyLoc || {}).map(
+          ([company, locObj]) => [
+            company,
+            new Map(Object.entries(locObj).map(
+              ([loc, obj]) => [loc, new Map(Object.entries(obj))]
+            ))
+          ]
+        )
+      ),
       companies: raw.companies || [],
       locsByCompany: raw.locsByCompany || {},
       assetsByLocation: raw.assetsByLocation || {},
@@ -76,6 +86,18 @@ function _saveJsonCache() {
         Array.from(_cache.colorsByLoc.entries()).map(
           ([loc, m]) => [loc, Object.fromEntries(m)]
        )
+      ),
+      colorsByCompanyLoc: Object.fromEntries(
+        Array.from(_cache.colorsByCompanyLoc.entries()).map(
+          ([company, locMap]) => [
+            company,
+            Object.fromEntries(
+              Array.from(locMap.entries()).map(
+                ([loc, m]) => [loc, Object.fromEntries(m)]
+              )
+            )
+          ]
+        )
       ),
       companies: _cache.companies,
       locsByCompany: _cache.locsByCompany,

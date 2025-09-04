@@ -3,11 +3,12 @@ const path = require('path');
 const lookupsRepo = require('./lookups_repo');
 const excel = require('./excel_worker_client');
 
-// deterministic fallback color
-function hashColor(str) {
-  let h = 0; for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0;
-  const hue = Math.abs(h) % 360;
-  return `hsl(${hue}, 70%, 45%)`;
+// Normalize location consistently and strip ".xlsx"
+function normLoc(s) {
+  return String(s ?? '')
+    .trim()
+    .replace(/\.xlsx$/i, '')
+    .toLowerCase();
 }
 
 // ─── Public API ────────────────────────────────────────────────────────────
@@ -21,76 +22,105 @@ async function getStationData(opts = {}) {
 
   const norm = s => String(s ?? '').trim().toLowerCase();
 
-  // Build normalized color maps (case/space insensitive)
-  let gMapN = null;           // Map<assetType_norm, color>
-  let byLocN = null;          // Map<location_norm OR "company@@location"_norm, Map<assetType_norm, color>>
-  // Also invert Locations→Company to know which company a given location belongs to.
-  let companyForLoc = null;   // Map<location_norm, company_norm>
+  // Build normalized color maps (case-insensitive) — only company→location→assetType
+  let byCoLocN = new Map();
+  let companyByLocN = new Map();
 
   if (!skipColors) {
     try {
       const maps = await lookupsRepo.getColorMaps();
-      // tolerate plain objects coming over IPC
-      const gSrc = maps?.global instanceof Map ? maps.global : new Map(Object.entries(maps?.global || {}));
-      const lSrc = maps?.byLocation instanceof Map ? maps.byLocation : new Map(Object.entries(maps?.byLocation || {}));
-
-      gMapN = new Map();
-      for (const [at, col] of gSrc.entries()) gMapN.set(norm(at), col);
-
-      byLocN = new Map();
-      for (const [locKeyRaw, inner] of lSrc.entries()) {
-        const innerMap = inner instanceof Map ? inner : new Map(Object.entries(inner || {}));
-        const nInner = new Map();
-        for (const [at, col] of innerMap.entries()) nInner.set(norm(at), col);
-        byLocN.set(norm(locKeyRaw), nInner); // supports "BC" or "NHS@@BC"
-      }
-
-      // Invert locationsByCompany so we can try "company@@location" first
-      const tree = await lookupsRepo.getLookupTree();
-      const inv = new Map();
-      Object.entries(tree?.locationsByCompany || {}).forEach(([company, locs]) => {
-        const coN = norm(company);
-        (locs || []).forEach(l => inv.set(norm(l), coN));
+      
+      // Add debug to see what we're getting
+      console.log('[DEBUG] Raw maps from lookups:', {
+        global: maps?.global,
+        byLocation: maps?.byLocation,
+        byCompanyLocation: maps?.byCompanyLocation
       });
-      companyForLoc = inv;
-    } catch (_) {}
-  }
 
-  for (let i = 0; i < rows.length; i++) {
-    const st = rows[i];
-    const locCandidates = [st.province, st.location, st.location_file].map(norm).filter(Boolean);
-    const atRaw = st.asset_type || 'Unknown';
-    const atKey = norm(atRaw);
-    let color = null;
-
-    if (skipColors || !gMapN || !byLocN) {
-      color = hashColor(`${locCandidates[0] || ''}:${atRaw}`);
-    } else {
-      // 1) Company+Location override (if AssetTypes used "COMPANY@@LOCATION" as the location key)
-      for (const L of locCandidates) {
-        if (color) break;
-        const co = companyForLoc?.get(L);
-        if (!co) continue;
-        const compKey = `${co}@@${L}`;
-        const m = byLocN.get(compKey);
-        if (m && m.has(atKey)) { color = m.get(atKey); break; }
-      }
-      // 2) Location-only override
-      if (!color) {
-        for (const L of locCandidates) {
-          const m = byLocN.get(L);
-          if (m && m.has(atKey)) { color = m.get(atKey); break; }
+      // Handle byCompanyLocation map
+      if (maps?.byCompanyLocation) {
+        const coLocSrc = maps.byCompanyLocation instanceof Map 
+          ? maps.byCompanyLocation 
+          : new Map(Object.entries(maps.byCompanyLocation || {}));
+        
+        for (const [company, locMapLike] of coLocSrc.entries()) {
+          const companyNorm = norm(company);
+          const locMap = locMapLike instanceof Map 
+            ? locMapLike 
+            : new Map(Object.entries(locMapLike || {}));
+          
+          const nLocMap = new Map();
+          for (const [loc, innerLike] of locMap.entries()) {
+            const locNorm = normLoc(loc);
+            const inner = innerLike instanceof Map 
+              ? innerLike 
+              : new Map(Object.entries(innerLike || {}));
+            
+            const nInner = new Map();
+            for (const [at, col] of inner.entries()) {
+              nInner.set(norm(at), col);
+            }
+            nLocMap.set(locNorm, nInner);
+          }
+          byCoLocN.set(companyNorm, nLocMap);
         }
       }
-      // 3) Global color
-      if (!color) color = gMapN.get(atKey) || null;
-      // 4) Deterministic fallback
-      if (!color) color = hashColor(`${locCandidates[0] || ''}:${atRaw}`);
-    }
 
-   out[i] = { ...st, color };
+      // Build location → company map from the lookup tree
+      const tree = await lookupsRepo.getLookupTree();
+      const lbc = tree?.locationsByCompany || {};
+      
+      for (const [company, locs] of Object.entries(lbc)) {
+        const coN = norm(company);
+        for (const loc of locs || []) {
+          const L = normLoc(loc);  // Use normLoc consistently
+          if (!companyByLocN.has(L)) {
+            companyByLocN.set(L, coN);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[DEBUG] Error building color maps:', e);
+    }
   }
+
+  // Continue with the rest of the function...
+  for (let i = 0; i < rows.length; i++) {
+    const st = rows[i];
+    const L = normLoc(st.location_file || st.location || st.province);
+    const atRaw = st.asset_type || 'Unknown';
+    const atKey = norm(atRaw);
+
+    let color = null;
+    if (!skipColors) {
+      const co = L ? companyByLocN.get(L) : null;
+      
+      // Debug only for first station
+      if (i === 0) {
+        console.log('[DEBUG] companyByLocN keys:', Array.from(companyByLocN.keys()));
+        console.log('[DEBUG] byCoLocN keys:', Array.from(byCoLocN.keys()));
+      }
+      console.log(`[DEBUG] Station ${st.station_id}: L="${L}", co="${co}", atKey="${atKey}"`);
+      
+      if (co && byCoLocN.has(co)) {
+        const locMap = byCoLocN.get(co);
+        const m = locMap && locMap.get(L);
+        if (m && m.has(atKey)) {
+          color = m.get(atKey);
+          console.log(`[DEBUG] Found color for ${st.station_id}: ${color}`);
+        }
+      }
+    }
+    out[i] = { ...st, color };
+  }
+
   return out;
+}
+
+// Make invalidate meaningful: re-prime lookup caches
+async function invalidateStationCache() {
+  try { await lookupsRepo.primeAllCaches(); } catch (_) {}
+  return { success: true };
 }
 
 async function getActiveCompanies() {
@@ -294,5 +324,5 @@ module.exports = {
   setAssetTypeColor,
   getAssetTypeColor,
   // misc
-  invalidateStationCache: () => { /* no-op; we read fresh from files */ },
+  invalidateStationCache,
 };

@@ -55,7 +55,7 @@ async function ensureLookupsReady() {
     let changed = false;
     if (need('Companies'))         { wb.addWorksheet('Companies').addRow(['company','active']); changed = true; }
     if (need('Locations'))         { wb.addWorksheet('Locations').addRow(['location','company']); changed = true; }
-    if (need('AssetTypes'))        { wb.addWorksheet('AssetTypes').addRow(['asset_type','location','color']); changed = true; }
+    if (need('AssetTypes'))        { wb.addWorksheet('AssetTypes').addRow(['asset_type','location','company','color']); changed = true; }
     if (need('Custom Weights'))    { wb.addWorksheet('Custom Weights').addRow(['weight','active']); changed = true; }
     if (need('Workplan Constants')){ wb.addWorksheet('Workplan Constants').addRow(['Field','Value']); changed = true; }
     if (need('Algorithm Parameters')) { wb.addWorksheet('Algorithm Parameters')
@@ -71,7 +71,7 @@ async function ensureLookupsReady() {
     progress('ensure', 55, 'Creating workbook…');
     wb.addWorksheet('Companies').addRow(['company','active']);
     wb.addWorksheet('Locations').addRow(['location','company']);
-    wb.addWorksheet('AssetTypes').addRow(['asset_type','location','color']);
+    wb.addWorksheet('AssetTypes').addRow(['asset_type','location','company','color']);
     wb.addWorksheet('Custom Weights').addRow(['weight','active']);
     wb.addWorksheet('Workplan Constants').addRow(['Field','Value']);
     wb.addWorksheet('Algorithm Parameters').addRow(['Applies To','Parameter','Condition','MaxWeight','Option','Weight','Selected']);
@@ -98,33 +98,25 @@ async function readLookupsSnapshot() {
   const wsC = getSheet(wb, 'Companies');
   const wsL = getSheet(wb, 'Locations');
 
-  const colorsGlobal = {};            // { assetType: color }
-  const colorsByLoc  = {};            // { location: { assetType: color } }
-  const colorsByCompanyLoc = {};           // { company: { location: { assetType: color } } }
+  const colorsGlobal = {};               // { assetType: color }
+  const colorsByLoc  = {};               // { location: { assetType: color } }
+  const colorsByCompanyLoc = {};         // { company: { location: { assetType: color } } }
   if (wsA) {
     wsA.eachRow({ includeEmpty:false }, (row, i) => {
       if (i === 1) return;
       const at   = normStr(row.getCell(1)?.text);
-      const loc2 = normStr(row.getCell(2)?.text);   // can be "", "<LOC>", or "<COMPANY>@@<LOC>"
-      const col  = normStr(row.getCell(3)?.text);
+      const loc  = normStr(row.getCell(2)?.text);
+      const co   = normStr(row.getCell(3)?.text);
+      const col  = normStr(row.getCell(4)?.text);
       if (!at || !col) return;
-      if (!loc2) {
+      if (!loc && !co) {
         if (!colorsGlobal[at]) colorsGlobal[at] = col;
-      } else {
-        // company-scoped?
-        const split = loc2.split('@@');
-        if (split.length === 2) {
-          const company = normStr(split[0]);
-          const loc = normStr(split[1]);
-          if (company && loc) {
-            ((colorsByCompanyLoc[company] ||= {})[loc] ||= {});
-            if (!colorsByCompanyLoc[company][loc][at]) colorsByCompanyLoc[company][loc][at] = col;
-            return;
-          }
-        }
-        // fall back to plain per-location
-        (colorsByLoc[loc2] ||= {});
-        if (!colorsByLoc[loc2][at]) colorsByLoc[loc2][at] = col;
+      } else if (loc && co) {
+        ((colorsByCompanyLoc[co] ||= {})[loc] ||= {});
+        if (!colorsByCompanyLoc[co][loc][at]) colorsByCompanyLoc[co][loc][at] = col;
+      } else if (loc) {
+        (colorsByLoc[loc] ||= {});
+        if (!colorsByLoc[loc][at]) colorsByLoc[loc][at] = col;
       }
     });
   }
@@ -175,22 +167,9 @@ function randHexColor() { return '#' + Math.floor(Math.random() * 0xFFFFFF).toSt
 
 async function setAssetTypeColor(assetType, color) {
   await ensureLookupsReady();
-  const _ExcelJS = getExcel();
-  const wb = new _ExcelJS.Workbook();
-  await wb.xlsx.readFile(LOOKUPS_PATH);
-  const ws = getSheet(wb, 'AssetTypes');
-  if (!ws) throw new Error('Missing AssetTypes sheet');
-  const tgtAt = lc(assetType);
-  let updated = false;
-  ws.eachRow({ includeEmpty:false }, (row, idx) => {
-    if (idx === 1) return;
-    const at  = lc(row.getCell(1)?.text);
-    const loc = normStr(row.getCell(2)?.text);
-    if (at === tgtAt && !loc) { row.getCell(3).value = color; updated = true; }
-  });
-  if (!updated) ws.addRow([normStr(assetType), '', color]);
-  await wb.xlsx.writeFile(LOOKUPS_PATH);
-  return { success: true };
+  // Global colors are deliberately disabled in the strict model.
+  // Kept for backward calls: no-op with explicit response.
+  return { success: false, disabled: true, message: 'Global colors are disabled; use setAssetTypeColorForCompanyLocation' };
 }
 
 async function setAssetTypeColorForLocation(assetType, location, color) {
@@ -198,19 +177,20 @@ async function setAssetTypeColorForLocation(assetType, location, color) {
   const _ExcelJS = getExcel();
   const wb = new _ExcelJS.Workbook();
   await wb.xlsx.readFile(LOOKUPS_PATH);
-  const ws = getSheet(wb, 'AssetTypes');
-  if (!ws) throw new Error('Missing AssetTypes sheet');
-  const tgtAt = lc(assetType), tgtLo = lc(location);
-  let updated = false;
-  ws.eachRow({ includeEmpty:false }, (row, idx) => {
+  // Redirect per-location → (company,location) using Locations sheet mapping.
+  const wsA = getSheet(wb, 'AssetTypes');
+  const wsL = getSheet(wb, 'Locations');
+  if (!wsA || !wsL) throw new Error('Missing required sheets');
+  let companyForLoc = '';
+  wsL.eachRow({ includeEmpty:false }, (row, idx) => {
     if (idx === 1) return;
-    const at  = lc(row.getCell(1)?.text);
-    const loc = lc(row.getCell(2)?.text);
-    if (at === tgtAt && loc === tgtLo) { row.getCell(3).value = color; updated = true; }
+    const loc = lc(row.getCell(1)?.text);
+    const comp= normStr(row.getCell(2)?.text);
+    if (loc === lc(location)) companyForLoc = comp;
   });
-  if (!updated) ws.addRow([normStr(assetType), normStr(location), color]);
-  await wb.xlsx.writeFile(LOOKUPS_PATH);
-  return { success: true };
+  if (!companyForLoc) throw new Error(`No company found for location "${location}" in Locations sheet`);
+  // Forward to the strict triple writer
+  return await setAssetTypeColorForCompanyLocation(assetType, companyForLoc, location, color);
 }
 
 async function upsertCompany(name, active = true) {
@@ -260,23 +240,35 @@ async function upsertAssetType(assetType, location) {
   const wb = new _ExcelJS.Workbook();
   await wb.xlsx.readFile(LOOKUPS_PATH);
   const ws = getSheet(wb, 'AssetTypes');
+  const wsL = getSheet(wb, 'Locations');
+  let companyForLoc = '';
+  if (wsL) {
+    wsL.eachRow({ includeEmpty:false }, (row, idx) => {
+      if (idx === 1) return;
+      const loc = lc(row.getCell(1)?.text);
+      const comp= normStr(row.getCell(2)?.text);
+      if (loc === lc(location)) companyForLoc = comp;
+    });
+  }
   const tgtAt = lc(assetType), tgtLoc = lc(location || '');
   let match = null, blank = null;
   ws.eachRow({ includeEmpty:false }, (row, idx) => {
     if (idx === 1) return;
     const at  = lc(row.getCell(1)?.text);
     const loc = lc(row.getCell(2)?.text);
-    if (at === tgtAt && loc === tgtLoc) match = row;
-    if (at === tgtAt && !normStr(row.getCell(2)?.text)) blank = row;
+    const co  = normStr(row.getCell(3)?.text);
+    if (at === tgtAt && loc === tgtLoc && co === companyForLoc) match = row;
+    if (at === tgtAt && !normStr(row.getCell(2)?.text) && !normStr(row.getCell(3)?.text)) blank = row;
   });
   if (match) return { success:true, added:false };
   if (blank) {
     blank.getCell(2).value = normStr(location || '');
-    if (!normStr(blank.getCell(3)?.text)) blank.getCell(3).value = randHexColor();
+    blank.getCell(3).value = companyForLoc;
+    if (!normStr(blank.getCell(4)?.text)) blank.getCell(4).value = randHexColor();
     await wb.xlsx.writeFile(LOOKUPS_PATH);
     return { success:true, added:true };
   }
-  ws.addRow([normStr(assetType), normStr(location || ''), randHexColor()]);
+  ws.addRow([normStr(assetType), normStr(location || ''), companyForLoc, randHexColor()]);
   await wb.xlsx.writeFile(LOOKUPS_PATH);
   return { success:true, added:true };
 }
@@ -547,15 +539,14 @@ async function readStationsAggregate() {
   const out = [];
   let totalFiles = 0, totalSheets = 0, totalRows = 0, totalValid = 0;
   // Helpful diagnostics on startup
-  try { console.log('[excel_worker] LOCATIONS_DIR =', LOCATIONS_DIR); } catch (_) {}
   for (const fn of files) {
     totalFiles++;
     const full = fn; // already absolute
-    const locationFile = path.basename(full, path.extname(full)); // e.g., "BC"
+    // Normalize now so downstream exact matching is trivial
+    const locationFile = String(path.basename(full, path.extname(full))).trim(); // "BC"
     const wb = new _ExcelJS.Workbook();
     try { await wb.xlsx.readFile(full); }
     catch (e) {
-      try { console.warn('[excel_worker] skip unreadable file:', full, String(e && e.message || e)); } catch (_) {}
       continue;
     }
     for (const ws of wb.worksheets) {
@@ -587,13 +578,11 @@ async function readStationsAggregate() {
       }
     }
   }
-  try {
-    console.log(`[excel_worker] loaded files=${totalFiles}, sheets=${totalSheets}, rows=${totalRows}, validCoords=${totalValid}`);
-  } catch (_) {}
+
   return { success:true, rows: out };
 }
 
-// NEW: set color scoped to company+location (stored as "<COMPANY>@@<LOCATION>")
+// Set color scoped to company+location (stored as "<COMPANY>@@<LOCATION>")
 async function setAssetTypeColorForCompanyLocation(assetType, company, location, color) {
   await ensureLookupsReady();
   const _ExcelJS = getExcel();
@@ -602,18 +591,19 @@ async function setAssetTypeColorForCompanyLocation(assetType, company, location,
   const ws = getSheet(wb, 'AssetTypes');
   if (!ws) throw new Error('Missing AssetTypes sheet');
   const tgtAt = lc(assetType);
-  const tgtKey = `${normStr(company)}@@${normStr(location)}`.toLowerCase();
   let updated = false;
   ws.eachRow({ includeEmpty:false }, (row, idx) => {
     if (idx === 1) return;
     const at  = lc(row.getCell(1)?.text);
     const loc = lc(normStr(row.getCell(2)?.text));
-    if (at === tgtAt && loc === tgtKey) { row.getCell(3).value = color; updated = true; }
+    const co  = lc(normStr(row.getCell(3)?.text));
+    if (at === tgtAt && loc === lc(location) && co === lc(company)) { row.getCell(4).value = color; updated = true; }
   });
-  if (!updated) ws.addRow([normStr(assetType), `${normStr(company)}@@${normStr(location)}`, color]);
+  if (!updated) ws.addRow([normStr(assetType), normStr(location), normStr(company), color]);
   await wb.xlsx.writeFile(LOOKUPS_PATH);
   return { success: true };
 }
+
 
 // ─── RPC shim ─────────────────────────────────────────────────────────────
 const handlers = {

@@ -62,4 +62,6 @@ module.exports = {
   setAssetTypeColor:    (assetType, color) => call('setAssetTypeColor', assetType, color),
   setAssetTypeColorForLocation: (assetType, location, color) =>
     call('setAssetTypeColorForLocation', assetType, location, color),
+  setAssetTypeColorForCompanyLocation: (assetType, company, location, color) =>
+    call('setAssetTypeColorForCompanyLocation', assetType, company, location, color),
 };

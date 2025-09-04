@@ -106,7 +106,6 @@
   let INITIAL_RENDER = true;
 
   function render(tree) {
-    console.log('[filters] render() called, INITIAL_RENDER:', INITIAL_RENDER);
     
     filterTree.innerHTML = '';
     const frag = document.createDocumentFragment();
@@ -198,16 +197,13 @@
       
       // FIXED: Don't fire change event on initial render - let the map render first
       if (!INITIAL_RENDER) {
-        console.log('[filters] Firing change event (not initial render)');
         filterTree.dispatchEvent(new Event('change', { bubbles: true }));
       } else {
-        console.log('[filters] Skipping initial change event to prevent clearing map pins');
         // Mark initial render as complete, future renders will fire change events
         INITIAL_RENDER = false;
         
         // OPTIONAL: Fire change event after a longer delay to allow map to fully render
         setTimeout(() => {
-          console.log('[filters] Firing delayed initial change event');
           filterTree.dispatchEvent(new Event('change', { bubbles: true }));
         }, 3000); // 3 second delay to ensure map is fully rendered
       }
@@ -235,7 +231,6 @@
 
 
   const dispatchChange = debounce(() => {
-    console.log('[filters] dispatchChange called');
     // Let map_view/list_view listen and redraw
     filterTree.dispatchEvent(new Event('change', { bubbles: true }));
   }, 50);
@@ -243,9 +238,7 @@
   function onTreeChange(e) {
     const t = e.target;
     if (!(t instanceof HTMLInputElement) || t.type !== 'checkbox') return;
-    
-    console.log('[filters] User changed filter:', t.value || t.dataset.company);
-    
+        
     if (t.classList.contains('company')) {
       const details = t.closest('details.ft-company');
       // Remember user's explicit company choice
@@ -273,14 +266,12 @@
   }
 
   async function build() {
-    console.log('[filters] build() called');
     const tree = await fetchTree();
     render(tree);
     // tri-state is handled in render(); initial change may fire after delay
   }
 
   document.addEventListener('DOMContentLoaded', () => {
-    console.log('[filters] DOMContentLoaded - setting up filters');
     
     // Top-of-drawer shortcuts open the wizard
     const openWizard = () => {
