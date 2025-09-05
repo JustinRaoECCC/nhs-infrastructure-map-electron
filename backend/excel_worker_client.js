@@ -50,8 +50,12 @@ module.exports = {
   listSheets: (b64) => call('listSheets', b64),
   parseRows:  (b64) => call('parseRows',  b64),
   parseRowsFromSheet: (b64, sheetName) => call('parseRowsFromSheet', b64, sheetName),
-  writeLocationRows: (location, sheetName, sections, headers, rows) =>
-    call('writeLocationRows', location, sheetName, sections, headers, rows),
+  // Backward compatible write; and a new variant with options
+  writeLocationRows: (location, sheetName, sections, headers, rows, options = {}) =>
+    // Prefer the new command when options present, else the legacy one
+    (options && Object.keys(options).length
+      ? call('writeLocationRowsWithOptions', location, sheetName, sections, headers, rows, options)
+      : call('writeLocationRows',            location, sheetName, sections, headers, rows)),
   readStationsAggregate: () => call('readStationsAggregate'),
   // Lookups workbook
   ensureLookupsReady:   () => call('ensureLookupsReady'),
@@ -66,4 +70,5 @@ module.exports = {
     call('setAssetTypeColorForCompanyLocation', assetType, company, location, color),
   updateStationInLocationFile: (locationName, stationId, updatedRowData) =>
     call('updateStationInLocationFile', locationName, stationId, updatedRowData),
+  applyAssetTypeSchemaDelta: (assetType, delta) => call('applyAssetTypeSchemaDelta', assetType, delta),
 };

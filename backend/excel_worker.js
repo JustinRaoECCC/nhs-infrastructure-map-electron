@@ -411,6 +411,59 @@ async function parseRowsFromSheet(b64, sheetName) {
 
 // Write rows preserving TWO-ROW headers (sections + fields)
 async function writeLocationRows(location, sheetName, sections, headers, rows) {
+  // NOTE: kept for backward-compat signature. New impl below delegates to
+  // writeLocationRowsWithOptions with no options.
+  return writeLocationRowsWithOptions(location, sheetName, sections, headers, rows, {});
+}
+
+// Build a best-effort header template for an assetType from existing data
+// Preference order:
+//  1) First sheet found that contains that asset type (acts as canonical order)
+//  2) Otherwise, no template (return null)
+async function buildAssetTypeHeaderTemplate(assetType) {
+  if (!assetType) return null;
+  ensureDir(LOCATIONS_DIR);
+  const files = listExcelFiles(LOCATIONS_DIR);
+  const _ExcelJS = getExcel();
+
+  for (const fn of files) {
+    const wb = new _ExcelJS.Workbook();
+    try { await wb.xlsx.readFile(fn); } catch { continue; }
+    for (const ws of wb.worksheets) {
+      if (!ws || ws.rowCount < 1) continue;
+      if (!sheetHasAssetType(ws, assetType)) continue;
+      const meta = headerMeta(ws);
+      // Build template arrays as they appear
+      const tmplSections = meta.sections.slice();
+      const tmplFields   = meta.fields.slice();
+      // Sanity: strip trailing empties
+      while (tmplFields.length && !String(tmplFields[tmplFields.length-1]||'').trim()) {
+        tmplFields.pop(); tmplSections.pop();
+      }
+      if (tmplFields.length) {
+        return { sections: tmplSections, headers: tmplFields };
+      }
+    }
+  }
+  return null;
+}
+
+// Helper to project an incoming row object into a specific header template
+function projectRowToTemplate(obj, tmplSections, tmplHeaders) {
+  const out = new Array(tmplHeaders.length).fill('');
+  for (let i = 0; i < tmplHeaders.length; i++) {
+    const sec = tmplSections[i] || '';
+    const fld = tmplHeaders[i] || '';
+    const composite = sec ? `${sec} – ${fld}` : fld;
+    const v = (obj?.[composite] ?? obj?.[fld] ?? '');
+    out[i] = v;
+  }
+  return out;
+}
+
+// New: write rows with optional normalization options
+// options = { source: 'import' | 'edit', assetType?: string }
+async function writeLocationRowsWithOptions(location, sheetName, sections, headers, rows, options = {}) {
   if (!location) throw new Error('Location is required');
   if (!Array.isArray(headers) || !headers.length) throw new Error('Headers are required');
   if (!Array.isArray(sections) || sections.length !== headers.length)
@@ -444,7 +497,32 @@ async function writeLocationRows(location, sheetName, sections, headers, rows) {
   }
   if (!curFlds.some(Boolean)) { curSecs = sections.slice(); curFlds = headers.slice(); }
 
-  // Union existing header pairs with incoming header pairs (preserve existing order)
+  // Decide normalization policy
+  const isImport = String(options?.source || '').toLowerCase() === 'import';
+  const assetTypeForTemplate = String(options?.assetType || '').trim();
+
+  if (isImport && assetTypeForTemplate) {
+    // IMPORT MODE: conform to existing template for this asset type
+    const tmpl = await buildAssetTypeHeaderTemplate(assetTypeForTemplate);
+    if (tmpl && Array.isArray(tmpl.headers) && tmpl.headers.length) {
+      // Use the template exactly (existing wins)
+      const finalSecs = tmpl.sections.slice();
+      const finalHdrs = tmpl.headers.slice();
+      ws.getRow(1).values = [ , ...finalSecs ];
+      ws.getRow(2).values = [ , ...finalHdrs ];
+
+      for (const obj of rows) {
+        const arr = projectRowToTemplate(obj, finalSecs, finalHdrs);
+        ws.addRow(arr);
+      }
+
+      await wb.xlsx.writeFile(locPath);
+      return { success:true, file: locPath, sheet: ws.name, added: rows.length, normalized: true };
+    }
+    // If no template exists yet anywhere, fall back to old union behavior below
+  }
+
+  // EDIT or no template found → keep existing behavior (union, preserve existing order)
   const pairKey = (s, h) => `${s}|||${h}`;
   const have = new Set(curFlds.map((h, i) => pairKey(curSecs[i], h)));
   sections.forEach((s, i) => {
@@ -453,11 +531,9 @@ async function writeLocationRows(location, sheetName, sections, headers, rows) {
       curSecs.push(s); curFlds.push(headers[i]); have.add(k);
     }
   });
-  // Rewrite header rows to final union
   ws.getRow(1).values = [ , ...curSecs ];
   ws.getRow(2).values = [ , ...curFlds ];
 
-  // Append rows mapping object keys -> [composite or plain] header positions
   const compositeKeys = curFlds.map((h, i) => (curSecs[i] ? `${curSecs[i]} – ${h}` : h));
   for (const obj of rows) {
     const arr = compositeKeys.map((k, i) => {
@@ -468,7 +544,7 @@ async function writeLocationRows(location, sheetName, sections, headers, rows) {
   }
 
   await wb.xlsx.writeFile(locPath);
-  return { success:true, file: locPath, sheet: ws.name, added: rows.length };
+  return { success:true, file: locPath, sheet: ws.name, added: rows.length, normalized: false };
 }
 
 // Utility: pull a field from an object regardless of section prefix
@@ -779,6 +855,183 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
   }
 }
 
+function headerMeta(ws) {
+  const twoRow = (ws.getRow(2)?.actualCellCount || 0) > 0;
+  const headerRowNum = twoRow ? 2 : 1;
+  const sectionRowNum = twoRow ? 1 : null;
+  const headerRow = ws.getRow(headerRowNum);
+  const sectionRow = sectionRowNum ? ws.getRow(sectionRowNum) : null;
+  const maxCol = ws.actualColumnCount || headerRow.cellCount || 0;
+
+  const sections = [];
+  const fields = [];
+  for (let c = 1; c <= maxCol; c++) {
+    sections.push(sectionRow ? takeText(sectionRow.getCell(c)) : '');
+    fields.push(takeText(headerRow.getCell(c)));
+  }
+  return { twoRow, headerRowNum, sectionRowNum, maxCol, sections, fields };
+}
+
+function findCategoryColumn(meta) {
+  // Accept common variants (case-insensitive)
+  const names = ['category','asset type','type','structure type'];
+  for (let c = 0; c < meta.fields.length; c++) {
+    const f = meta.fields[c].trim().toLowerCase();
+    if (names.includes(f)) return c + 1; // 1-indexed
+  }
+  return -1;
+}
+
+function sheetHasAssetType(ws, assetType) {
+  const meta = headerMeta(ws);
+  const catCol = findCategoryColumn(meta);
+  if (catCol < 1) return false;
+  const start = meta.twoRow ? 3 : 2;
+  const end = ws.actualRowCount || ws.rowCount || start;
+  const want = lc(assetType);
+  for (let r = start; r <= end; r++) {
+    const v = takeText(ws.getRow(r).getCell(catCol));
+    if (lc(v) === want) return true;
+  }
+  return false;
+}
+
+function indexOfPair(meta, section, field) {
+  const sWant = lc(section || '');
+  const fWant = lc(field || '');
+  // strict match section+field if section provided, else field-only match
+  for (let i = 0; i < meta.fields.length; i++) {
+    const s = lc(meta.sections[i] || '');
+    const f = lc(meta.fields[i] || '');
+    if (f === fWant && (sWant ? s === sWant : true)) return i; // 0-based
+  }
+  return -1;
+}
+
+function ensureColumn(ws, meta, section, field) {
+  // Return 1-based column index; create if missing at the end
+  let idx = indexOfPair(meta, section, field);
+  if (idx >= 0) return idx + 1;
+  // append
+  const col = meta.maxCol + 1;
+  if (meta.twoRow) {
+    ws.getRow(1).getCell(col).value = section || '';
+    ws.getRow(2).getCell(col).value = field || '';
+  } else {
+    ws.getRow(1).getCell(col).value = field || '';
+  }
+  meta.sections.push(section || '');
+  meta.fields.push(field || '');
+  meta.maxCol++;
+  return col;
+}
+
+function renameColumn(ws, meta, from, to) {
+  const iFrom = indexOfPair(meta, from.section, from.field);
+  if (iFrom < 0) return false;
+
+  // If target already exists, merge: copy values when target empty, then remove 'from'
+  const iTo = indexOfPair(meta, to.section, to.field);
+  if (iTo >= 0 && iTo !== iFrom) {
+    const fromCol = iFrom + 1, toCol = iTo + 1;
+    const start = meta.twoRow ? 3 : 2;
+    const end = ws.actualRowCount || ws.rowCount || start;
+    for (let r = start; r <= end; r++) {
+      const cellFrom = ws.getRow(r).getCell(fromCol);
+      const cellTo   = ws.getRow(r).getCell(toCol);
+      const vFrom = takeText(cellFrom);
+      const vTo   = takeText(cellTo);
+      if (vFrom && !vTo) cellTo.value = vFrom;
+    }
+    ws.spliceColumns(fromCol, 1);
+    // adjust meta after splicing
+    meta.sections.splice(iFrom, 1);
+    meta.fields.splice(iFrom, 1);
+    meta.maxCol--;
+    return true;
+  }
+
+  // Simple in-place rename
+  const col = iFrom + 1;
+  if (meta.twoRow) {
+    ws.getRow(1).getCell(col).value = normStr(to.section);
+    ws.getRow(2).getCell(col).value = normStr(to.field);
+  } else {
+    ws.getRow(1).getCell(col).value = normStr(to.field);
+  }
+  meta.sections[iFrom] = normStr(to.section);
+  meta.fields[iFrom]   = normStr(to.field);
+  return true;
+}
+
+function removeColumn(ws, meta, section, field) {
+  const i = indexOfPair(meta, section, field);
+  if (i < 0) return false;
+  ws.spliceColumns(i + 1, 1);
+  meta.sections.splice(i, 1);
+  meta.fields.splice(i, 1);
+  meta.maxCol--;
+  return true;
+}
+
+async function applyAssetTypeSchemaDelta(assetType, delta) {
+  if (!assetType || !delta) return { success: false, message: 'assetType and delta required' };
+  await ensureLookupsReady();
+  ensureDir(LOCATIONS_DIR);
+  const files = listExcelFiles(LOCATIONS_DIR);
+  const _ExcelJS = getExcel();
+
+  let touchedFiles = 0, touchedSheets = 0;
+
+  for (const fn of files) {
+    const wb = new _ExcelJS.Workbook();
+    try { await wb.xlsx.readFile(fn); } catch { continue; }
+
+    let changedThisFile = false;
+
+    for (const ws of wb.worksheets) {
+      if (!ws || ws.rowCount < 1) continue;
+      if (!sheetHasAssetType(ws, assetType)) continue;
+
+      const meta = headerMeta(ws);
+      let changed = false;
+
+      // RENAMES
+      for (const r of (delta.renames || [])) {
+        if (!r?.from || !r?.to) continue;
+        if (renameColumn(ws, meta, r.from, r.to)) changed = true;
+      }
+      
+      // ADDS
+      for (const a of (delta.adds || [])) {
+        const col = ensureColumn(ws, meta, a.section || '', a.field || '');
+        if (col) changed = true;
+      }
+      // REMOVES
+      for (const rm of (delta.removes || [])) {
+        if (removeColumn(ws, meta, rm.section || '', rm.field || '')) changed = true;
+      }
+
+      if (changed) {
+        // If we ever had to add headers to a brand-new sheet, ensure header rows exist
+        if (meta.twoRow && ws.rowCount < 2) {
+          ws.getRow(1).commit?.();
+          ws.getRow(2).commit?.();
+        }
+        touchedSheets++;
+        changedThisFile = true;
+      }
+    }
+
+    if (changedThisFile) {
+      try { await wb.xlsx.writeFile(fn); touchedFiles++; }
+      catch (e) { /* continue to next */ }
+    }
+  }
+
+  return { success: true, files: touchedFiles, sheets: touchedSheets };
+}
+
 // ─── RPC shim ─────────────────────────────────────────────────────────────
 const handlers = {
   ping: async () => 'pong',
@@ -794,8 +1047,10 @@ const handlers = {
   parseRows,
   parseRowsFromSheet,
   writeLocationRows,
+  writeLocationRowsWithOptions,
   readStationsAggregate,
   updateStationInLocationFile,
+  applyAssetTypeSchemaDelta,
 };
 
 parentPort.on('message', async (msg) => {

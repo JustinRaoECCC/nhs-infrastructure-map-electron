@@ -44,4 +44,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ─── Station Updates ─────────────────────────────────────────────────────
   updateStationData: (stationData) => ipcRenderer.invoke('stations:update', stationData),
+
+  // ─── Station Schema (global per asset type) ────────────────────────────────
+  applyAssetTypeSchemaDelta: (assetType, delta) =>
+    ipcRenderer.invoke('schema:applyAssetTypeDelta', assetType, delta),
+
 });

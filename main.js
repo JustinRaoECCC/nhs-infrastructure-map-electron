@@ -153,3 +153,8 @@ ipcMain.handle('photos:getRecent', async (_evt, { siteName, stationId, limit }) 
 );
 
 ipcMain.handle('stations:update', async (_evt, stationData) => backend.updateStationData(stationData));
+
+// ─── IPC: Schema (asset-type–global sections/fields) ───────────────────────
+ipcMain.handle('schema:applyAssetTypeDelta', async (_evt, assetType, delta) =>
+  backend.applyAssetTypeSchemaDelta(assetType, delta)
+);

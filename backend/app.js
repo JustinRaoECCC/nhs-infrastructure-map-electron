@@ -286,7 +286,16 @@ async function addStationsFromSelection(payload) {
       return out;
     });
 
-    await excel.writeLocationRows(location, sheetName || 'Data', secs, hdrs, rowsStamped);
+    // IMPORTANT:
+    // Treat selection import as "import" so we conform to existing per-asset-type template
+    await excel.writeLocationRows(
+      location,
+      sheetName || 'Data',
+      secs,
+      hdrs,
+      rowsStamped,
+      { source: 'import', assetType: at }
+    );
   } catch (e) {
     console.error('[importSelection] writeLocationRows failed:', e);
     return { success:false, message:'Failed writing to location workbook.' };
@@ -451,6 +460,10 @@ function prepareStationRowForExcel(station) {
   return rowData;
 }
 
+async function applyAssetTypeSchemaDelta(assetType, delta) {
+  return excel.applyAssetTypeSchemaDelta(assetType, delta);
+}
+
 module.exports = {
   getStationData,
   getActiveCompanies,
@@ -478,4 +491,5 @@ module.exports = {
   getRecentPhotos,
 
   updateStationData,
+  applyAssetTypeSchemaDelta,
 };

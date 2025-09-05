@@ -261,6 +261,8 @@ function addTriRingMarker(lat, lon, color) {
 }
 
 async function showStationDetails(stn) {
+  // Remember the last station whose details we rendered so we can refresh RHS on "Back"
+  try { window._lastSelectedStation = stn; } catch (_) {}
   const container = document.getElementById('station-details');
   if (!container) return;
 

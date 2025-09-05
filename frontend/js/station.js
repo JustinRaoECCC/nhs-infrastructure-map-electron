@@ -3,6 +3,17 @@ let currentStationData = null;
 let hasUnsavedChanges = false;
 let generalInfoUnlocked = false;
 
+// Track deletions for delta
+let _deletedSchemaPairs = [];  // [{ section: 'General Info', field: 'Foo' }, ...]
+
+// Normalize helpers for schema keys
+const SEP = ' – ';
+function normTxt(s){ return String(s||'').trim(); }
+function pairKey(section, field){ 
+  const s = normTxt(section), f = normTxt(field);
+  return s ? `${s}${SEP}${f}` : f;
+}
+
 async function loadStationPage(stationId, origin = 'map') {
   // Fetch station data
   const all = await window.electronAPI.getStationData();
@@ -223,6 +234,7 @@ function createEditableSection(sectionName, fields) {
   const sectionDiv = document.createElement('div');
   sectionDiv.className = 'station-section editable-section';
   sectionDiv.dataset.sectionName = sectionName;
+  sectionDiv.dataset.originalSectionName = sectionName;
 
   const headerDiv = document.createElement('div');
   headerDiv.className = 'section-header';
@@ -275,6 +287,7 @@ function createEditableField(fieldName, value) {
   const fieldDiv = document.createElement('div');
   fieldDiv.className = 'field-row';
   fieldDiv.dataset.fieldName = fieldName;
+  fieldDiv.dataset.originalFieldName = fieldName;
 
   const labelInput = document.createElement('input');
   labelInput.type = 'text';
@@ -306,6 +319,7 @@ function createEditableField(fieldName, value) {
 function addFieldToSection(sectionDiv) {
   const fieldsContainer = sectionDiv.querySelector('.section-fields');
   const newField = createEditableField('New Field', '');
+  newField.dataset.originalFieldName = '';
   fieldsContainer.appendChild(newField);
   
   // Focus on the new field name input
@@ -318,6 +332,10 @@ function addFieldToSection(sectionDiv) {
 
 function deleteField(fieldDiv) {
   if (confirm('Are you sure you want to delete this field?')) {
+    const sectionDiv = fieldDiv.closest('.editable-section');
+    const origSection = sectionDiv?.dataset.originalSectionName || '';
+    const origField = fieldDiv.dataset.originalFieldName || '';
+    if (origField) _deletedSchemaPairs.push({ section: origSection, field: origField });
     fieldDiv.remove();
     markUnsavedChanges();
   }
@@ -326,6 +344,13 @@ function deleteField(fieldDiv) {
 function deleteSection(sectionDiv) {
   const sectionName = sectionDiv.dataset.sectionName;
   if (confirm(`Are you sure you want to delete the "${sectionName}" section?`)) {
+    const origSection = sectionDiv.dataset.originalSectionName || '';
+    if (origSection) {
+      sectionDiv.querySelectorAll('.field-row').forEach(fr => {
+        const origField = fr.dataset.originalFieldName || '';
+        if (origField) _deletedSchemaPairs.push({ section: origSection, field: origField });
+      });
+    }
     sectionDiv.remove();
     markUnsavedChanges();
   }
@@ -336,6 +361,7 @@ function addNewSection() {
   const sectionsContainer = container.querySelector('#dynamicSections');
   
   const newSection = createEditableSection('New Section', {});
+  newSection.dataset.originalSectionName = '';
   sectionsContainer.appendChild(newSection);
   
   // Focus on the section title input
@@ -458,73 +484,223 @@ function unlockGeneralInformation(container) {
 
 async function saveStationChanges() {
   const container = document.getElementById('stationContentContainer');
+  if (!container) {
+    console.error('saveStationChanges: #stationContentContainer not found');
+    alert('Could not find the station editor container.');
+    return;
+  }
   if (!hasUnsavedChanges) return;
 
+  // Ensure deleted-schema tracking array exists (used by some UIs to record hard deletes)
+  if (typeof window._deletedSchemaPairs === 'undefined' || !Array.isArray(window._deletedSchemaPairs)) {
+    window._deletedSchemaPairs = [];
+  }
+
+  // --- Helpers (scoped) ------------------------------------------------------
+  const COMPOSITE_SEP = ' – '; // NOTE: en dash with spaces, matches existing data
+
+  const trimText = (s) => (typeof s === 'string' ? s.trim() : '');
+  const normalizeSpaces = (s) => trimText(s).replace(/\s+/g, ' ');
+  const compositeKey = (section, field) => `${normalizeSpaces(section)}${COMPOSITE_SEP}${normalizeSpaces(field)}`;
+  const parseCompositeKey = (key) => {
+    const idx = key.indexOf(COMPOSITE_SEP);
+    if (idx === -1) return { section: '', field: '' };
+    return {
+      section: key.slice(0, idx),
+      field: key.slice(idx + COMPOSITE_SEP.length),
+    };
+  };
+
+  const getValueById = (root, id) => {
+    const el = root.querySelector('#' + id);
+    return el ? trimText(el.value ?? el.textContent ?? '') : '';
+  };
+
+
+  const readDynamicSectionsFromDOM = (root) => {
+    const sections = Array.from(root.querySelectorAll('.editable-section'));
+    const values = {};
+    const schemaPairs = [];
+    const sectionsOrder = [];
+    const fieldsOrderBySection = {};
+
+    sections.forEach((sectionDiv) => {
+      const sectionInput = sectionDiv.querySelector('.section-title-input');
+      const sectionTitle = normalizeSpaces(sectionInput ? sectionInput.value : '');
+      if (!sectionTitle) return;
+
+      sectionsOrder.push(sectionTitle);
+      fieldsOrderBySection[sectionTitle] = [];
+
+      const fieldRows = Array.from(sectionDiv.querySelectorAll('.field-row'));
+      fieldRows.forEach((fieldRow) => {
+        const fieldLabelInput = fieldRow.querySelector('.field-label-input');
+        const fieldValueInput = fieldRow.querySelector('.field-value-input');
+
+        const fieldName = normalizeSpaces(fieldLabelInput ? fieldLabelInput.value : '');
+        const fieldValue = trimText(fieldValueInput ? (fieldValueInput.value ?? fieldValueInput.textContent ?? '') : '');
+
+        if (!fieldName) return;
+
+        const key = compositeKey(sectionTitle, fieldName);
+        values[key] = fieldValue;
+        fieldsOrderBySection[sectionTitle].push(fieldName);
+
+        // Look for original key hints to detect renames (placed by UI when editing)
+        const originalKeyAttr =
+          fieldRow.getAttribute('data-original-key') ||
+          (fieldLabelInput && fieldLabelInput.getAttribute('data-original-key')) ||
+          (fieldValueInput && fieldValueInput.getAttribute('data-original-key')) ||
+          '';
+
+        const pair = { key, section: sectionTitle, field: fieldName };
+        if (trimText(originalKeyAttr)) pair.originalKey = normalizeSpaces(originalKeyAttr);
+        schemaPairs.push(pair);
+      });
+    });
+
+    return { values, schemaPairs, order: { sections: sectionsOrder, fieldsBySection: fieldsOrderBySection } };
+  };
+
+  const buildSchemaDelta = (assetTypeNow) => {
+    // Old schema pairs from current data
+    const oldSchemaKeys = Object.keys(currentStationData || {}).filter((k) => k.includes(COMPOSITE_SEP));
+    const oldSet = new Set(oldSchemaKeys);
+
+    // New schema from DOM
+    const { schemaPairs, order } = readDynamicSectionsFromDOM(container);
+    const newSchemaKeys = schemaPairs.map((p) => p.key);
+    const newSet = new Set(newSchemaKeys);
+
+    // Compute raw adds/removes
+    const rawAdded = [];
+    const rawRemoved = [];
+
+    newSchemaKeys.forEach((key) => {
+      if (!oldSet.has(key)) {
+        const { section, field } = parseCompositeKey(key);
+        rawAdded.push({ section, field, key });
+      }
+    });
+
+    oldSchemaKeys.forEach((key) => {
+      if (!newSet.has(key)) {
+        const { section, field } = parseCompositeKey(key);
+        rawRemoved.push({ section, field, key });
+      }
+    });
+
+    // Incorporate explicit deletes from UI, if any (ensure normalized & unique)
+    const uiDeleted = Array.from(new Set((window._deletedSchemaPairs || []).map(normalizeSpaces))).filter(Boolean);
+    uiDeleted.forEach((key) => {
+      if (!rawRemoved.find((r) => r.key === key)) {
+        const { section, field } = parseCompositeKey(key);
+        rawRemoved.push({ section, field, key });
+      }
+    });
+
+    // Detect renames via data-original-key hints:
+    // If a row provides originalKey and it existed before, and differs from current key => rename.
+    const renamed = [];
+    const removeKeysSet = new Set(rawRemoved.map((r) => r.key));
+    const addKeysSet = new Set(rawAdded.map((a) => a.key));
+
+    schemaPairs.forEach((p) => {
+      if (!p.originalKey) return;
+      const fromKey = p.originalKey;
+      const toKey = p.key;
+      if (fromKey === toKey) return;
+      if (!oldSet.has(fromKey)) return; // original didn't exist previously -> treat as add only
+
+      const from = { ...parseCompositeKey(fromKey), key: fromKey };
+      const to = { ...parseCompositeKey(toKey), key: toKey };
+      renamed.push({ from, to });
+
+      // If we have both a remove(fromKey) and add(toKey), cancel them out from added/removed
+      if (removeKeysSet.has(fromKey)) {
+        removeKeysSet.delete(fromKey);
+      }
+      if (addKeysSet.has(toKey)) {
+        addKeysSet.delete(toKey);
+      }
+    });
+
+    // Rebuild added/removed without those covered by rename
+    const added = Array.from(addKeysSet).map((key) => ({ ...parseCompositeKey(key), key }));
+    const removed = Array.from(removeKeysSet).map((key) => ({ ...parseCompositeKey(key), key }));
+
+    return { added, removed, renamed, order };
+  };
+
+  // --- Main save flow ---------------------------------------------------------
+  let saveBtn = null;
+
   try {
-    const saveBtn = container.querySelector('#saveChangesBtn');
+    // Disable & indicate saving
+    saveBtn = container.querySelector('#saveChangesBtn');
     if (saveBtn) {
       saveBtn.textContent = 'Saving...';
       saveBtn.disabled = true;
     }
 
-    // Collect all changes
-    const updatedData = { ...currentStationData };
+    // 1) Assemble updated station object (values only)
+    const updatedData = { ...(currentStationData || {}) };
 
-    // General Information changes (if unlocked)
-    if (generalInfoUnlocked) {
-      const getValue = (id) => {
-        const el = container.querySelector('#' + id);
-        return el ? el.value.trim() : '';
-      };
-
-      updatedData.station_id = getValue('giStationId');
-      updatedData.asset_type = getValue('giCategory');
-      updatedData.name = getValue('giSiteName');
-      updatedData.province = getValue('giProvince');
-      updatedData.lat = getValue('giLatitude');
-      updatedData.lon = getValue('giLongitude');
-      updatedData.status = getValue('giStatus');
+    // General Information (if unlocked)
+    if (typeof generalInfoUnlocked === 'undefined' || generalInfoUnlocked) {
+      updatedData.station_id = getValueById(container, 'giStationId');
+      updatedData.asset_type = getValueById(container, 'giCategory');
+      updatedData.name = getValueById(container, 'giSiteName');
+      updatedData.province = getValueById(container, 'giProvince');
+      updatedData.lat = getValueById(container, 'giLatitude');
+      updatedData.lon = getValueById(container, 'giLongitude');
+      updatedData.status = getValueById(container, 'giStatus');
     }
 
-    // Dynamic sections data
-    const sections = container.querySelectorAll('.editable-section');
-    
-    // First, remove old section data from updatedData
-    Object.keys(updatedData).forEach(key => {
-      if (key.includes(' – ')) {
-        delete updatedData[key];
+    // Remove old composite "Section – Field" keys from values before rebuilding
+    Object.keys(updatedData).forEach((key) => {
+      if (key.includes(COMPOSITE_SEP)) delete updatedData[key];
+    });
+
+    // Rebuild composite values from DOM (dynamic sections)
+    const { values: newCompositeValues } = readDynamicSectionsFromDOM(container);
+    Object.assign(updatedData, newCompositeValues);
+
+    // 2) Build and apply SCHEMA DELTA (only schema, not values)
+    const assetTypeNow = updatedData.asset_type || (currentStationData ? currentStationData.asset_type : '');
+    const delta = buildSchemaDelta(assetTypeNow);
+
+    if (assetTypeNow && window.electronAPI && typeof window.electronAPI.applyAssetTypeSchemaDelta === 'function') {
+      try {
+        await window.electronAPI.applyAssetTypeSchemaDelta(assetTypeNow, delta);
+      } catch (err) {
+        console.warn('[schema] applyAssetTypeSchemaDelta failed:', err);
+        // Proceed with value save even if schema propagation fails
       }
-    });
+    }
 
-    // Add new section data
-    sections.forEach(sectionDiv => {
-      const sectionTitle = sectionDiv.querySelector('.section-title-input').value.trim();
-      const fieldRows = sectionDiv.querySelectorAll('.field-row');
-      
-      fieldRows.forEach(fieldRow => {
-        const fieldName = fieldRow.querySelector('.field-label-input').value.trim();
-        const fieldValue = fieldRow.querySelector('.field-value-input').value.trim();
-        
-        if (sectionTitle && fieldName) {
-          const compositeKey = `${sectionTitle} – ${fieldName}`;
-          updatedData[compositeKey] = fieldValue;
-        }
-      });
-    });
-
-    // Send to backend
+    // 3) Save the edited station's values to its location file
     const result = await window.electronAPI.updateStationData(updatedData);
-    
-    if (result.success) {
+
+    if (result && result.success) {
       hasUnsavedChanges = false;
       currentStationData = { ...updatedData };
-      
+
+      // Reset deletion tracking after a successful save
+      try {
+        // Keep compatibility if some code references bare _deletedSchemaPairs
+        if (typeof _deletedSchemaPairs !== 'undefined') {
+          _deletedSchemaPairs = [];
+        }
+      } catch (_) {
+        // no-op
+      }
+      window._deletedSchemaPairs = [];
+
       if (saveBtn) {
-        // Add green flash animation
         saveBtn.classList.add('btn-success-flash');
         saveBtn.classList.remove('btn-warning');
         saveBtn.textContent = 'Saved';
-        
         setTimeout(() => {
           saveBtn.classList.remove('btn-success-flash');
           saveBtn.textContent = 'Save Changes';
@@ -532,21 +708,20 @@ async function saveStationChanges() {
       }
 
       // Refresh the main map/list if needed
-      await window.electronAPI.invalidateStationCache();
-      
+      await window.electronAPI.invalidateStationCache?.();
     } else {
-      throw new Error(result.message || 'Save failed');
+      throw new Error((result && result.message) || 'Save failed');
     }
-
   } catch (error) {
     console.error('Save failed:', error);
-    alert('Failed to save changes: ' + error.message);
+    alert('Failed to save changes: ' + (error && error.message ? error.message : String(error)));
   } finally {
-    const saveBtn = container.querySelector('#saveChangesBtn');
-    if (saveBtn) {
-      saveBtn.disabled = false;
-      if (saveBtn.textContent === 'Saving...') {
-        saveBtn.textContent = 'Save Changes';
+    // Re-enable save button
+    const btn = document.querySelector('#saveChangesBtn');
+    if (btn) {
+      btn.disabled = false;
+      if (btn.textContent === 'Saving...') {
+        btn.textContent = 'Save Changes';
       }
     }
   }
@@ -576,7 +751,19 @@ function setupBackButton(container) {
         if (listCont) listCont.style.display = 'none';
       }
       
-      if (rightPanel) rightPanel.style.display = '';
+      if (rightPanel) {
+        rightPanel.style.display = '';
+        // Reload RHS quick view with the last selected station (if any)
+        try {
+          if (window._lastSelectedStation && typeof window.showStationDetails === 'function') {
+            window.showStationDetails(window._lastSelectedStation);
+          } else {
+            // fallback: clear to placeholder
+            const sd = document.getElementById('station-details');
+            if (sd) sd.innerHTML = '<p><em>Click a pin to see details</em></p>';
+          }
+        } catch (_) {}
+      }
       disableFullWidthMode();
 
       // Reset editing state
@@ -585,6 +772,37 @@ function setupBackButton(container) {
     });
   }
 }
+
+function buildSchemaDelta(assetType) {
+  const renames = [];
+  const adds    = [];
+  const removes = [..._deletedSchemaPairs]; // already original pairs
+
+  // For every remaining field row, compare original vs current labels
+  document.querySelectorAll('.editable-section').forEach(sectionDiv => {
+    const newSection = normTxt(sectionDiv.querySelector('.section-title-input')?.value);
+    const origSection = normTxt(sectionDiv.dataset.originalSectionName || '');
+    sectionDiv.querySelectorAll('.field-row').forEach(fr => {
+      const newField = normTxt(fr.querySelector('.field-label-input')?.value);
+      const origField = normTxt(fr.dataset.originalFieldName || '');
+      if (!newField) return;
+
+      if (!origField) {
+        // brand-new field -> add
+        adds.push({ section: newSection, field: newField });
+      } else if (origSection !== newSection || origField !== newField) {
+        // rename from original pair to current pair
+        renames.push({
+          from: { section: origSection, field: origField },
+          to:   { section: newSection,  field: newField  }
+        });
+      }
+    });
+  });
+
+  return { assetType: assetType || '', renames, adds, removes };
+}
+
 
 // expose
 window.loadStationPage = loadStationPage;
