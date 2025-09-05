@@ -131,6 +131,15 @@ function initMap() {
       .observe(drawer, { attributes:true, attributeFilter:['class'] });
   }
 
+  // Also watch for LHS/RHS collapse state changes on the grid container
+  const mainGrid = document.getElementById('mainContent');
+  if (mainGrid) {
+    new MutationObserver(() => {
+      // Give the layout a beat to settle, then invalidate map size
+      setTimeout(ensureMapSize, 120);
+    }).observe(mainGrid, { attributes: true, attributeFilter: ['class', 'style'] });
+  }
+
   map.on('click', () => {
     const container = document.getElementById('station-details');
     if (container) container.innerHTML = `<p><em>Click a pin to see details</em></p>`;

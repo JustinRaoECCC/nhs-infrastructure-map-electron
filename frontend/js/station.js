@@ -74,6 +74,76 @@ async function loadStationPage(stationId, origin = 'map') {
     }
   })();
 
+  // Lightbox helpers (one-time wiring for this page)
+  function setupPhotoLightbox() {
+    const lb = container.querySelector('#photoLightbox');
+    const lbImg = container.querySelector('#lightboxImg');
+    const lbClose = container.querySelector('#lightboxClose');
+    const lbBackdrop = container.querySelector('.photo-lightbox__backdrop');
+    if (!lb || !lbImg) return;
+
+    function openLightbox(url) {
+      lbImg.src = url;
+      lb.classList.add('open');
+      document.documentElement.classList.add('modal-open');
+      document.body.classList.add('modal-open');
+    }
+    function closeLightbox() {
+      lb.classList.remove('open');
+      document.documentElement.classList.remove('modal-open');
+      document.body.classList.remove('modal-open');
+      lbImg.removeAttribute('src');
+    }
+    lbClose?.addEventListener('click', closeLightbox);
+    lbBackdrop?.addEventListener('click', closeLightbox);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && lb.classList.contains('open')) closeLightbox();
+    }, { once: false });
+
+    // return opener so renderRecentPhotos can use it
+    return openLightbox;
+  }
+  const openLightbox = setupPhotoLightbox();
+
+  // Fetch and render recent photos for this station — only in the "Recent Photos" strip
+  (async function renderRecentPhotos() {
+    const row = container.querySelector('#photosRow');
+    try {
+      const photos = await window.electronAPI.getRecentPhotos(stn.name, stn.station_id, 5);
+      if (!row) return;
+      row.innerHTML = '';
+
+      if (!photos || photos.length === 0) {
+        row.innerHTML = '<div class="photo-empty">No photos found</div>';
+      } else {
+        for (const p of photos) {
+          const a = document.createElement('a');
+          a.href = p.url;                       // keep for right-click "Open in new tab"
+          a.className = 'photo-link';
+          a.dataset.url = p.url;
+          a.title = p.name || `${stn.name} photo`;
+          const img = document.createElement('img');
+          img.className = 'photo-thumb';
+          img.alt = `${stn.name} photo`;
+          img.src = p.url;
+          a.appendChild(img);
+          row.appendChild(a);
+        }
+
+        // Open lightbox in-place instead of a new window
+        row.addEventListener('click', (ev) => {
+          const link = ev.target.closest('.photo-link');
+          if (!link) return;
+          ev.preventDefault();
+          if (typeof openLightbox === 'function') openLightbox(link.dataset.url);
+        });
+      }
+    } catch (e) {
+      console.warn('[renderRecentPhotos] failed:', e);
+      if (row) row.innerHTML = '<div class="photo-empty">Photos unavailable</div>';
+    }
+  })();
+
   // Collapsible Extra Sections (accordion), same grouping as RHS quick view
   (function renderExtrasAccordion() {
     const host = container.querySelector('#extraAccordion');

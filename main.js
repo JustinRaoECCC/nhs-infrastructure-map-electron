@@ -147,3 +147,7 @@ ipcMain.handle('excel:listSheets', async (_evt, b64) => backend.listExcelSheets(
 ipcMain.handle('excel:parseRowsFromSheet', async (_evt, b64, sheetName) =>
   excelClient.parseRowsFromSheet(b64, sheetName)
 );
+
+ipcMain.handle('photos:getRecent', async (_evt, { siteName, stationId, limit }) =>
+  backend.getRecentPhotos(siteName, stationId, limit)
+);

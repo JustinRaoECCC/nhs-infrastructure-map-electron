@@ -23,13 +23,12 @@
         <div class="search">
           <input type="search" id="searchAssets" placeholder="Search assets…" />
         </div>
-        <button id="btnGrid" class="btn" title="Toggle layout">☰</button>
         <button id="btnFilter" class="btn" title="Open filters">Filter</button>
       </div>
     </header>
 
     <div class="main-view-wrapper">
-      <div class="main-content">
+      <div class="main-content" id="mainContent">
         <!-- Left Nav -->
         <aside class="left-panel">
           <div class="brand">Asset Manager</div>
@@ -58,6 +57,14 @@
             </ul>
           </div>
         </aside>
+
+        <!-- Edge handles (always present, sit on panel edges) -->
+        <button id="toggleLeft"
+                class="edge-toggle left"
+                title="Toggle left panel" aria-label="Toggle left panel" aria-pressed="false">⟨</button>
+        <button id="toggleRight"
+                class="edge-toggle right"
+                title="Toggle right panel" aria-label="Toggle right panel" aria-pressed="false">⟩</button>
 
         <!-- Center Map -->
         <div class="map-container" id="mapContainer">
@@ -151,5 +158,44 @@
       });
     })();
   </script>
+
+  <!-- Collapsible LHS/RHS logic (persists state, resizes map safely) -->
+  <script>
+    (function(){
+      const root   = document.getElementById('mainContent');
+      const btnL   = document.getElementById('toggleLeft');
+      const btnR   = document.getElementById('toggleRight');
+
+      const read = () => ({
+        left:  localStorage.getItem('ui.collapse.left')  === '1',
+        right: localStorage.getItem('ui.collapse.right') === '1'
+      });
+      const write = (s) => {
+        localStorage.setItem('ui.collapse.left',  s.left  ? '1' : '0');
+        localStorage.setItem('ui.collapse.right', s.right ? '1' : '0');
+      };
+      const apply = (s) => {
+        if (!root) return;
+        root.classList.toggle('left-collapsed',  s.left);
+        root.classList.toggle('right-collapsed', s.right);
+        if (btnL) { btnL.setAttribute('aria-pressed', String(s.left));  btnL.textContent = s.left  ? '⟩' : '⟨'; }
+        if (btnR) { btnR.setAttribute('aria-pressed', String(s.right)); btnR.textContent = s.right ? '⟨' : '⟩'; }
+        // Nudge Leaflet/list to recalc sizes
+        setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+        setTimeout(() => window.dispatchEvent(new Event('resize')), 250);
+      };
+
+      // Initial state
+      apply(read());
+
+      if (btnL) btnL.addEventListener('click', () => {
+        const s = read(); s.left  = !s.left;  write(s); apply(s);
+      });
+      if (btnR) btnR.addEventListener('click', () => {
+        const s = read(); s.right = !s.right; write(s); apply(s);
+      });
+    })();
+  </script>
+
 </body>
 </html>

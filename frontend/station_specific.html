@@ -60,3 +60,13 @@
   <div id="documents" class="tab-content"></div>
   <div id="photos" class="tab-content"></div>
 </div>
+
+<!-- Photo Lightbox (hidden by default) -->
+<div id="photoLightbox" class="photo-lightbox" aria-hidden="true">
+  <div class="photo-lightbox__backdrop" data-close></div>
+  <figure class="photo-lightbox__content">
+    <img id="lightboxImg" alt="Station photo" />
+    <button id="lightboxClose" class="photo-lightbox__close" aria-label="Close">&times;</button>
+  </figure>
+  <!-- (Optional caption could go here) -->
+</div>

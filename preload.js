@@ -38,4 +38,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ─── Selections → file + pins ───────────────────────────────────────────
   importSelection: (payload) => ipcRenderer.invoke('stations:importSelection', payload),
+
+  getRecentPhotos: (siteName, stationId, limit = 5) =>
+    ipcRenderer.invoke('photos:getRecent', { siteName, stationId, limit }),
 });

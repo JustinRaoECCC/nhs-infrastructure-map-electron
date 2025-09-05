@@ -70,12 +70,19 @@ body{
 .main-view-wrapper{ flex:1; display:flex; width:100%; min-width:0; }
 .main-content{
   display:grid;
-  grid-template-columns: 260px 1fr 380px; /* prevent 0-width collapse */
+  /* Use CSS vars so we can collapse columns smoothly */
+  grid-template-columns: var(--left-col, 260px) 1fr var(--right-col, 380px);
   grid-template-rows: 1fr;
   height: calc(100vh - 64px);
   width: 100%;
   min-width: 0; /* allow center column to actually shrink/grow */
+  position: relative; /* for edge handles */
+  transition: grid-template-columns .25s ease;
 }
+
+/* Collapsed states */
+.main-content.left-collapsed  { --left-col: 0px; }
+.main-content.right-collapsed { --right-col: 0px; }
 
 /* ensure all ancestors have height so #map:height:100% is meaningful */
 html, body, .app-container, .main-view-wrapper, .main-content { min-height: 100vh; }
@@ -89,6 +96,46 @@ html, body, .app-container, .main-view-wrapper, .main-content { min-height: 100v
   display:flex; flex-direction:column; gap:16px;
   min-width: 260px;
 }
+
+.edge-toggle{
+  position:absolute;
+  top:50%;
+  width:24px;
+  height:48px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:16px;
+  line-height:1;
+  background:#fff;
+  color:#111827;
+  border:1px solid var(--border);
+  border-radius:10px;
+  box-shadow: var(--shadow);
+  cursor:pointer;
+  z-index: 10; /* above map/panels */
+  user-select:none;
+}
+/* Left handle sits on the right edge of the left column */
+.edge-toggle.left{
+  left: var(--left-col, 260px);
+  transform: translate(-50%, -50%);
+}
+/* When left is collapsed, pin it to the viewport edge */
+.main-content.left-collapsed .edge-toggle.left{
+  left: 0;
+  transform: translate(0, -50%);
+}
+/* Right handle sits on the left edge of the right column */
+.edge-toggle.right{
+  right: var(--right-col, 380px);
+  transform: translate(50%, -50%);
+}
+.main-content.right-collapsed .edge-toggle.right{
+  right: 0;
+  transform: translate(0, -50%);
+}
+
 .left-panel .brand{
   font-weight:700; color:#fff; font-size:16px; padding:6px 8px 2px;
 }
@@ -106,6 +153,16 @@ html, body, .app-container, .main-view-wrapper, .main-content { min-height: 100v
 .nav-item:hover{ background:var(--sidebar-hover); color:#e2e8f0; }
 .nav-item.active{ background:var(--sidebar-hover); color:#fff; }
 .left-panel .footer{ margin-top:auto; border-top:1px solid rgba(148,163,184,.15); padding-top:10px; }
+
+.main-content.left-collapsed .left-panel{
+  /* Hide visually and from hit-testing when collapsed */
+  width:0 !important; min-width:0 !important; padding:0 !important; margin:0 !important;
+  border:0 !important; overflow:hidden !important; visibility:hidden; pointer-events:none;
+}
+.main-content.right-collapsed .right-panel{
+  width:0 !important; min-width:0 !important; padding:0 !important; margin:0 !important;
+  border:0 !important; overflow:hidden !important; visibility:hidden; pointer-events:none;
+}
 
 /* ---------- Map column */
 .map-container{
@@ -412,6 +469,8 @@ a { color: inherit; text-decoration: none; }
 
 /* Container fills the center column and stacks toolbar + table */
 .list-container {
+  /* ensure it occupies the center grid column like the map does */
+  grid-column: 2;
   display: block;      /* JS toggles this between none/block */
   flex: 1 1 auto;
   min-width: 0;        /* prevent flex overflow */
@@ -860,4 +919,31 @@ a { color: inherit; text-decoration: none; }
 .accordion-item.open .accordion-content {
   padding: 8px 14px 12px;
   max-height: 1600px; /* big enough for most sections */
+}
+
+.photo-row { display:flex; gap:8px; }
+.photo-thumb { width:96px; height:72px; object-fit:cover; border-radius:6px; }
+.photo-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(160px,1fr)); gap:10px; }
+.photo-grid-img { width:100%; height:140px; object-fit:cover; border-radius:8px; }
+.photo-empty { opacity:0.65; padding:8px 0; }
+
+/* Lightbox */
+html.modal-open, body.modal-open { overflow: hidden; }
+.photo-lightbox {
+  position: fixed; inset: 0; display: none;
+  align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.85); z-index: 1000; padding: 24px;
+}
+.photo-lightbox.open { display: flex; }
+.photo-lightbox__backdrop { position: absolute; inset: 0; }
+.photo-lightbox__content { position: relative; z-index: 1; max-width: 95vw; max-height: 95vh; }
+.photo-lightbox__content img {
+  display: block; max-width: 95vw; max-height: 95vh;
+  border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+.photo-lightbox__close {
+  position: absolute; top: -12px; right: -12px;
+  width: 36px; height: 36px; border: 0; border-radius: 999px;
+  background: #fff; font-size: 24px; line-height: 36px; cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.4);
 }

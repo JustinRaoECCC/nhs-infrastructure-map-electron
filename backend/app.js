@@ -1,7 +1,12 @@
 // backend/app.js
+const fs = require('fs');
+const fsp = fs.promises;
+const { pathToFileURL } = require('url');
+const { PHOTOS_BASE, IMAGE_EXTS } = require('./config');
 const path = require('path');
 const lookupsRepo = require('./lookups_repo');
 const excel = require('./excel_worker_client');
+
 
 // Normalize location consistently and strip ".xlsx"
 function normLoc(s) {
@@ -301,6 +306,76 @@ async function listExcelSheets(b64) {
   catch (e) { console.error('[listExcelSheets] failed:', e); return { success:false, message:String(e) }; }
 }
 
+// Build "SITE_NAME_STATIONID" folder name from row
+function folderNameFor(siteName, stationId) {
+  const site = String(siteName ?? '')
+    .normalize('NFKD')
+    .replace(/[^\p{L}\p{N}]+/gu, '_')
+    .replace(/^_+|_+$/g, '')
+    .toUpperCase();
+  const id = String(stationId ?? '').toUpperCase();
+  return `${site}_${id}`;
+}
+
+async function getRecentPhotos(siteName, stationId, limit = 5) {
+  try {
+    if (!PHOTOS_BASE) return [];
+    const targetFolder = folderNameFor(siteName, stationId);
+    const exactDir = path.join(PHOTOS_BASE, targetFolder);
+
+    const files = [];
+    const seenDirs = new Set();
+
+    async function collect(dir) {
+      if (seenDirs.has(dir)) return;
+      seenDirs.add(dir);
+      let entries;
+      try { entries = await fsp.readdir(dir, { withFileTypes: true }); }
+      catch { return; }
+      for (const ent of entries) {
+        const full = path.join(dir, ent.name);
+        if (ent.isDirectory()) {
+          // a light recursive walk: some stations put images in 1–2 nested folders
+          await collect(full);
+        } else {
+          const ext = path.extname(ent.name).toLowerCase();
+          if (IMAGE_EXTS.includes(ext)) {
+            try {
+              const st = await fsp.stat(full);
+              files.push({ path: full, name: ent.name, mtimeMs: st.mtimeMs });
+            } catch {}
+          }
+        }
+      }
+    }
+
+    // 1) Try exact folder
+    await collect(exactDir);
+
+    // 2) Fallback: find any folder ending with _STATIONID (avoids scanning "TON" of files)
+    if (files.length === 0) {
+      const idUpper = String(stationId ?? '').toUpperCase();
+      try {
+        const entries = await fsp.readdir(PHOTOS_BASE, { withFileTypes: true });
+        const candidates = entries.filter(
+          d => d.isDirectory() && d.name.toUpperCase().endsWith('_' + idUpper)
+        );
+        for (const d of candidates) await collect(path.join(PHOTOS_BASE, d.name));
+      } catch {}
+    }
+
+    files.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return files.slice(0, limit).map(f => ({
+      url: pathToFileURL(f.path).href, // safe file:// URL (handles UNC)
+      name: f.name,
+      mtimeMs: f.mtimeMs,
+      path: f.path,
+    }));
+  } catch (e) {
+    console.error('[getRecentPhotos] failed:', e);
+    return [];
+  }
+}
 
 module.exports = {
   getStationData,
@@ -325,4 +400,6 @@ module.exports = {
   getAssetTypeColor,
   // misc
   invalidateStationCache,
+  // photos
+  getRecentPhotos,
 };
