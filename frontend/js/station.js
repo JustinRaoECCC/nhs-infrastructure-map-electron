@@ -245,8 +245,8 @@ function createEditableSection(sectionName, fields) {
   addFieldBtn.addEventListener('click', () => addFieldToSection(sectionDiv));
 
   const deleteSectionBtn = document.createElement('button');
-  deleteSectionBtn.className = 'btn btn-ghost btn-sm';
-  deleteSectionBtn.textContent = 'Delete Section';
+  deleteSectionBtn.className = 'delete-section-btn'; // Changed class
+  deleteSectionBtn.textContent = 'Delete Section'; // Changed from trash icon
   deleteSectionBtn.title = 'Delete Section';
   deleteSectionBtn.addEventListener('click', () => deleteSection(sectionDiv));
 
@@ -270,6 +270,7 @@ function createEditableSection(sectionName, fields) {
   return sectionDiv;
 }
 
+
 function createEditableField(fieldName, value) {
   const fieldDiv = document.createElement('div');
   fieldDiv.className = 'field-row';
@@ -290,7 +291,7 @@ function createEditableField(fieldName, value) {
 
   const deleteBtn = document.createElement('button');
   deleteBtn.className = 'btn btn-ghost btn-sm btn-danger';
-  deleteBtn.textContent = '🗑️';
+  deleteBtn.textContent = '✕'; // Changed from '🗑️' to red X
   deleteBtn.title = 'Delete Field';
   deleteBtn.addEventListener('click', () => deleteField(fieldDiv));
 
@@ -300,6 +301,7 @@ function createEditableField(fieldName, value) {
 
   return fieldDiv;
 }
+
 
 function addFieldToSection(sectionDiv) {
   const fieldsContainer = sectionDiv.querySelector('.section-fields');
@@ -518,13 +520,14 @@ async function saveStationChanges() {
       currentStationData = { ...updatedData };
       
       if (saveBtn) {
-        saveBtn.textContent = '✅ Saved';
+        // Add green flash animation
+        saveBtn.classList.add('btn-success-flash');
         saveBtn.classList.remove('btn-warning');
-        saveBtn.classList.add('btn-success');
+        saveBtn.textContent = 'Saved';
+        
         setTimeout(() => {
-          saveBtn.style.display = 'none';
-          saveBtn.classList.remove('btn-success');
-          saveBtn.textContent = '💾 Save Changes';
+          saveBtn.classList.remove('btn-success-flash');
+          saveBtn.textContent = 'Save Changes';
         }, 2000);
       }
 
@@ -543,7 +546,7 @@ async function saveStationChanges() {
     if (saveBtn) {
       saveBtn.disabled = false;
       if (saveBtn.textContent === 'Saving...') {
-        saveBtn.textContent = '💾 Save Changes';
+        saveBtn.textContent = 'Save Changes';
       }
     }
   }
