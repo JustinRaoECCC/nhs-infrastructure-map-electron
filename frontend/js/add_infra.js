@@ -1,64 +1,67 @@
 // frontend/js/add_infra.js
-// Wires the 4-step wizard so that Steps 1–3 persist via backend upserts,
-// and Step 3's sheet picker is populated from the chosen Excel file.
-// Step 4 intentionally remains unimplemented.
+// New LHS-driven flows (no legacy wizard):
+// - ＋ New Company → simple form panel
+// - Company [+]   → Create Project/Location (via window.openCreateLocationForm)
+// - Location [+]  → Create Assets (Excel upload → select sheet → select rows → import)
+// Also preserves Map/List/Docs/Settings navigation and safe fallbacks.
+
 (function () {
   'use strict';
 
-  const WIZARD_ROOT_ID = 'addInfraPage';
-  const NAV_IDS = ['navMap', 'navList', 'navDash', 'navNewCompany'];
+  // ────────────────────────────────────────────────────────────────────────────
+  // Utilities
+  // ────────────────────────────────────────────────────────────────────────────
+  const debounce = (fn, ms = 150) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 
-  function createState() {
-    return {
-      current: 0,
-      company: '',
-      location: '',
-      assetName: '',
-      excelB64: null,
-      sheetNames: [],
-      selectedSheet: null,
-    };
+  // Safe wrappers: honor global helpers if present, else no-op / gentle fallback
+  function safeEnableFullWidthMode() {
+    try {
+      if (typeof window.enableFullWidthMode === 'function') return window.enableFullWidthMode();
+      const main = document.getElementById('mainContent'); if (main) main.classList.add('full-width');
+    } catch (_) {}
+  }
+  function safeDisableFullWidthMode() {
+    try {
+      if (typeof window.disableFullWidthMode === 'function') return window.disableFullWidthMode();
+      const main = document.getElementById('mainContent'); if (main) main.classList.remove('full-width');
+    } catch (_) {}
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
+  // ────────────────────────────────────────────────────────────────────────────
   // Nav helpers: set active tab & show the requested view
-  // ──────────────────────────────────────────────────────────────────────────
+  // ────────────────────────────────────────────────────────────────────────────
   function setActiveNav(activeId) {
     try {
-      // Remove 'active' from all left-nav items
-      document
-        .querySelectorAll('.left-panel .nav-item')
-        .forEach(li => li.classList.remove('active'));
-      // Add to the requested one (if present)
+      document.querySelectorAll('.left-panel .nav-item').forEach(li => li.classList.remove('active'));
       const el = document.getElementById(activeId);
       if (el) el.classList.add('active');
     } catch (_) {}
   }
 
-  // Generic show/hide with graceful fallbacks
   function showViews({ map = false, list = false, docs = false, wizard = false, settings = false }) {
-    const mapEl   = document.getElementById('mapContainer');
-    const listEl  = document.getElementById('listContainer');              // may not exist yet
-    const docsEl  = document.getElementById('dashboardContentContainer');  // may not exist yet
-    const wizWrap = document.getElementById('addInfraContainer');
+    const mapEl      = document.getElementById('mapContainer');
+    const listEl     = document.getElementById('listContainer');
+    const docsEl     = document.getElementById('dashboardContentContainer');
+    const wizardWrap = document.getElementById('addInfraContainer');
     const settingsEl = document.getElementById('settingsContainer');
-    const station = document.getElementById('stationContentContainer');    // station detail
+    const stationEl  = document.getElementById('stationContentContainer');
 
-    if (mapEl)   mapEl.style.display   = map   ? 'block' : 'none';
-    if (listEl)  listEl.style.display  = list  ? 'block' : 'none';
-    if (docsEl)  docsEl.style.display  = docs  ? 'block' : 'none';
-    if (wizWrap) wizWrap.style.display = wizard? 'block' : 'none';
+    if (mapEl)      mapEl.style.display      = map    ? 'block' : 'none';
+    if (listEl)     listEl.style.display     = list   ? 'block' : 'none';
+    if (docsEl)     docsEl.style.display     = docs   ? 'block' : 'none';
+    if (wizardWrap) wizardWrap.style.display = wizard ? 'block' : 'none';
     if (settingsEl) settingsEl.style.display = settings ? 'block' : 'none';
-    // If station page is open, hide it unless we're explicitly in that flow
-    if (station && (map || list || docs || wizard || settings)) station.style.display = 'none';
+
+    // Hide station page when switching to any main view
+    if (stationEl && (map || list || docs || wizard || settings)) stationEl.style.display = 'none';
   }
 
   // Public-ish view switches used by nav bindings
   async function showMapView() {
     setActiveNav('navMap');
-    showViews({ map: true, list: false, docs: false, wizard: false });
-    disableFullWidthMode();
-    // small nudge so Leaflet recalculates sizes if coming back from wizard
+    showViews({ map: true, list: false, docs: false, wizard: false, settings: false });
+    safeDisableFullWidthMode();
+    // Nudge Leaflet
     if (window.map && typeof window.map.invalidateSize === 'function') {
       setTimeout(() => { try { window.map.invalidateSize(); } catch(_) {} }, 50);
     }
@@ -67,8 +70,8 @@
 
   async function showListView() {
     setActiveNav('navList');
-    showViews({ map: false, list: true, docs: false, wizard: false });
-    disableFullWidthMode();
+    showViews({ map: false, list: true, docs: false, wizard: false, settings: false });
+    safeDisableFullWidthMode();
 
     const listEl = document.getElementById('listContainer');
     if (!listEl) return;
@@ -79,12 +82,10 @@
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         listEl.innerHTML = await resp.text();
         listEl.dataset.loaded = '1';
-
-        // Now that the table exists, boot the list JS
         if (window.initListView) requestAnimationFrame(() => window.initListView());
       } catch (e) {
         console.error('[showListView] failed to load list.html:', e);
-        // Fallback: create the markup inline so we can still render
+        // Minimal inline fallback
         listEl.innerHTML = `
           <div id="listPage" class="list-view">
             <div class="list-toolbar" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem;">
@@ -107,21 +108,19 @@
                 <tbody></tbody>
               </table>
             </div>
-            <p class="hint" style="opacity:.75;margin-top:.5rem;">Tip: Click a column header to sort. Hover a row to see quick details on the right.</p>
+            <p class="hint" style="opacity:.75;margin-top:.5rem;">Tip: Click a column header to sort. Hover a row to see details on the right. Click to open full details.</p>
           </div>`;
         if (window.initListView) requestAnimationFrame(() => window.initListView());
       }
     } else {
-      // Already loaded; ensure it’s initialized
       if (window.initListView) window.initListView();
     }
   }
 
-  // Settings
   async function showSettingsView() {
     setActiveNav('navSettings');
     showViews({ map: false, list: false, docs: false, wizard: false, settings: true });
-    disableFullWidthMode();
+    safeDisableFullWidthMode();
 
     const container = document.getElementById('settingsContainer');
     if (!container) return;
@@ -132,8 +131,6 @@
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         container.innerHTML = await resp.text();
         container.dataset.loaded = '1';
-
-        // Boot the settings JS
         if (window.initSettingsView) requestAnimationFrame(() => window.initSettingsView());
       } catch (e) {
         console.error('[showSettingsView] failed to load settings.html:', e);
@@ -151,328 +148,191 @@
 
   async function showDocsView() {
     setActiveNav('navDash');
-    showViews({ map: false, list: false, docs: true, wizard: false });
-    disableFullWidthMode();
+    showViews({ map: false, list: false, docs: true, wizard: false, settings: false });
+    safeDisableFullWidthMode();
     if (!document.getElementById('dashboardContentContainer')) showMapView();
   }
 
-  // Initialize wizard *inside the given root element* (which contains the wizard markup).
-  function initWizard(root) {
-    if (!root || root.dataset.bound === '1') return;
-    root.dataset.bound = '1';
+  // ────────────────────────────────────────────────────────────────────────────
+  // New LHS-driven creation flows
+  // ────────────────────────────────────────────────────────────────────────────
 
-    // Elements (scoped to root so we don't query before the markup exists)
-    const stepEls       = Array.from(root.querySelectorAll('.wizard-step'));
-    const stepIndicator = Array.from(root.querySelectorAll('#wizSteps .step'));
-    const btnBack       = root.querySelector('#wizBack');
-    const btnNext       = root.querySelector('#wizNext');
-    const btnCancel     = root.querySelector('#wizCancel');
-
-    // Step 1
-    const inputCompanyName = root.querySelector('#companyName');
-    // Step 2
-    const inputProjectName = root.querySelector('#projectName'); // Location
-    const inputProjectExcel= root.querySelector('#projectExcel');
-    const lblProjectExcel  = root.querySelector('#projectExcelLabel');
-    // Step 3
-    const chkMethodImport  = root.querySelector('#methodImport');
-    const inputAssetName   = root.querySelector('#assetName');
-    const selectSheet      = root.querySelector('#sheetSelect');
-    // Step 4
-    const table            = root.querySelector('#sheetPreviewTable');
-    const thead            = table ? table.querySelector('thead') : null;
-    const tbody            = table ? table.querySelector('tbody') : null;
-    const btnSelAll        = root.querySelector('#btnSelectAllRows');
-    const btnDeselAll      = root.querySelector('#btnDeselectAllRows');
-    const rowCountBadge    = root.querySelector('#rowCountBadge');
-
-    // NEW: mode toggles + selects
-    const coModeExisting  = root.querySelector('#coModeExisting');
-    const coModeNew       = root.querySelector('#coModeNew');
-    const rowCompanySelect= root.querySelector('#rowCompanySelect');
-    const rowCompanyName  = root.querySelector('#rowCompanyName');
-    const companySelect   = root.querySelector('#companySelect');
-
-    const locModeExisting = root.querySelector('#locModeExisting');
-    const locModeNew      = root.querySelector('#locModeNew');
-    const rowLocationSelect = root.querySelector('#rowLocationSelect');
-    const rowLocationName   = root.querySelector('#rowLocationName');
-    const locationSelect  = root.querySelector('#locationSelect');
-
-    const atModeExisting  = root.querySelector('#atModeExisting');
-    const atModeNew       = root.querySelector('#atModeNew');
-    const rowAssetTypeSelect = root.querySelector('#rowAssetTypeSelect');
-    const assetTypeSelect = root.querySelector('#assetTypeSelect');
-
-    const state = createState();
-    state.previewRows = [];
-    state.previewHeaders = [];
-    state.previewSections = [];
-    state.selectedRowIdx = new Set();
-    
-    // Extend state
-    state.modes = { company: 'new', location: 'new', asset: 'new' };
-    state.lookups = { companies: [], locationsByCompany: {}, assetsByLocation: {} };
-
-    function setActiveStep(idx) {
-      state.current = Math.max(0, Math.min(stepEls.length - 1, idx));
-      stepEls.forEach((el, i) => el.classList.toggle('active', i === state.current));
-      stepIndicator.forEach((el, i) => el.classList.toggle('active', i === state.current));
-      if (btnBack) btnBack.disabled = state.current === 0;
-      if (btnNext) btnNext.textContent = (state.current === stepEls.length - 1) ? 'IMPORT SELECTED' : 'NEXT';
-
-      // If we've just navigated to Step 4, load the preview table
-      if (state.current === 3) {
-        buildPreview();
-      }
+  // Panel host helpers
+  function showPanel(html) {
+    const container = document.getElementById('addInfraContainer');
+    if (!container) return null;
+    container.innerHTML = html;
+    showViews({ map:false, list:false, docs:false, wizard:true, settings:false });
+    safeEnableFullWidthMode();
+    setActiveNav('navNewCompany');
+    return container;
+  }
+  function closePanel() {
+    const container = document.getElementById('addInfraContainer');
+    if (container) container.innerHTML = '';
+    showViews({ map:true, list:false, docs:false, wizard:false, settings:false });
+    safeDisableFullWidthMode();
+    // Nudge the map to repaint properly after layout shift
+    if (window.map && typeof window.map.invalidateSize === 'function') {
+      setTimeout(() => { try { window.map.invalidateSize(); } catch(_) {} }, 50);
     }
+  }
 
-    function alertUser(msg) { alert(msg); }
+  // Create Company panel
+  async function openCreateCompanyForm() {
+    const view = `
+      <div class="panel-form">
+        <h2 style="margin-top:0;">Create Company</h2>
+        <div class="form-row">
+          <label>Company Name*</label>
+          <input type="text" id="coName" placeholder="Company name..." />
+        </div>
+        <div class="form-row">
+          <label>Company Description</label>
+          <textarea id="coDesc" rows="4" placeholder=""></textarea>
+        </div>
+        <div class="form-row">
+          <label>Company Email*</label>
+          <input type="email" id="coEmail" placeholder="" />
+        </div>
+        <div class="wizard-footer" style="justify-content:flex-end;">
+          <button id="btnCancel" class="btn btn-ghost">Cancel</button>
+          <button id="btnSave" class="btn btn-primary">Save</button>
+        </div>
+      </div>`;
+    const host = showPanel(view);
+    if (!host) return;
 
-    function updateSelectedBadge() {
-      if (!rowCountBadge) return;
-      rowCountBadge.textContent = `${state.selectedRowIdx.size} selected`;
-    }
-
-    function renderPreview(sections, headers, rows) {
-      if (!thead || !tbody) return;
-      thead.innerHTML = '';
-      tbody.innerHTML = '';
-      // ── Top header row: Sections (with colspans) + leading checkbox col
-      const trSec = document.createElement('tr');
-      const thLead = document.createElement('th');
-      thLead.style.width = '36px';
-      thLead.innerHTML = '<input id="chkAllRows" type="checkbox"/>';
-      trSec.appendChild(thLead);
-      // group contiguous identical section names
-      let i = 0;
-      while (i < headers.length) {
-        const sec = sections[i] || '';
-        let span = 1;
-        while (i + span < headers.length && (sections[i + span] || '') === sec) span++;
-        const th = document.createElement('th');
-        th.colSpan = span;
-        th.textContent = sec || '';
-        trSec.appendChild(th);
-        i += span;
-      }
-      thead.appendChild(trSec);
-      // ── Second header row: Fields
-      const trFld = document.createElement('tr');
-      trFld.innerHTML = '<th></th>' + headers.map(h => `<th>${h}</th>`).join('');
-      thead.appendChild(trFld);
-
-      const chkAll = trSec.querySelector('#chkAllRows');
-      if (chkAll) {
-        chkAll.addEventListener('change', () => {
-          if (chkAll.checked) {
-            state.selectedRowIdx = new Set(rows.map((_, i) => i));
-          } else {
-            state.selectedRowIdx.clear();
-          }
-          // Update all row checkboxes
-          tbody.querySelectorAll('input[type=checkbox].rowchk').forEach((cb, i) => {
-            cb.checked = chkAll.checked;
-          });
-          updateSelectedBadge();
-        });
-      }
-      // body rows
-      rows.forEach((r, i) => {
-        const tr = document.createElement('tr');
-        const c0 = document.createElement('td');
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.className = 'rowchk';
-        cb.checked = true; // default selected
-        state.selectedRowIdx.add(i);
-        cb.addEventListener('change', () => {
-          if (cb.checked) state.selectedRowIdx.add(i); else state.selectedRowIdx.delete(i);
-          updateSelectedBadge();
-        });
-        c0.appendChild(cb);
-        tr.appendChild(c0);
-        headers.forEach((h, idx) => {
-          const sec = sections[idx] || '';
-          const key = sec ? `${sec} – ${h}` : h;
-          const td = document.createElement('td');
-          td.textContent = (r?.[key] ?? r?.[h] ?? '');
-          tr.appendChild(td);
-        });
-        tbody.appendChild(tr);
-      });
-      updateSelectedBadge();
-    }
-
-    async function buildPreview() {
-      if (!state.excelB64 || !state.selectedSheet) {
-        if (thead) thead.innerHTML = '';
-        if (tbody) tbody.innerHTML = '<tr><td colspan="99" style="opacity:.7;padding:.75em;">Select an Excel file and sheet first.</td></tr>';
-        return;
-      }
+    const $ = sel => host.querySelector(sel);
+    $('#btnCancel')?.addEventListener('click', () => closePanel());
+    $('#btnSave')?.addEventListener('click', async () => {
+      const name = ($('#coName')?.value || '').trim();
+      if (!name) return alert('Please enter a company name.');
       try {
-        const res = await window.electronAPI.excelParseRowsFromSheet(state.excelB64, state.selectedSheet);
-        if (!res || res.success === false) {
-          console.error('[wizard] parseRowsFromSheet failed:', res?.message);
-          if (tbody) tbody.innerHTML = `<tr><td colspan="99">Failed to read sheet "${state.selectedSheet}".</td></tr>`;
-          return;
-        }
-        const rows    = res.rows || [];
-        const headers = res.headers || (rows.length ? Object.keys(rows[0]) : []);
-        const sections= res.sections || headers.map(()=>'');
-
-        state.previewRows     = rows;
-        state.previewHeaders  = headers;
-        state.previewSections = sections;
-        state.selectedRowIdx = new Set(rows.map((_, i) => i)); // default: all selected
-        renderPreview(sections, headers, rows);
+        const res = await window.electronAPI.upsertCompany(name, true);
+        if (!res || res.success === false) return alert('Failed to create company.');
+        await window.refreshFilters?.();
+        closePanel();
       } catch (e) {
-        console.error('[wizard] buildPreview error', e);
+        console.error('[CreateCompany] failed', e); alert('Unexpected error.');
       }
-    }
+    });
+  }
 
-    async function handleNext() {
+  // Create Project/Location (company context fixed)
+  async function openCreateLocationForm(company) {
+    const view = `
+      <div class="panel-form">
+        <h2 style="margin-top:0;">Create Project/Location</h2>
+        <div class="form-row">
+          <label>Company</label>
+          <input type="text" value="${(company||'')}" disabled />
+        </div>
+        <div class="form-row">
+          <label>Location*</label>
+          <input type="text" id="locName" placeholder="Location name..." />
+        </div>
+        <div class="wizard-footer" style="justify-content:flex-end;">
+          <button id="btnCancel" class="btn btn-ghost">Cancel</button>
+          <button id="btnSave" class="btn btn-primary">Save</button>
+        </div>
+      </div>`;
+    const host = showPanel(view);
+    if (!host) return;
+
+    const $ = sel => host.querySelector(sel);
+    $('#btnCancel')?.addEventListener('click', () => closePanel());
+    $('#btnSave')?.addEventListener('click', async () => {
+      const loc = ($('#locName')?.value || '').trim();
+      if (!loc) return alert('Please enter a location.');
       try {
-        if (state.current === 0) {
-          // STEP 1: Company (new or existing)
-          if (state.modes.company === 'existing') {
-            const val = (companySelect?.value || '').trim();
-            if (!val) return alertUser('Please select a company.');
-            state.company = val;
-          } else {
-            const name = (inputCompanyName?.value || '').trim();
-            if (!name) return alertUser('Please enter a company name.');
-            const res = await window.electronAPI.upsertCompany(name, true);
-            if (!res || res.success === false) return alertUser('Failed to create company.');
-            state.company = name;
-            if (typeof window.refreshFilters === 'function') setTimeout(window.refreshFilters, 0);
-            // reflect in lookups for downstream selects
-            await loadLookups();
-          }
-          setActiveStep(1);
-          return;
-        }
-
-        if (state.current === 1) {
-          // STEP 2: Location (new or existing)
-          if (!state.company) return alertUser('Please complete Step 1 (Company) first.');
-
-          if (state.modes.location === 'existing') {
-            const loc = (locationSelect?.value || '').trim();
-            if (!loc) return alertUser('Please select a location.');
-            state.location = loc;
-          } else {
-            const loc = (inputProjectName?.value || '').trim();
-            if (!loc) return alertUser('Please enter a location.');
-            const res = await window.electronAPI.upsertLocation(loc, state.company);
-            if (!res || res.success === false) return alertUser('Failed to create location.');
-            state.location = loc;
-            if (typeof window.refreshFilters === 'function') setTimeout(window.refreshFilters, 0);
-            // refresh lookups and asset types under the new location
-            await loadLookups();
-            refreshLocationSelect();
-          }
-
-          setActiveStep(2);
-          return;
-        }
-
-        if (state.current === 2) {
-          // STEP 3: Asset Type (new or existing)
-          if (!chkMethodImport?.checked) return alertUser('Currently only "Import from Sheet" is supported.');
-          if (!state.location) return alertUser('Please complete Step 2 (Location) first.');
-
-          if (state.modes.asset === 'existing') {
-            const at = (assetTypeSelect?.value || '').trim();
-            if (!at) return alertUser('Please select an asset type.');
-            state.assetName = at;
-          } else {
-            const assetName = (inputAssetName?.value || '').trim();
-            if (!assetName) return alertUser('Please enter an asset name.');
-            const up = await window.electronAPI.upsertAssetType(assetName, state.location);
-            if (!up || up.success === false) return alertUser('Failed to create asset type.');
-            state.assetName = assetName;
-            if (typeof window.refreshFilters === 'function') setTimeout(window.refreshFilters, 0);
-            await loadLookups();
-            refreshAssetTypeSelect();
-          }
-
-          // Selecting a sheet doesn't import yet (Step 4 will do that later)
-          state.selectedSheet = (selectSheet && selectSheet.value) ? selectSheet.value : null;
-          setActiveStep(3);
-          return;
-        }
-
-        if (state.current === 3) {
-          // STEP 4: Import selected rows → file & pins
-          if (!state.previewRows.length) return alertUser('Nothing to import.');
-          const idxs = Array.from(state.selectedRowIdx.values()).sort((a,b)=>a-b);
-          if (!idxs.length) return alertUser('Please select at least one row.');
-          const selected = idxs.map(i => state.previewRows[i]).filter(Boolean);
-          const payload = {
-            location: state.location,
-            company:  state.company,
-            sheetName: state.selectedSheet || 'Data',
-            sections: state.previewSections,
-            headers: state.previewHeaders,
-            rows: selected,
-            // NEW: ensure Category is exactly what was typed in Step 3
-            assetType: state.assetName,
-          };
-          const res = await window.electronAPI.importSelection(payload);
-          if (!res || res.success === false) {
-            return alertUser('Import failed.');
-          }
-          // Update UI: clear renderer data → refresh filters/pins/list → go back to map
-          if (typeof window.invalidateStationData === 'function') window.invalidateStationData();
-          if (typeof window.electronAPI.invalidateStationCache === 'function') {
-            await window.electronAPI.invalidateStationCache();
-          }
-          if (typeof window.refreshFilters === 'function') setTimeout(window.refreshFilters, 0);
-          if (typeof window.refreshMarkers === 'function') setTimeout(window.refreshMarkers, 0);
-          if (typeof window.renderList === 'function') setTimeout(window.renderList, 0);
-          alertUser(`Imported ${res.added} row(s).`);
-          window.dispatchEvent(new CustomEvent('lookups:changed'));
-          handleCancel();           // reset wizard
-          setActiveNav('navMap');   // show map
-          showViews({ map:true, wizard:false });
-          disableFullWidthMode();   // restore normal layout
-          return;
-        }
-
-      } catch (err) {
-        console.error('[wizard] NEXT failed', err);
-        alertUser('Unexpected error. See console for details.');
+        const res = await window.electronAPI.upsertLocation(loc, company);
+        if (!res || res.success === false) return alert('Failed to create location.');
+        await window.refreshFilters?.();
+        closePanel();
+      } catch (e) {
+        console.error('[CreateLocation] failed', e); alert('Unexpected error.');
       }
-    }
+    });
+  }
 
-    function handleBack() { setActiveStep(state.current - 1); }
+  // Create Assets under a given company+location
+  async function openCreateAssetsWizard(company, location) {
+    const view = `
+      <div class="panel-form" id="assetsPanel">
+        <h2 style="margin-top:0;">Create Assets</h2>
 
-    function handleCancel() {
-      if (inputCompanyName) inputCompanyName.value = '';
-      if (inputProjectName) inputProjectName.value = '';
-      if (inputAssetName)   inputAssetName.value = '';
-      if (selectSheet) {
-        selectSheet.innerHTML = '<option>Select Excel file in previous step</option>';
-        selectSheet.disabled = true;
-      }
-      if (lblProjectExcel) lblProjectExcel.textContent = 'Select Excel File';
-      Object.assign(state, createState());
+        <div class="card">
+          <div class="card-title">Context</div>
+          <div class="kv">
+            <div><strong>Company:</strong> ${company || '—'}</div>
+            <div><strong>Location:</strong> ${location || '—'}</div>
+          </div>
+        </div>
 
-      state.modes = { company:'new', location:'new', asset:'new' };
-      if (coModeNew) coModeNew.checked = true;
-      if (locModeNew) locModeNew.checked = true;
-      if (atModeNew)  atModeNew.checked  = true;
-      setCompanyMode('new');
-      setLocationMode('new');
-      setAssetMode('new');
-      fillSelect(companySelect, state.lookups.companies || [], 'Select company');
-      fillSelect(locationSelect, [], 'Select a company first');
-      fillSelect(assetTypeSelect, [], 'Select a location first');
+        <div class="form-row">
+          <label>Asset Name*</label>
+          <input type="text" id="assetName2" placeholder="Enter asset name" />
+        </div>
 
-      setActiveStep(0);
-      disableFullWidthMode();
-    }
+        <div class="form-row">
+          <label>Excel File</label>
+          <div class="filepicker">
+            <input type="file" id="excelFile2" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+            <span id="excelFile2Label">Select Excel File</span>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label>Select sheet</label>
+          <select id="sheetSelect2" disabled>
+            <option>Select Excel file first</option>
+          </select>
+        </div>
+
+        <hr style="margin:1rem 0;">
+
+        <h3>Select data</h3>
+        <div class="table-toolbar">
+          <div>
+            <button id="btnSelectAll2" class="btn btn-ghost">Select all</button>
+            <button id="btnDeselectAll2" class="btn btn-ghost">Deselect all</button>
+          </div>
+          <div id="rowCount2" class="badge">0 selected</div>
+        </div>
+
+        <div class="table-scroll">
+          <table id="previewTable2" class="data-table">
+            <thead></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="wizard-footer" style="justify-content:flex-end;">
+          <button id="btnCancel2" class="btn btn-ghost">Cancel</button>
+          <button id="btnImport2" class="btn btn-primary" disabled>Import Selected</button>
+        </div>
+      </div>`;
+    const host = showPanel(view);
+    if (!host) return;
+
+    const $ = sel => host.querySelector(sel);
+
+    // Local state
+    const state = {
+      excelB64: null,
+      sheets: [],
+      selectedSheet: null,
+      headers: [],
+      sections: [],
+      rows: [],
+      selectedIdx: new Set(),
+    };
+
+    const thead = $('#previewTable2 thead');
+    const tbody = $('#previewTable2 tbody');
+
+    function updateBadge() { $('#rowCount2').textContent = `${state.selectedIdx.size} selected`; }
 
     function fileToBase64(file) {
       return new Promise((resolve, reject) => {
@@ -488,318 +348,219 @@
     }
 
     function populateSheetSelect(names) {
-      if (!selectSheet) return;
-      selectSheet.innerHTML = '';
-      if (!names || !names.length) {
-        const opt = document.createElement('option');
-        opt.textContent = 'No sheets detected';
-        opt.disabled = true;
-        opt.selected = true;
-        selectSheet.appendChild(opt);
-        selectSheet.disabled = true;
-        return;
-      }
-      names.forEach((n, idx) => {
-        const opt = document.createElement('option');
-        opt.value = n;
-        opt.textContent = n;
-        if (idx === 0) opt.selected = true;
-        selectSheet.appendChild(opt);
-      });
-      selectSheet.disabled = false;
-    }
-
-    // Hook file picker (Step 2) to list sheets for Step 3
-    if (inputProjectExcel) {
-      inputProjectExcel.addEventListener('change', async (e) => {
-        try {
-          const f = (e.target.files || [])[0];
-          if (!f) {
-            populateSheetSelect([]);
-            if (lblProjectExcel) lblProjectExcel.textContent = 'Select Excel File';
-            state.excelB64 = null;
-            return;
-          }
-          if (lblProjectExcel) lblProjectExcel.textContent = f.name || 'Selected Excel';
-
-          const b64 = await fileToBase64(f);
-          state.excelB64 = b64;
-
-          const res = await window.electronAPI.excelListSheets(b64);
-          if (!res || res.success === false) {
-            console.error('[wizard] list sheets failed', res?.message);
-            populateSheetSelect([]);
-            alert('Could not read the Excel file. Please ensure it is a valid .xlsx.');
-            return;
-          }
-          state.sheetNames = res.sheets || [];
-          populateSheetSelect(state.sheetNames);
-        } catch (err) {
-          console.error('[wizard] file selection failed', err);
-          populateSheetSelect([]);
-          alert('Unexpected error while reading the Excel file.');
-        }
-      });
-    }
-
-    if (selectSheet) {
-      selectSheet.addEventListener('change', () => {
-        state.selectedSheet = selectSheet.value || null;
-      });
-    }
-
-    if (btnSelAll) {
-      btnSelAll.addEventListener('click', () => {
-        state.selectedRowIdx = new Set(state.previewRows.map((_, i) => i));
-        tbody?.querySelectorAll('input[type=checkbox].rowchk').forEach(cb => cb.checked = true);
-        updateSelectedBadge();
-      });
-    }
-    if (btnDeselAll) {
-      btnDeselAll.addEventListener('click', () => {
-        state.selectedRowIdx.clear();
-        tbody?.querySelectorAll('input[type=checkbox].rowchk').forEach(cb => cb.checked = false);
-        updateSelectedBadge();
-      });
-    }
-
-
-    if (btnNext)   btnNext.addEventListener('click', handleNext);
-    if (btnBack)   btnBack.addEventListener('click', handleBack);
-    if (btnCancel) btnCancel.addEventListener('click', handleCancel);
-
-    function fillSelect(sel, items, placeholder='Select…') {
-      if (!sel) return;
+      const sel = $('#sheetSelect2');
       sel.innerHTML = '';
-      if (!items || !items.length) {
-        const opt = document.createElement('option');
-        opt.value = '';
-        opt.textContent = placeholder;
-        opt.disabled = true; opt.selected = true;
-        sel.appendChild(opt);
+      if (!names || !names.length) {
+        sel.appendChild(new Option('No sheets detected', '', true, true));
         sel.disabled = true;
         return;
       }
-      const opt0 = document.createElement('option');
-      opt0.value = ''; opt0.textContent = placeholder; opt0.disabled = true; opt0.selected = true;
-      sel.appendChild(opt0);
-      items.forEach(v => {
-        const opt = document.createElement('option');
-        opt.value = v; opt.textContent = v;
-        sel.appendChild(opt);
-      });
+      names.forEach((n, i) => sel.appendChild(new Option(n, n, i===0, i===0)));
       sel.disabled = false;
+      state.selectedSheet = sel.value || null;
     }
 
-    async function loadLookups() {
+    function renderPreview() {
+      if (!thead || !tbody) return;
+      thead.innerHTML = ''; tbody.innerHTML = '';
+      if (!state.rows.length) {
+        tbody.innerHTML = `<tr><td colspan="99" style="opacity:.7;padding:.75em;">Select an Excel file and sheet first.</td></tr>`;
+        updateBadge(); return;
+      }
+
+      // Build grouped headers from sections/headers
+      const trSec = document.createElement('tr');
+      const thLead = document.createElement('th'); thLead.style.width = '36px';
+      thLead.innerHTML = '<input id="chkAll2" type="checkbox"/>'; trSec.appendChild(thLead);
+      let i = 0;
+      while (i < state.headers.length) {
+        const sec = state.sections[i] || '';
+        let span = 1;
+        while (i + span < state.headers.length && (state.sections[i + span] || '') === sec) span++;
+        const th = document.createElement('th'); th.colSpan = span; th.textContent = sec || '';
+        trSec.appendChild(th); i += span;
+      }
+      thead.appendChild(trSec);
+
+      const trFld = document.createElement('tr');
+      trFld.innerHTML = '<th></th>' + state.headers.map(h => `<th>${h}</th>`).join('');
+      thead.appendChild(trFld);
+
+      const chkAll = thead.querySelector('#chkAll2');
+      if (chkAll) {
+        chkAll.addEventListener('change', () => {
+          state.selectedIdx = chkAll.checked ? new Set(state.rows.map((_, i) => i)) : new Set();
+          tbody.querySelectorAll('input.rowchk2[type=checkbox]').forEach((cb, i) => cb.checked = chkAll.checked);
+          updateBadge();
+        });
+      }
+
+      tbody.innerHTML = '';
+      state.selectedIdx = new Set(state.rows.map((_, i) => i)); // default all
+      state.rows.forEach((r, i) => {
+        const tr = document.createElement('tr');
+        const c0 = document.createElement('td');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.className = 'rowchk2'; cb.checked = true;
+        cb.addEventListener('change', () => {
+          if (cb.checked) state.selectedIdx.add(i); else state.selectedIdx.delete(i);
+          updateBadge();
+        });
+        c0.appendChild(cb); tr.appendChild(c0);
+        state.headers.forEach((h, idx) => {
+          const sec = state.sections[idx] || '';
+          const key = sec ? `${sec} – ${h}` : h;
+          const td = document.createElement('td');
+          td.textContent = (r?.[key] ?? r?.[h] ?? '');
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      updateBadge();
+    }
+
+    async function buildPreview() {
+      if (!state.excelB64 || !state.selectedSheet) { state.rows = []; renderPreview(); return; }
       try {
-        if (window.electronAPI?.getLookupTree) {
-          const t = await window.electronAPI.getLookupTree();
-          if (t && Array.isArray(t.companies)) {
-            state.lookups = {
-              companies: t.companies || [],
-              locationsByCompany: t.locationsByCompany || {},
-              assetsByLocation: t.assetsByLocation || {}
-            };
-          }
+        const res = await window.electronAPI.excelParseRowsFromSheet(state.excelB64, state.selectedSheet);
+        if (!res || res.success === false) {
+          console.error('[assets] parseRowsFromSheet failed:', res?.message);
+          state.rows = []; renderPreview(); return;
         }
+        state.rows     = res.rows || [];
+        state.headers  = res.headers || (state.rows.length ? Object.keys(state.rows[0]) : []);
+        state.sections = res.sections || state.headers.map(()=> '');
+        renderPreview();
       } catch (e) {
-        console.error('[wizard] getLookupTree failed', e);
-      }
-
-      // Populate company select
-      fillSelect(companySelect, (state.lookups.companies || []).slice().sort((a,b)=>a.localeCompare(b)), 'Select company');
-    }
-
-    function setCompanyMode(mode) {
-      state.modes.company = mode;
-      if (mode === 'existing') {
-        rowCompanySelect.style.display = '';
-        rowCompanyName.style.display = 'none';
-      } else {
-        rowCompanySelect.style.display = 'none';
-        rowCompanyName.style.display = '';
+        console.error('[assets] buildPreview error', e); state.rows = []; renderPreview();
       }
     }
 
-    function setLocationMode(mode) {
-      state.modes.location = mode;
-      if (mode === 'existing') {
-        rowLocationSelect.style.display = '';
-        rowLocationName.style.display = 'none';
-      } else {
-        rowLocationSelect.style.display = 'none';
-        rowLocationName.style.display = '';
-      }
-    }
-
-    function setAssetMode(mode) {
-      state.modes.asset = mode;
-      if (mode === 'existing') {
-        rowAssetTypeSelect.style.display = '';
-        rowAssetName.style.display = 'none';
-      } else {
-        rowAssetTypeSelect.style.display = 'none';
-        rowAssetName.style.display = '';
-      }
-    }
-
-    // Populate location select based on chosen company
-    function refreshLocationSelect() {
-      const co = state.company || companySelect?.value || '';
-      const locs = (state.lookups.locationsByCompany?.[co] || []).slice().sort((a,b)=>a.localeCompare(b));
-      fillSelect(locationSelect, locs, co ? 'Select location' : 'Select a company first');
-    }
-
-    // Populate asset type select based on chosen location
-    function refreshAssetTypeSelect() {
-      const loc = state.location || locationSelect?.value || '';
-      const ats = (state.lookups.assetsByLocation?.[loc] || []).slice().sort((a,b)=>a.localeCompare(b));
-      fillSelect(assetTypeSelect, ats, loc ? 'Select asset type' : 'Select a location first');
-    }
-
-    // Default modes
-    setCompanyMode('new');
-    setLocationMode('new');
-    setAssetMode('new');
-
-    // Toggle handlers
-    coModeExisting?.addEventListener('change', () => { if (coModeExisting.checked) setCompanyMode('existing'); });
-    coModeNew?.addEventListener('change',      () => { if (coModeNew.checked)      setCompanyMode('new'); });
-
-    locModeExisting?.addEventListener('change', () => { if (locModeExisting.checked) setLocationMode('existing'); });
-    locModeNew?.addEventListener('change',      () => { if (locModeNew.checked)      setLocationMode('new'); });
-
-    atModeExisting?.addEventListener('change', () => { if (atModeExisting.checked) setAssetMode('existing'); });
-    atModeNew?.addEventListener('change',      () => { if (atModeNew.checked)      setAssetMode('new'); });
-
-    // Select dependencies
-    companySelect?.addEventListener('change', () => {
-      state.company = companySelect.value || '';
-      refreshLocationSelect();
-      // Clear downstream when company changes
-      state.location = '';
-      fillSelect(assetTypeSelect, [], 'Select a location first');
+    // Bind UI
+    $('#btnCancel2')?.addEventListener('click', () => closePanel());
+    $('#btnSelectAll2')?.addEventListener('click', () => {
+      state.selectedIdx = new Set(state.rows.map((_, i) => i));
+      tbody?.querySelectorAll('input.rowchk2').forEach(cb => cb.checked = true);
+      updateBadge();
+    });
+    $('#btnDeselectAll2')?.addEventListener('click', () => {
+      state.selectedIdx.clear();
+      tbody?.querySelectorAll('input.rowchk2').forEach(cb => cb.checked = false);
+      updateBadge();
     });
 
-    locationSelect?.addEventListener('change', () => {
-      state.location = locationSelect.value || '';
-      refreshAssetTypeSelect();
-    });
-
-    assetTypeSelect?.addEventListener('change', () => {
-      // just store name; import payload uses state.assetName
-      state.assetName = assetTypeSelect.value || '';
-    });
-
-    // Load lookups initially
-    loadLookups();
-
-    // Kick off at step 0
-    setActiveStep(0);
-  }
-
-  // Load add_infra.html into the container and initialize the wizard.
-  async function showAddInfraWizard() {
-    try {
-      const container = document.getElementById('addInfraContainer');
-      if (!container) return;
-      // If already present, just show it.
-      let root = document.getElementById(WIZARD_ROOT_ID);
-
-      // Mark the nav as active *before* fetch so user sees instant feedback
-      setActiveNav('navNewCompany');
-      // Hide other views immediately; wizard will be shown after injection
-      showViews({ map: false, list: false, docs: false, wizard: true });
-
-      if (!root) {
-        const resp = await fetch('add_infra.html');
-        if (!resp.ok) {
-          alert('Failed to load Add Infrastructure view.');
-          return;
-        }
-        container.innerHTML = await resp.text();
-        root = document.getElementById(WIZARD_ROOT_ID);
+    $('#excelFile2')?.addEventListener('change', async (e) => {
+      const f = (e.target.files || [])[0];
+      if (!f) {
+        state.excelB64 = null; state.sheets = []; populateSheetSelect([]); renderPreview(); return;
       }
-      // Show wizard, hide other main areas
-      showViews({ map: false, list: false, docs: false, wizard: true });
-      // Enable full-width mode for wizard
-      enableFullWidthMode();
-
-      initWizard(root);
-    } catch (e) {
-      console.error('[add_infra] showAddInfraWizard failed', e);
-      alert('Unexpected error loading the New Company wizard.');
-    }
-  }
-
-  // Try to init if the wizard is already in DOM (e.g., pre-injected)
-  function tryInitIfPresent() {
-    const root = document.getElementById(WIZARD_ROOT_ID);
-    if (root) initWizard(root);
-  }
-
-  // Observe container for late injection of the wizard HTML
-  function watchForWizardInjection() {
-    const container = document.getElementById('addInfraContainer') || document.body;
-    const mo = new MutationObserver(() => {
-      const root = document.getElementById(WIZARD_ROOT_ID);
-      if (root && root.dataset.bound !== '1') {
-        initWizard(root);
+      $('#excelFile2Label').textContent = f.name || 'Selected Excel';
+      try {
+        state.excelB64 = await fileToBase64(f);
+        const res = await window.electronAPI.excelListSheets(state.excelB64);
+        state.sheets = (res && res.sheets) || [];
+        populateSheetSelect(state.sheets);
+        $('#btnImport2').disabled = false;
+        await buildPreview();
+      } catch (err) {
+        console.error('[assets] list sheets failed', err);
+        populateSheetSelect([]); renderPreview();
       }
     });
-    mo.observe(container, { childList: true, subtree: true });
+
+    $('#sheetSelect2')?.addEventListener('change', async () => {
+      state.selectedSheet = $('#sheetSelect2').value || null;
+      await buildPreview();
+    });
+
+    $('#btnImport2')?.addEventListener('click', async () => {
+      const assetName = ($('#assetName2')?.value || '').trim();
+      if (!assetName) return alert('Please enter an asset name.');
+      if (!state.rows.length) return alert('No rows to import (select a sheet).');
+      const idxs = Array.from(state.selectedIdx.values()).sort((a,b)=>a-b);
+      if (!idxs.length) return alert('Please select at least one row.');
+
+      try {
+        // Ensure asset type exists under the location
+        const up = await window.electronAPI.upsertAssetType(assetName, location);
+        if (!up || up.success === false) return alert('Failed to create asset type.');
+
+        const selectedRows = idxs.map(i => state.rows[i]).filter(Boolean);
+        const payload = {
+          location,
+          company,
+          sheetName: state.selectedSheet || 'Data',
+          sections: state.sections,
+          headers: state.headers,
+          rows: selectedRows,
+          assetType: assetName,
+        };
+        const res = await window.electronAPI.importSelection(payload);
+        if (!res || res.success === false) return alert('Import failed.');
+
+        // Refresh UI
+        if (typeof window.invalidateStationData === 'function') window.invalidateStationData();
+        if (typeof window.electronAPI.invalidateStationCache === 'function') await window.electronAPI.invalidateStationCache();
+        await window.refreshFilters?.();
+        await window.refreshMarkers?.();
+        await window.renderList?.();
+
+        alert(`Imported ${res.added} row(s).`);
+        closePanel();
+      } catch (e) {
+        console.error('[assets] import failed', e);
+        alert('Unexpected import error. See console.');
+      }
+    });
   }
 
+  // ────────────────────────────────────────────────────────────────────────────
+  // Bootstrapping & Nav bindings
+  // ────────────────────────────────────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', () => {
-    // Wire up the left-nav "＋ New Company" item to load/show the wizard.
+    // Left-nav: ＋ New Company → open our new form (no legacy wizard)
     const navNewCompany = document.getElementById('navNewCompany');
-    if (navNewCompany && !navNewCompany.dataset.bound) {
+    if (navNewCompany && !navNewCompany.dataset.boundNew) {
       navNewCompany.addEventListener('click', (e) => {
         e.preventDefault();
-        showAddInfraWizard();
+        openCreateCompanyForm();
       });
-      navNewCompany.dataset.bound = '1';
+      navNewCompany.dataset.boundNew = '1';
     }
 
-    // Wire up Map/List/Docs to bring those views back and set active color
+    // Map/List/Docs/Settings toggles
     const navMap  = document.getElementById('navMap');
     const navList = document.getElementById('navList');
     const navDash = document.getElementById('navDash');
+    const navSettings = document.getElementById('navSettings');
 
     if (navMap && !navMap.dataset.bound) {
-      navMap.addEventListener('click', (e) => {
-        e.preventDefault();
-        showMapView();
-      });
+      navMap.addEventListener('click', (e) => { e.preventDefault(); showMapView(); });
       navMap.dataset.bound = '1';
     }
     if (navList && !navList.dataset.bound) {
-      navList.addEventListener('click', (e) => {
-        e.preventDefault();
-        showListView();
-      });
+      navList.addEventListener('click', (e) => { e.preventDefault(); showListView(); });
       navList.dataset.bound = '1';
     }
     if (navDash && !navDash.dataset.bound) {
-      navDash.addEventListener('click', (e) => {
-        e.preventDefault();
-        showDocsView();
-      });
+      navDash.addEventListener('click', (e) => { e.preventDefault(); showDocsView(); });
       navDash.dataset.bound = '1';
     }
-
-    // Wire up Settings → open settings page
-    const navSettings = document.getElementById('navSettings');
     if (navSettings && !navSettings.dataset.bound) {
-      navSettings.addEventListener('click', (e) => {
-        e.preventDefault();
-        showSettingsView();
-      });
+      navSettings.addEventListener('click', (e) => { e.preventDefault(); showSettingsView(); });
       navSettings.dataset.bound = '1';
     }
-
-    tryInitIfPresent();
-    watchForWizardInjection();
   });
+
+  // Expose for filters.js [+] actions
+  window.openCreateCompanyForm  = window.openCreateCompanyForm  || openCreateCompanyForm;
+  window.openCreateLocationForm = window.openCreateLocationForm || openCreateLocationForm;
+  window.openCreateAssetsWizard = window.openCreateAssetsWizard || openCreateAssetsWizard;
+
+  // Also expose view switches if other modules want to use them
+  window.showMapView   = window.showMapView   || showMapView;
+  window.showListView  = window.showListView  || showListView;
+  window.showDocsView  = window.showDocsView  || showDocsView;
+  window.showSettingsView = window.showSettingsView || showSettingsView;
+
 })();

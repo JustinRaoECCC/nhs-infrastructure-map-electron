@@ -23,7 +23,6 @@
         <div class="search">
           <input type="search" id="searchAssets" placeholder="Search assets…" />
         </div>
-        <button id="btnFilter" class="btn" title="Open filters">Filter</button>
       </div>
     </header>
 
@@ -44,13 +43,12 @@
 
           <div class="nav-section">
             <h2>Projects</h2>
-            <ul class="nav-list">
-              <li class="nav-item" id="navNewCompany">＋ New Company</li>
-            </ul>
+            <div id="filterTree" class="projects-tree"></div>
           </div>
 
           <div class="footer">
             <ul class="nav-list">
+              <li class="nav-item" id="navNewCompany">＋ New Company</li>
               <li class="nav-item" id="navSettings">⚙ Settings</li>
               <li class="nav-item">👤 Users</li>
               <li class="nav-item">⏻ Logout</li>
@@ -100,19 +98,6 @@
           <div class="actions"></div>
         </aside>
       </div>
-    </div>
-
-    <!-- Slide-Out Filter Drawer -->
-    <div id="filterDrawer" class="filter-drawer">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem">
-        <h3 style="margin:0">Filters</h3>
-        <div class="filter-actions">
-          <button id="btnAddCompany" class="btn btn-ghost" title="Add company">+ Company</button>
-          <button id="btnAddLocation" class="btn btn-ghost" title="Add location">+ Location</button>
-          <button id="btnAddAssetType" class="btn btn-ghost" title="Add asset">+ Asset</button>
-        </div>
-      </div>
-      <div id="filterTree" style="margin-top:.5rem"></div>
     </div>
   </div>
 

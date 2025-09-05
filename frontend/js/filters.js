@@ -1,43 +1,35 @@
 // frontend/js/filters.js
-// Collapsible, tri-state filter tree:
-// Company ▸ Locations ▸ Asset Types, with blue checkboxes.
-// FIXED: Prevents initial change event from clearing map pins
+// LHS Projects tree (Companies ▸ Locations ▸ Asset Types) with:
+// - [+] actions: company [+] → Create Project/Location; location [+] → Create Assets
+// - Keeps EXACT same checkbox classes/ids and dispatches 'change' events,
+//   so map_view.js and list_view.js continue to work unchanged.
+
 (function () {
   'use strict';
 
   const filterTree = document.getElementById('filterTree');
   if (!filterTree) return;
 
-  const debounce = (fn, ms = 120) => {
-    let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
-  };
+  const debounce = (fn, ms = 120) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 
   const el = (tag, attrs = {}, ...children) => {
     const n = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs)) {
-      if (v === null || v === undefined) continue;
+      if (v == null) continue;
       if (k === 'class') n.className = v;
       else if (k === 'html') n.innerHTML = v;
       else n.setAttribute(k, v);
     }
-    children.flat().forEach(c => {
-      if (c == null) return;
-      if (c.nodeType) n.appendChild(c); else n.appendChild(document.createTextNode(String(c)));
-    });
+    children.flat().forEach(c => c == null ? null : (c.nodeType ? n.appendChild(c) : n.appendChild(document.createTextNode(String(c)))));
     return n;
   };
 
-  function uniq(arr) { return Array.from(new Set((arr || []).filter(Boolean))); }
-   
-  // Remember the user's explicit choice for company/location checkboxes so
-  // asset-type toggles can't visually override them later.
-  function setUserChecked(cb, val) {
-    if (!cb) return;
-    cb.dataset.userchecked = val ? '1' : '0';
-  }
+  const uniq = arr => Array.from(new Set((arr || []).filter(Boolean)));
+
+  // Remember explicit user choice for company/location checkboxes
+  function setUserChecked(cb, val) { if (cb) cb.dataset.userchecked = val ? '1' : '0'; }
 
   async function fetchTree() {
-    // 1) Try Lookups first (source of truth for hierarchy)
     let treeFromLookups = null;
     try {
       if (window.electronAPI?.getLookupTree) {
@@ -48,8 +40,7 @@
       console.error('[filters] getLookupTree failed', e);
     }
 
-    // 2) Always read current stations so we can union file-derived locations
-    //    (ensures the filter UI contains values that actually exist on disk).
+    // Data-introspection to union values
     let dataLocs = [], assetsByLocData = {};
     try {
       const data = await window.electronAPI.getStationData({});
@@ -70,17 +61,15 @@
       console.error('[filters] data introspection failed', e);
     }
 
-    // 3) If we have a Lookups tree, merge in data-derived locations/assets.
     if (treeFromLookups && treeFromLookups.companies.length) {
       const tree = {
         companies: [...treeFromLookups.companies],
         locationsByCompany: { ...(treeFromLookups.locationsByCompany || {}) },
         assetsByLocation:   { ...(treeFromLookups.assetsByLocation   || {}) },
       };
-      // Ensure there is a bucket to drop data-only locations into.
+      // Bucket data-only locations under a fallback company if needed
       if (!tree.companies.includes('NHS')) tree.companies.push('NHS');
       tree.locationsByCompany['NHS'] ||= [];
-
       dataLocs.forEach(loc => {
         const exists = Object.values(tree.locationsByCompany)
           .some(arr => Array.isArray(arr) && arr.includes(loc));
@@ -95,197 +84,207 @@
       return tree;
     }
 
-    // 4) If no Lookups hierarchy yet, fall back to a simple inferred tree.
+    // No lookups yet → build a minimal tree from data
     const companies = dataLocs.length ? ['NHS'] : [];
     return { companies,
              locationsByCompany: dataLocs.length ? { 'NHS': dataLocs } : {},
              assetsByLocation: assetsByLocData };
   }
 
-  // ADDED: Flag to track if this is the initial render
+  // Preserve your initial-render gating so map pins aren’t cleared at boot
   let INITIAL_RENDER = true;
 
+  function rowActions({ kind, company, location }) {
+    // Only show [+] on company and location rows; assets have no row actions.
+    if (!(kind === 'company' || kind === 'location')) return null;
+
+    const wrap = el('div', { class: 'ft-actions', style: 'display:inline-flex;gap:.4rem;margin-left:auto;' });
+    const plus = el('button', {
+      type: 'button',
+      class: 'ft-plus',
+      title: (kind === 'company') ? 'Add location' : 'Add assets'
+    }, '+');
+
+    wrap.appendChild(plus);
+    if (company)  wrap.dataset.company  = company;
+    if (location) wrap.dataset.location = location;
+    wrap.dataset.kind = kind;
+    return wrap;
+  }
+
   function render(tree) {
-    
     filterTree.innerHTML = '';
-    const frag = document.createDocumentFragment();
-    // mark UI as "not ready" while we build (map should ignore)
     filterTree.dataset.ready = '0';
 
+    const frag = document.createDocumentFragment();
     const companies     = tree.companies || [];
     const locsByCompany = tree.locationsByCompany || {};
     const assetsByLoc   = tree.assetsByLocation || {};
 
     companies.forEach(company => {
       const co = el('details', { class: 'ft-company', open: '' });
-      const coSummary = el('summary', { class: 'ft-row' },
-        el('label', { class: 'ft-label' },
-          el('input', {
-            type: 'checkbox',
-            class: 'filter-checkbox company',
-            'data-company': company,
-            checked: ''
-          }),
+
+      const coCb = el('input', {
+        type: 'checkbox',
+        class: 'filter-checkbox company',
+        'data-company': company,
+        checked: ''
+      });
+
+      const head = el('div', { class: 'ft-row', style: 'display:flex;align-items:center;gap:.5rem;' },
+        el('label', { class: 'ft-label', style: 'display:inline-flex;gap:.5rem;align-items:center;' },
+          coCb,
           el('span', { class: 'ft-text' }, company)
-        )
+        ),
+        rowActions({ kind: 'company', company })
       );
+
+      const coSummary = el('summary', { class: 'ft-row-wrap', style: 'list-style:none;' });
+      coSummary.appendChild(head);
       co.appendChild(coSummary);
 
       const locWrap = el('div', { class: 'ft-children' });
       (locsByCompany[company] || []).forEach(loc => {
-        const locDet = el('details', { class: 'ft-location', open: '' });
-        const locSum = el('summary', { class: 'ft-row' },
-          el('label', { class: 'ft-label' },
-            el('input', {
-              type: 'checkbox',
-              class: 'filter-checkbox location',
-              value: loc,
-              'data-company': company,
-              checked: ''
-            }),
+        const locCb = el('input', {
+          type: 'checkbox',
+          class: 'filter-checkbox location',
+          value: loc,
+          'data-company': company,
+          checked: ''
+        });
+
+        const locHead = el('div', { class: 'ft-row', style: 'display:flex;align-items:center;gap:.5rem;' },
+          el('label', { class: 'ft-label', style: 'display:inline-flex;gap:.5rem;align-items:center;' },
+            locCb,
             el('span', { class: 'ft-text' }, loc)
-          )
+          ),
+          rowActions({ kind: 'location', company, location: loc })
         );
+
+        const locDet = el('details', { class: 'ft-location', open: '' });
+        const locSum = el('summary', { class: 'ft-row-wrap', style: 'list-style:none;' });
+        locSum.appendChild(locHead);
         locDet.appendChild(locSum);
 
         const atWrap = el('div', { class: 'ft-children' });
         (assetsByLoc[loc] || []).forEach(at => {
-          const row = el('div', { class: 'ft-row ft-asset' },
-            el('label', { class: 'ft-label' },
-              el('input', {
-                type: 'checkbox',
-                class: 'filter-checkbox asset-type',
-                value: at,
-                'data-company': company,
-                'data-location': loc,
-                checked: ''
-              }),
+          const atCb = el('input', {
+            type: 'checkbox',
+            class: 'filter-checkbox asset-type',
+            value: at,
+            'data-company': company,
+            'data-location': loc,
+            checked: ''
+          });
+          const row = el('div', { class: 'ft-row ft-asset', style:'display:flex;align-items:center;gap:.5rem;' },
+            el('label', { class: 'ft-label', style: 'display:inline-flex;gap:.5rem;align-items:center;flex:1;' },
+              atCb,
               el('span', { class: 'ft-text' }, at)
             )
           );
           atWrap.appendChild(row);
         });
+
         locDet.appendChild(atWrap);
         locWrap.appendChild(locDet);
       });
+
       co.appendChild(locWrap);
       frag.appendChild(co);
     });
 
     if (!companies.length) {
-      frag.appendChild(
-        el('div', { class: 'ft-empty' },
-          'No filters yet — add a company to get started.')
-      );
+      frag.appendChild(el('div', { class: 'ft-empty' }, 'No projects yet — add a company to get started.'));
     }
-    filterTree.appendChild(frag);
-    
-    // Force a known-good starting state (EVERYTHING CHECKED) before we signal ready.
-    const all = filterTree.querySelectorAll('input.filter-checkbox');
-    all.forEach(cb => { cb.checked = true; cb.indeterminate = false; });
 
-    // Initialize user intent on parents as "checked"
-    filterTree.querySelectorAll('input.company, input.location').forEach(cb => {
-      setUserChecked(cb, true);
-    });
-    // Paint parent visuals from remembered user intent
+    filterTree.appendChild(frag);
+
+    // Initialize all checked; remember user intent on parents
+    filterTree.querySelectorAll('input.filter-checkbox').forEach(cb => { cb.checked = true; cb.indeterminate = false; });
+    filterTree.querySelectorAll('input.company, input.location').forEach(cb => setUserChecked(cb, true));
     updateTriState(filterTree);
 
-    // CRITICAL FIX: Only fire initial change event after map has had time to render
+    // Wire [+] actions
+    wireActions(filterTree);
+
+    // Signal ready (boot gating)
     requestAnimationFrame(() => {
       filterTree.dataset.ready = '1';
-      
-      // FIXED: Don't fire change event on initial render - let the map render first
       if (!INITIAL_RENDER) {
         filterTree.dispatchEvent(new Event('change', { bubbles: true }));
       } else {
-        // Mark initial render as complete, future renders will fire change events
         INITIAL_RENDER = false;
-        
-        // OPTIONAL: Fire change event after a longer delay to allow map to fully render
-        setTimeout(() => {
-          filterTree.dispatchEvent(new Event('change', { bubbles: true }));
-        }, 3000); // 3 second delay to ensure map is fully rendered
+        setTimeout(() => filterTree.dispatchEvent(new Event('change', { bubbles: true })), 3000);
       }
     });
   }
 
   function updateTriState(scope) {
-    // Keep Company/Location visual state exactly as the user last set it.
-    // Do NOT flip parent .checked when children change; avoid indeterminate dash.
-
-    // Restore user's last explicit choice on locations
-    scope.querySelectorAll('input.location').forEach(locCb => {
-      const mark = locCb.dataset.userchecked;
-      if (mark != null) locCb.checked = (mark === '1');
-      locCb.indeterminate = false; // no dash visuals
+    scope.querySelectorAll('input.location').forEach(cb => {
+      const mark = cb.dataset.userchecked;
+      if (mark != null) cb.checked = (mark === '1');
+      cb.indeterminate = false;
     });
-
-    // Restore user's last explicit choice on companies
-    scope.querySelectorAll('input.company').forEach(coCb => {
-      const mark = coCb.dataset.userchecked;
-      if (mark != null) coCb.checked = (mark === '1');
-      coCb.indeterminate = false; // no dash visuals
+    scope.querySelectorAll('input.company').forEach(cb => {
+      const mark = cb.dataset.userchecked;
+      if (mark != null) cb.checked = (mark === '1');
+      cb.indeterminate = false;
     });
   }
 
-
   const dispatchChange = debounce(() => {
-    // Let map_view/list_view listen and redraw
     filterTree.dispatchEvent(new Event('change', { bubbles: true }));
   }, 50);
 
   function onTreeChange(e) {
     const t = e.target;
     if (!(t instanceof HTMLInputElement) || t.type !== 'checkbox') return;
-        
+
     if (t.classList.contains('company')) {
       const details = t.closest('details.ft-company');
-      // Remember user's explicit company choice
       setUserChecked(t, t.checked);
       if (details) {
-        // Cascade visual + value to all descendants
-        details.querySelectorAll('input.location, input.asset-type').forEach(cb => {
-          cb.checked = t.checked; cb.indeterminate = false;
-        });
-        // CRITICAL: also remember user's intent for all descendant LOCATIONS,
-        // so updateTriState() doesn't restore an old "off" state after a company toggle.
-        details.querySelectorAll('input.location').forEach(locCb => {
-          setUserChecked(locCb, t.checked);
-        });
+        details.querySelectorAll('input.location, input.asset-type').forEach(cb => { cb.checked = t.checked; cb.indeterminate = false; });
+        details.querySelectorAll('input.location').forEach(locCb => setUserChecked(locCb, t.checked));
       }
     } else if (t.classList.contains('location')) {
       const locDet = t.closest('details.ft-location');
-      setUserChecked(t, t.checked); // remember user's explicit location choice
-      if (locDet) {
-        locDet.querySelectorAll('input.asset-type').forEach(cb => { cb.checked = t.checked; });
-      }
+      setUserChecked(t, t.checked);
+      if (locDet) locDet.querySelectorAll('input.asset-type').forEach(cb => { cb.checked = t.checked; });
     }
     updateTriState(filterTree);
     dispatchChange();
   }
 
+  function wireActions(root) {
+    // [+] opens the appropriate creation UI
+    root.querySelectorAll('.ft-actions .ft-plus').forEach(btn => {
+      if (btn.dataset.bound) return;
+      btn.addEventListener('click', (e) => {
+        const wrap = e.currentTarget.closest('.ft-actions');
+        const kind = wrap?.dataset.kind;
+        const company = wrap?.dataset.company || '';
+        const location = wrap?.dataset.location || '';
+        if (kind === 'company' && window.openCreateLocationForm) {
+          window.openCreateLocationForm(company);
+        } else if (kind === 'location' && window.openCreateAssetsWizard) {
+          window.openCreateAssetsWizard(company, location);
+        }
+      });
+      btn.dataset.bound = '1';
+    });
+  }
+
   async function build() {
     const tree = await fetchTree();
     render(tree);
-    // tri-state is handled in render(); initial change may fire after delay
   }
 
   document.addEventListener('DOMContentLoaded', () => {
-    
-    // Top-of-drawer shortcuts open the wizard
-    const openWizard = () => {
-      const el = document.getElementById('navNewCompany');
-      if (el) el.dispatchEvent(new Event('click', { bubbles: true }));
-    };
-    document.getElementById('btnAddCompany')?.addEventListener('click', openWizard);
-    document.getElementById('btnAddLocation')?.addEventListener('click', openWizard);
-    document.getElementById('btnAddAssetType')?.addEventListener('click', openWizard);
-
     filterTree.addEventListener('change', onTreeChange);
     build();
   });
 
-  // Allow other modules (e.g., add_infra) to refresh the tree after upserts
+  // Public hook for other modules
   window.refreshFilters = build;
 })();
