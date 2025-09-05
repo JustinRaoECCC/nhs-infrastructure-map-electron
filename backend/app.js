@@ -377,6 +377,80 @@ async function getRecentPhotos(siteName, stationId, limit = 5) {
   }
 }
 
+/**
+ * Update station data - saves changes back to the appropriate Excel file
+ */
+async function updateStationData(updatedStation) {
+  try {
+    if (!updatedStation || !updatedStation.station_id) {
+      return { success: false, message: 'Station ID is required' };
+    }
+
+    // Find the current station to determine which file it belongs to
+    const allStations = await getStationData({ skipColors: true });
+    const currentStation = allStations.find(s => 
+      String(s.station_id) === String(updatedStation.station_id)
+    );
+    
+    if (!currentStation) {
+      return { success: false, message: 'Station not found' };
+    }
+
+    // Determine the location file (Excel file to update)
+    const locationFile = currentStation.location_file || 
+                        updatedStation.province || 
+                        currentStation.province || 
+                        'Unknown';
+
+    // Prepare the row data for Excel
+    const rowData = prepareStationRowForExcel(updatedStation);
+    
+    // Update the station in the appropriate Excel file
+    const result = await excel.updateStationInLocationFile(
+      locationFile, 
+      updatedStation.station_id, 
+      rowData
+    );
+
+    if (result.success) {
+      // Invalidate caches to force refresh
+      await invalidateStationCache();
+      return { success: true, message: 'Station updated successfully' };
+    } else {
+      return { success: false, message: result.message || 'Update failed' };
+    }
+
+  } catch (error) {
+    console.error('[updateStationData] failed:', error);
+    return { success: false, message: String(error) };
+  }
+}
+
+/**
+ * Prepare station data for Excel format
+ */
+function prepareStationRowForExcel(station) {
+  const rowData = {};
+
+  // Map standard fields
+  if (station.station_id !== undefined) rowData['Station ID'] = station.station_id;
+  if (station.asset_type !== undefined) rowData['Category'] = station.asset_type;
+  if (station.name !== undefined) rowData['Site Name'] = station.name;
+  if (station.province !== undefined) rowData['Province'] = station.province;
+  if (station.lat !== undefined) rowData['Latitude'] = station.lat;
+  if (station.lon !== undefined) rowData['Longitude'] = station.lon;
+  if (station.status !== undefined) rowData['Status'] = station.status;
+
+  // Add all "Section – Field" data
+  Object.keys(station).forEach(key => {
+    if (key.includes(' – ')) {
+      rowData[key] = station[key];
+    }
+  });
+
+  return rowData;
+}
+
 module.exports = {
   getStationData,
   getActiveCompanies,
@@ -402,4 +476,6 @@ module.exports = {
   invalidateStationCache,
   // photos
   getRecentPhotos,
+
+  updateStationData,
 };

@@ -57,6 +57,7 @@
   async function showMapView() {
     setActiveNav('navMap');
     showViews({ map: true, list: false, docs: false, wizard: false });
+    disableFullWidthMode();
     // small nudge so Leaflet recalculates sizes if coming back from wizard
     if (window.map && typeof window.map.invalidateSize === 'function') {
       setTimeout(() => { try { window.map.invalidateSize(); } catch(_) {} }, 50);
@@ -67,6 +68,7 @@
   async function showListView() {
     setActiveNav('navList');
     showViews({ map: false, list: true, docs: false, wizard: false });
+    disableFullWidthMode();
 
     const listEl = document.getElementById('listContainer');
     if (!listEl) return;
@@ -119,6 +121,7 @@
   async function showSettingsView() {
     setActiveNav('navSettings');
     showViews({ map: false, list: false, docs: false, wizard: false, settings: true });
+    disableFullWidthMode();
 
     const container = document.getElementById('settingsContainer');
     if (!container) return;
@@ -149,6 +152,7 @@
   async function showDocsView() {
     setActiveNav('navDash');
     showViews({ map: false, list: false, docs: true, wizard: false });
+    disableFullWidthMode();
     if (!document.getElementById('dashboardContentContainer')) showMapView();
   }
 
@@ -432,6 +436,7 @@
           handleCancel();           // reset wizard
           setActiveNav('navMap');   // show map
           showViews({ map:true, wizard:false });
+          disableFullWidthMode();   // restore normal layout
           return;
         }
 
@@ -466,6 +471,7 @@
       fillSelect(assetTypeSelect, [], 'Select a location first');
 
       setActiveStep(0);
+      disableFullWidthMode();
     }
 
     function fileToBase64(file) {
@@ -717,6 +723,8 @@
       }
       // Show wizard, hide other main areas
       showViews({ map: false, list: false, docs: false, wizard: true });
+      // Enable full-width mode for wizard
+      enableFullWidthMode();
 
       initWizard(root);
     } catch (e) {

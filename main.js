@@ -151,3 +151,5 @@ ipcMain.handle('excel:parseRowsFromSheet', async (_evt, b64, sheetName) =>
 ipcMain.handle('photos:getRecent', async (_evt, { siteName, stationId, limit }) =>
   backend.getRecentPhotos(siteName, stationId, limit)
 );
+
+ipcMain.handle('stations:update', async (_evt, stationData) => backend.updateStationData(stationData));

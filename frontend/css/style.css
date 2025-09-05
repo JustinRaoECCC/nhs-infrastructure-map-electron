@@ -467,7 +467,7 @@ a { color: inherit; text-decoration: none; }
    List View (scoped styling)
    ============================ */
 
-/* Container fills the center column and stacks toolbar + table */
+/* Container fills the center column and stacks toolbar and table */
 .list-container {
   /* ensure it occupies the center grid column like the map does */
   grid-column: 2;
@@ -607,7 +607,7 @@ a { color: inherit; text-decoration: none; }
   }
 }
 
-/* Hover highlight + left accent bar */
+/* Hover highlight and left accent bar */
 .list-container .data-table tbody tr {
   transition: background-color .12s ease, box-shadow .12s ease;
 }
@@ -946,4 +946,471 @@ html.modal-open, body.modal-open { overflow: hidden; }
   width: 36px; height: 36px; border: 0; border-radius: 999px;
   background: #fff; font-size: 24px; line-height: 36px; cursor: pointer;
   box-shadow: 0 2px 10px rgba(0,0,0,0.4);
+}
+
+/* Full-width mode: hide toggles and expand content when on special pages */
+.main-content.full-width {
+  /* Force single column layout: left nav and expanded content (no right panel) */
+  grid-template-columns: var(--left-col, 260px) 1fr;
+}
+
+/* Hide only the RIGHT toggle button when in full-width mode */
+.main-content.full-width .edge-toggle.right {
+  display: none !important;
+}
+
+/* Keep the LEFT toggle button visible and functional */
+.main-content.full-width .edge-toggle.left {
+  display: flex !important;
+}
+
+/* Ensure the right panel is completely hidden in full-width mode */
+.main-content.full-width .right-panel {
+  display: none !important;
+}
+
+/* Make sure station and add-infra containers use the full available space */
+.main-content.full-width #stationContentContainer,
+.main-content.full-width #addInfraContainer {
+  grid-column: 2; /* Only take the center column, expanded fully */
+}
+
+/* Optional: When left panel is also collapsed in full-width mode */
+.main-content.full-width.left-collapsed {
+  grid-template-columns: 0px 1fr; /* Just the expanded content */
+}
+
+/* Ensure content containers expand properly */
+#stationContentContainer,
+#addInfraContainer {
+  width: 100%;
+  min-width: 0; /* Allow shrinking if needed */
+}
+
+/* Pills in RHS panel (matches station detail page) */
+.right-panel .meta-row { 
+  display: flex; 
+  gap: 8px; 
+  align-items: center; 
+  margin-bottom: 12px; 
+}
+
+.right-panel .pill { 
+  display: inline-flex; 
+  align-items: center; 
+  padding: 4px 10px; 
+  border-radius: 9999px; 
+  font-size: .85rem; 
+  font-weight: 600; 
+  border: 1px solid transparent; 
+}
+
+.right-panel .pill--green { 
+  background: #ecfdf5; 
+  color: #065f46; 
+  border-color: #a7f3d0; 
+}
+
+.right-panel .pill--red { 
+  background: #fef2f2; 
+  color: #991b1b; 
+  border-color: #fecaca; 
+}
+
+.right-panel .pill--amber { 
+  background: #fffbeb; 
+  color: #92400e; 
+  border-color: #fde68a; 
+}
+
+.right-panel .pill--muted { 
+  background: #f3f4f6; 
+  color: #374151; 
+  border-color: #e5e7eb; 
+}
+
+/* RHS Accordion (collapsible extra sections) */
+.rhs-accordion { 
+  display: flex; 
+  flex-direction: column; 
+  gap: 8px; 
+  margin: 12px 0; 
+}
+
+.rhs-accordion-item { 
+  border: 1px solid #e6e8ec; 
+  border-radius: 8px; 
+  background: #fff; 
+  overflow: hidden; 
+}
+
+.rhs-accordion-header {
+  width: 100%; 
+  text-align: left; 
+  background: #f9fafb;
+  padding: 8px 12px; 
+  font-weight: 600; 
+  font-size: 0.9rem;
+  display: flex; 
+  justify-content: space-between; 
+  align-items: center;
+  border: none; 
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.rhs-accordion-header:hover {
+  background: #f3f4f6;
+}
+
+.rhs-accordion-header .rhs-chev {
+  width: 8px; 
+  height: 8px; 
+  border-right: 2px solid #6b7280; 
+  border-bottom: 2px solid #6b7280;
+  transform: rotate(-45deg); 
+  transition: transform .2s ease;
+}
+
+.rhs-accordion-item.open .rhs-accordion-header .rhs-chev { 
+  transform: rotate(135deg); 
+}
+
+/* RHS accordion content (smooth expand/collapse) */
+.rhs-accordion-content {
+  max-height: 0; 
+  overflow: hidden;
+  padding: 0 12px;
+  transition: max-height .25s ease, padding .2s ease;
+}
+
+.rhs-accordion-item.open .rhs-accordion-content {
+  padding: 6px 12px 10px;
+  max-height: 800px; /* big enough for most sections */
+}
+
+/* RHS field rows (label over value, compact) */
+.rhs-kv-list { 
+  display: flex; 
+  flex-direction: column; 
+  gap: 6px; 
+}
+
+.rhs-kv-row { 
+  padding: 6px 0; 
+  border-bottom: 1px solid #f1f5f9; 
+}
+
+.rhs-kv-row:last-child { 
+  border-bottom: none; 
+}
+
+.rhs-kv-label {
+  color: #9ca3af;
+  font-weight: 600;
+  font-size: .8rem;
+  line-height: 1.1;
+  letter-spacing: .01em;
+}
+
+.rhs-kv-value {
+  margin-top: 2px;
+  color: #111827;
+  font-weight: 600;
+  font-size: .85rem;
+  line-height: 1.25;
+}
+
+.rhs-kv-value .kv-empty { 
+  color: #9ca3af; 
+  font-weight: 600; 
+}
+
+/* RHS Photo Section */
+.rhs-photo-section {
+  background: #fff;
+  border: 1px solid #e6e8ec;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(16,24,40,.04);
+  padding: 12px 16px;
+  margin: 12px 0;
+}
+
+.rhs-photo-section > h3 { 
+  font-size: 1rem; 
+  color: #111827; 
+  margin: 0 0 8px; 
+}
+
+.rhs-photo-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 120px;
+}
+
+.rhs-photo-wrapper {
+  width: 100%;
+  max-width: 200px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.rhs-photo-thumb {
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  display: block;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+
+.rhs-photo-thumb:hover {
+  transform: scale(1.02);
+}
+
+.rhs-photo-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 120px;
+  width: 100%;
+  background: #f9fafb;
+  border: 1px dashed #d1d5db;
+  border-radius: 8px;
+  color: #6b7280;
+  font-size: 0.9rem;
+  font-style: italic;
+}
+
+.rhs-photo-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 120px;
+  width: 100%;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  color: #9ca3af;
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+/* Ensure the lightbox works with RHS photos */
+.rhs-photo-thumb {
+  cursor: pointer;
+}
+
+/* ───────────────── Station Detail Editing Extensions ───────────────── */
+
+/* Editable sections - match existing station-section styling */
+.editable-section {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 16px;
+  margin: 12px 0;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.section-title-input {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: var(--panel);
+  min-width: 200px;
+}
+
+.section-title-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.25);
+}
+
+.section-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Field editing rows */
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 2fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.field-row:last-child {
+  border-bottom: none;
+}
+
+.field-label-input,
+.field-value-input {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.field-label-input {
+  font-weight: 600;
+}
+
+.field-value-input::placeholder {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.field-label-input:focus,
+.field-value-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.25);
+}
+
+/* Button variants - extend existing btn styles */
+.btn-sm {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+
+.btn-danger {
+  background: #dc3545;
+  color: white;
+  border-color: #dc3545;
+}
+
+.btn-danger:hover {
+  background: #c82333;
+  border-color: #bd2130;
+}
+
+.btn-warning {
+  background: #ffc107;
+  color: #212529;
+  border-color: #ffc107;
+}
+
+.btn-success {
+  background: #28a745;
+  color: white;
+  border-color: #28a745;
+}
+
+/* Password modal */
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 24px;
+  max-width: 400px;
+  width: 90%;
+}
+
+.modal-content h3 {
+  margin: 0 0 12px;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.modal-content p {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.modal-content input[type="password"] {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+.modal-content input[type="password"]:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.25);
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* Bottom section actions area */
+.station-section.section-actions {
+  margin: 20px 0;
+  padding: 16px;
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+
+/* General Information unlocked state */
+.station-section input[style*="background-color: #fff3cd"],
+.station-section select[style*="background-color: #fff3cd"] {
+  background: #fff3cd !important;
+  border-color: #ffeaa7 !important;
+  transition: background-color 0.3s ease;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .field-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  
+  .section-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  
+  .modal-content {
+    padding: 16px;
+    margin: 16px;
+  }
 }

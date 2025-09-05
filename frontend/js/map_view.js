@@ -260,7 +260,7 @@ function addTriRingMarker(lat, lon, color) {
   return inner;
 }
 
-function showStationDetails(stn) {
+async function showStationDetails(stn) {
   const container = document.getElementById('station-details');
   if (!container) return;
 
@@ -273,6 +273,10 @@ function showStationDetails(stn) {
     body.className = 'station-details-body';
     container.appendChild(body);
   }
+
+  // Add status and category pills at the top
+  const statusPill = createStatusPill(stn.status);
+  const categoryPill = createCategoryPill(stn.asset_type);
 
   const fixedOrder = [
     ['Station ID', stn.station_id],
@@ -292,13 +296,10 @@ function showStationDetails(stn) {
     (extras[section] ||= {})[field] = stn[k];
   });
 
-  // Filter out fields from an imported "General Information" section that are already
-  // displayed in the main General Information table above.
+  // Filter out fields from an imported "General Information" section
   const GI_NAME = 'general information';
   const GI_SHOWN_FIELDS = new Set([
-    'station id', 'category',
-    // Treat Station Name == Site Name
-    'site name', 'station name',
+    'station id', 'category', 'site name', 'station name',
     'province', 'latitude', 'longitude', 'status'
   ]);
   Object.keys(extras).forEach(sectionName => {
@@ -309,10 +310,25 @@ function showStationDetails(stn) {
       if (!GI_SHOWN_FIELDS.has(key)) filtered[fld] = val;
     });
     if (Object.keys(filtered).length) extras[sectionName] = filtered;
-    else delete extras[sectionName]; // nothing left to show for imported GI
+    else delete extras[sectionName];
   });
 
   let html = '';
+  
+  // Add pills at the top
+  html += '<div class="meta-row" style="margin-bottom: 12px;">';
+  html += statusPill + categoryPill;
+  html += '</div>';
+
+  // Most recent photo section
+  html += '<div class="rhs-photo-section">';
+  html += '<h3>Station Photo</h3>';
+  html += '<div class="rhs-photo-container" id="rhsPhotoContainer">';
+  html += '<div class="rhs-photo-placeholder">Loading photo...</div>';
+  html += '</div>';
+  html += '</div>';
+
+  // General Information section
   html += '<div class="station-section">';
   html += '<h3>General Information</h3><table>';
   fixedOrder.forEach(([label, val]) => {
@@ -320,20 +336,129 @@ function showStationDetails(stn) {
   });
   html += '</table></div>';
 
-  Object.entries(extras).forEach(([section, fields]) => {
-    const title =
-      String(section).trim().toLowerCase() === GI_NAME
-        ? 'Extra General Information'
-        : section;
-    html += `<div class="station-section"><h3>${title}</h3><table>`;
-    Object.entries(fields).forEach(([fld, val]) => {
-      html += `<tr><th>${fld}:</th><td>${val ?? ''}</td></tr>`;
+  // Extra sections as collapsible accordions
+  if (Object.keys(extras).length > 0) {
+    html += '<div class="rhs-accordion">';
+    Object.entries(extras).forEach(([section, fields]) => {
+      const title =
+        String(section).trim().toLowerCase() === GI_NAME
+          ? 'Extra General Information'
+          : section;
+      
+      html += `
+        <div class="rhs-accordion-item">
+          <button type="button" class="rhs-accordion-header">
+            ${escapeHtml(title)}
+            <span class="rhs-chev"></span>
+          </button>
+          <div class="rhs-accordion-content">
+            ${createFieldRows(fields)}
+          </div>
+        </div>`;
     });
-    html += '</table></div>';
-  });
+    html += '</div>';
+  }
 
   body.innerHTML = html;
+  
+  // Bind accordion toggles
+  body.querySelectorAll('.rhs-accordion-item .rhs-accordion-header').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const item = btn.closest('.rhs-accordion-item');
+      item.classList.toggle('open');
+    });
+  });
+
+  // Load the most recent photo
+  await loadRecentPhotoForRHS(stn);
 }
+
+// New function to load and display the most recent photo in RHS
+async function loadRecentPhotoForRHS(stn) {
+  const photoContainer = document.getElementById('rhsPhotoContainer');
+  if (!photoContainer) return;
+
+  try {
+    // Use the same photo loading logic as station detail page
+    const photos = await window.electronAPI.getRecentPhotos(stn.name, stn.station_id, 1);
+    
+    if (!photos || photos.length === 0) {
+      photoContainer.innerHTML = '<div class="rhs-photo-empty">No photos available</div>';
+      return;
+    }
+
+    const photo = photos[0]; // Get the most recent photo
+    photoContainer.innerHTML = `
+      <div class="rhs-photo-wrapper">
+        <img class="rhs-photo-thumb" 
+             src="${photo.url}" 
+             alt="${photo.name || `${stn.name} photo`}"
+             title="Click to view full size" />
+      </div>`;
+
+    // Add click handler to open lightbox (reuse station detail lightbox if available)
+    const img = photoContainer.querySelector('.rhs-photo-thumb');
+    if (img) {
+      img.addEventListener('click', () => {
+        // Try to use the station detail lightbox if it exists
+        const lightbox = document.getElementById('photoLightbox');
+        const lightboxImg = document.getElementById('lightboxImg');
+        
+        if (lightbox && lightboxImg) {
+          lightboxImg.src = photo.url;
+          lightbox.classList.add('open');
+          document.documentElement.classList.add('modal-open');
+          document.body.classList.add('modal-open');
+        } else {
+          // Fallback: open in new window
+          window.open(photo.url, '_blank');
+        }
+      });
+    }
+
+  } catch (e) {
+    console.warn('[RHS Photo] Failed to load photo:', e);
+    photoContainer.innerHTML = '<div class="rhs-photo-empty">Photo unavailable</div>';
+  }
+}
+
+// Helper functions (add these if they don't exist)
+function createStatusPill(status) {
+  const sRaw = status || 'Unknown';
+  const s = String(sRaw).trim().toLowerCase();
+  let pillClass = 'pill--amber'; // default
+  
+  if (s === 'active') pillClass = 'pill--green';
+  else if (s === 'inactive') pillClass = 'pill--red';
+  
+  return `<span class="pill ${pillClass}">${escapeHtml(sRaw)}</span>`;
+}
+
+function createCategoryPill(assetType) {
+  return `<span class="pill pill--muted">${escapeHtml(assetType || '—')}</span>`;
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function createFieldRows(fields) {
+  const escape = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  const fmt = (v) => (v === null || v === undefined || String(v).trim() === '') ? '<span class="kv-empty">—</span>' : escape(v);
+  
+  let rows = '';
+  Object.entries(fields).forEach(([fld, val]) => {
+    rows += `
+      <div class="rhs-kv-row">
+        <div class="rhs-kv-label">${escape(fld)}</div>
+        <div class="rhs-kv-value">${fmt(val)}</div>
+      </div>`;
+  });
+  return `<div class="rhs-kv-list">${rows}</div>`;
+}
+
 
 window.showStationDetails = window.showStationDetails || showStationDetails;
 

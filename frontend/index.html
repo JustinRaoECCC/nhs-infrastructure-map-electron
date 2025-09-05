@@ -197,5 +197,22 @@
     })();
   </script>
 
+  <!-- Full-width mode helpers -->
+  <script>
+    function enableFullWidthMode() {
+      const mainContent = document.getElementById('mainContent');
+      if (mainContent) {
+        mainContent.classList.add('full-width');
+      }
+    }
+
+    function disableFullWidthMode() {
+      const mainContent = document.getElementById('mainContent');
+      if (mainContent) {
+        mainContent.classList.remove('full-width');
+      }
+    }
+  </script>
+
 </body>
 </html>

@@ -19,10 +19,10 @@
   </div>
 
   <div id="overview" class="tab-content active">
-    <!-- “Site Information” = your General Information -->
+    <!-- General Information (locked editing) -->
     <div class="station-section">
       <div style="display:flex;justify-content:space-between;align-items:center;">
-        <h3>Site Information</h3>
+        <h3>General Information</h3>
         <button id="unlockEditing" class="btn btn-ghost">🔒 Unlock Editing</button>
       </div>
       <table>
@@ -51,8 +51,20 @@
       <div class="photo-row" id="photosRow"></div>
     </div>
 
-    <!-- Collapsible Extra Sections -->
-    <div id="extraAccordion" class="accordion"></div>
+    <!-- Dynamic Sections Container -->
+    <div id="dynamicSections"></div>
+
+    <!-- Add Section Button -->
+    <div class="main-actions">
+      <button id="addSectionBtn" class="btn btn-primary">
+        <span>+</span>
+        Add Section
+      </button>
+      <button id="saveChangesBtn" class="btn btn-success" style="display: none;">
+        <span>💾</span>
+        Save Changes
+      </button>
+    </div>
   </div>
 
   <div id="inspection-history" class="tab-content"></div>
@@ -68,5 +80,17 @@
     <img id="lightboxImg" alt="Station photo" />
     <button id="lightboxClose" class="photo-lightbox__close" aria-label="Close">&times;</button>
   </figure>
-  <!-- (Optional caption could go here) -->
+</div>
+
+<!-- Password Modal for General Information Editing -->
+<div id="passwordModal" class="modal" style="display: none;">
+  <div class="modal-content">
+    <h3>Unlock General Information Editing</h3>
+    <p>Enter password to edit General Information fields:</p>
+    <input type="password" id="passwordInput" placeholder="Enter password..." />
+    <div class="modal-actions">
+      <button id="confirmPassword" class="btn btn-primary">Unlock</button>
+      <button id="cancelPassword" class="btn btn-ghost">Cancel</button>
+    </div>
+  </div>
 </div>

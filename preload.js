@@ -41,4 +41,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   getRecentPhotos: (siteName, stationId, limit = 5) =>
     ipcRenderer.invoke('photos:getRecent', { siteName, stationId, limit }),
+
+  // ─── Station Updates ─────────────────────────────────────────────────────
+  updateStationData: (stationData) => ipcRenderer.invoke('stations:update', stationData),
 });

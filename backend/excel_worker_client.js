@@ -64,4 +64,6 @@ module.exports = {
     call('setAssetTypeColorForLocation', assetType, location, color),
   setAssetTypeColorForCompanyLocation: (assetType, company, location, color) =>
     call('setAssetTypeColorForCompanyLocation', assetType, company, location, color),
+  updateStationInLocationFile: (locationName, stationId, updatedRowData) =>
+    call('updateStationInLocationFile', locationName, stationId, updatedRowData),
 };

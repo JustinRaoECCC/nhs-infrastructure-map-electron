@@ -604,6 +604,180 @@ async function setAssetTypeColorForCompanyLocation(assetType, company, location,
   return { success: true };
 }
 
+async function updateStationInLocationFile(locationName, stationId, updatedRowData) {
+  try {
+    await ensureLookupsReady();
+    ensureDir(LOCATIONS_DIR);
+    
+    const locPath = path.join(LOCATIONS_DIR, `${normStr(locationName)}.xlsx`);
+    
+    if (!fs.existsSync(locPath)) {
+      return { success: false, message: `Location file not found: ${locationName}.xlsx` };
+    }
+
+    const _ExcelJS = getExcel();
+    const wb = new _ExcelJS.Workbook();
+    await wb.xlsx.readFile(locPath);
+
+    let updated = false;
+
+    // Search through all worksheets in the location file
+    for (const ws of wb.worksheets) {
+      if (!ws || ws.rowCount < 2) continue;
+
+      // Determine if this is a two-row header sheet
+      const twoRowHeader = (ws.getRow(2)?.actualCellCount || 0) > 0;
+      let stationIdColumnIndex = -1;
+      let headerRowNum = twoRowHeader ? 2 : 1;
+
+      // Find the Station ID column
+      const headerRow = ws.getRow(headerRowNum);
+      const maxCol = ws.actualColumnCount || headerRow.cellCount || 0;
+
+      for (let c = 1; c <= maxCol; c++) {
+        const cellText = takeText(headerRow.getCell(c)).toLowerCase();
+        if (cellText === 'station id' || cellText === 'stationid' || cellText === 'id') {
+          stationIdColumnIndex = c;
+          break;
+        }
+      }
+
+      if (stationIdColumnIndex === -1) continue; // No Station ID column in this sheet
+
+      // Find the row with matching Station ID
+      const lastRow = ws.actualRowCount || ws.rowCount || headerRowNum;
+      for (let r = headerRowNum + 1; r <= lastRow; r++) {
+        const row = ws.getRow(r);
+        const currentStationId = takeText(row.getCell(stationIdColumnIndex));
+        
+        if (String(currentStationId).trim() === String(stationId).trim()) {
+          // Found the station row - update it
+          await updateStationRow(ws, row, r, updatedRowData, twoRowHeader);
+          updated = true;
+          break;
+        }
+      }
+
+      if (updated) break; // Found and updated, no need to check other sheets
+    }
+
+    if (!updated) {
+      return { success: false, message: `Station ${stationId} not found in ${locationName}.xlsx` };
+    }
+
+    // Save the workbook
+    await wb.xlsx.writeFile(locPath);
+    return { success: true, message: `Station ${stationId} updated successfully` };
+
+  } catch (error) {
+    console.error('[updateStationInLocationFile] failed:', error);
+    return { success: false, message: String(error) };
+  }
+}
+
+async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHeader) {
+  // Get current header structure
+  const headerRowNum = twoRowHeader ? 2 : 1;
+  const sectionRowNum = twoRowHeader ? 1 : null;
+  
+  const headerRow = worksheet.getRow(headerRowNum);
+  const sectionRow = sectionRowNum ? worksheet.getRow(sectionRowNum) : null;
+  
+  const maxCol = worksheet.actualColumnCount || headerRow.cellCount || 0;
+  
+  // Build maps of existing headers
+  const existingHeaders = [];
+  const existingSections = [];
+  
+  for (let c = 1; c <= maxCol; c++) {
+    const headerText = takeText(headerRow.getCell(c));
+    const sectionText = sectionRow ? takeText(sectionRow.getCell(c)) : '';
+    existingHeaders.push(headerText);
+    existingSections.push(sectionText);
+  }
+
+  // Create a map of composite keys to column indices for existing columns
+  const columnMap = new Map();
+  existingHeaders.forEach((header, index) => {
+    if (!header) return;
+    const section = existingSections[index] || '';
+    const compositeKey = section ? `${section} – ${header}` : header;
+    columnMap.set(compositeKey.toLowerCase(), index + 1); // Excel columns are 1-indexed
+    columnMap.set(header.toLowerCase(), index + 1); // Also map plain header
+  });
+
+  // Track new columns that need to be added
+  const newColumns = [];
+  
+  // Update existing cells and identify new columns
+  Object.entries(updatedData).forEach(([key, value]) => {
+    const keyLower = key.toLowerCase();
+    let columnIndex = columnMap.get(keyLower);
+    
+    // If not found by exact match, try variations
+    if (!columnIndex) {
+      // Try mapping standard field names
+      const fieldMappings = {
+        'station id': ['stationid', 'id'],
+        'category': ['asset type', 'type'],
+        'site name': ['name', 'station name'],
+        'province': ['location', 'state', 'region'],
+        'latitude': ['lat', 'y'],
+        'longitude': ['long', 'lng', 'lon', 'x'],
+        'status': []
+      };
+      
+      for (const [standardField, alternatives] of Object.entries(fieldMappings)) {
+        if (keyLower === standardField) {
+          columnIndex = columnMap.get(standardField);
+          if (!columnIndex) {
+            for (const alt of alternatives) {
+              columnIndex = columnMap.get(alt);
+              if (columnIndex) break;
+            }
+          }
+          break;
+        }
+      }
+    }
+
+    if (columnIndex) {
+      // Update existing column
+      row.getCell(columnIndex).value = value || '';
+    } else {
+      // This is a new column
+      newColumns.push({ key, value: value || '' });
+    }
+  });
+
+  // Add new columns if any
+  if (newColumns.length > 0) {
+    const startCol = maxCol + 1;
+    
+    newColumns.forEach((newCol, index) => {
+      const colIndex = startCol + index;
+      
+      // Parse section and field from composite key
+      let section = '';
+      let field = newCol.key;
+      
+      if (newCol.key.includes(' – ')) {
+        [section, field] = newCol.key.split(' – ', 2);
+      }
+      
+      // Add headers
+      if (twoRowHeader) {
+        worksheet.getRow(1).getCell(colIndex).value = section;
+        worksheet.getRow(2).getCell(colIndex).value = field;
+      } else {
+        worksheet.getRow(1).getCell(colIndex).value = field;
+      }
+      
+      // Add the value to the current row
+      row.getCell(colIndex).value = newCol.value;
+    });
+  }
+}
 
 // ─── RPC shim ─────────────────────────────────────────────────────────────
 const handlers = {
@@ -621,6 +795,7 @@ const handlers = {
   parseRowsFromSheet,
   writeLocationRows,
   readStationsAggregate,
+  updateStationInLocationFile,
 };
 
 parentPort.on('message', async (msg) => {
