@@ -444,25 +444,103 @@ async function writeLocationRows(location, sheetName, sections, headers, rows) {
   }
   if (!curFlds.some(Boolean)) { curSecs = sections.slice(); curFlds = headers.slice(); }
 
-  // Union existing header pairs with incoming header pairs (preserve existing order)
+  // Normalize incoming pairs first:
+  //  - Coerce {Asset Type|Type|Category} → "General Information" / "Category"
+  //  - Do NOT treat "Structure Type" as Category
+  const normPairs = sections.map((s, i) => {
+    const sec = String(s || '').trim();
+    const fld = String(headers[i] || '').trim();
+    const fl = fld.toLowerCase();
+    if (fl === 'asset type' || fl === 'type' || fl === 'category') {
+      return { sec: 'General Information', fld: 'Category' };
+    }
+    // Leave "Structure Type" untouched wherever it came from
+    return { sec, fld };
+  });
+
+  // Union existing header pairs with normalized incoming pairs (preserve existing order)
   const pairKey = (s, h) => `${s}|||${h}`;
   const have = new Set(curFlds.map((h, i) => pairKey(curSecs[i], h)));
-  sections.forEach((s, i) => {
-    const k = pairKey(s, headers[i]);
+  normPairs.forEach(({sec, fld}) => {
+    const k = pairKey(sec, fld);
     if (!have.has(k)) {
-      curSecs.push(s); curFlds.push(headers[i]); have.add(k);
+      curSecs.push(sec); curFlds.push(fld); have.add(k);
     }
   });
+
+  // ── Reorder "General Information" anchors only (do not move Structure Type) ─
+  // Goal: ensure "Category" appears under "General Information" between
+  // "Station ID" and "Station Name"/"Site Name" in all newly written sheets.
+  (function enforceGIOrder() {
+    const GI = 'General Information';
+    const lc = (s) => String(s || '').trim().toLowerCase();
+    const isId   = (f) => ['station id','stationid','id'].includes(lc(f));
+    // Category anchor must be *exactly* Category (or normalized to it), not Structure Type
+    const isCat  = (f) => ['category'].includes(lc(f));
+    const isName = (f) => ['site name','station name','name'].includes(lc(f));
+
+    // Coerce GI section on key fields and build pair list
+    const pairs = curFlds.map((fld, i) => {
+      let sec = curSecs[i];
+      if (isId(fld) || isCat(fld) || isName(fld)) sec = GI;
+      return { sec, fld, i };
+    });
+
+    // Desired GI ordering: [ID, Category, Name], preserving original labels
+    const idIdx   = pairs.findIndex(p => isId(p.fld));
+    const catIdx  = pairs.findIndex(p => isCat(p.fld));
+    const nameIdx = pairs.findIndex(p => isName(p.fld));
+
+    // If none of the GI anchors exist, nothing to do
+    if (idIdx === -1 && catIdx === -1 && nameIdx === -1) return;
+
+    const giOthers = [];
+    const nonGI    = [];
+    pairs.forEach((p, idx) => {
+      if (idx === idIdx || idx === catIdx || idx === nameIdx) return;
+      if (lc(p.sec) === lc(GI)) giOthers.push(p);
+      else nonGI.push(p);
+    });
+
+    const ordered = [];
+    if (idIdx   !== -1) ordered.push({ sec: GI, fld: pairs[idIdx].fld });
+    if (catIdx  !== -1) ordered.push({ sec: GI, fld: pairs[catIdx].fld });
+    if (nameIdx !== -1) ordered.push({ sec: GI, fld: pairs[nameIdx].fld });
+    // keep any other GI fields in original relative order
+    ordered.push(...giOthers);
+    // then all non-GI fields in original relative order
+    ordered.push(...nonGI);
+
+    curSecs = ordered.map(p => p.sec);
+    curFlds = ordered.map(p => p.fld);
+  })();
+
   // Rewrite header rows to final union
   ws.getRow(1).values = [ , ...curSecs ];
   ws.getRow(2).values = [ , ...curFlds ];
 
   // Append rows mapping object keys -> [composite or plain] header positions
+  // Also feed Category from Asset Type/Type if the source used those names
   const compositeKeys = curFlds.map((h, i) => (curSecs[i] ? `${curSecs[i]} – ${h}` : h));
   for (const obj of rows) {
+    // Lightweight normalization per row (do not pull from "Structure Type")
+    const rowObj = { ...obj };
+    const catPlain = rowObj['Category'] ?? rowObj['category'];
+    const catGI    = rowObj['General Information – Category'];
+    const at1      = rowObj['Asset Type'] ?? rowObj['asset type'];
+    const atGI     = rowObj['General Information – Asset Type'];
+    const type1    = rowObj['Type'] ?? rowObj['type'];
+    const typeGI   = rowObj['General Information – Type'];
+    if (!catPlain && !catGI) {
+      const v = atGI ?? at1 ?? typeGI ?? type1;
+      if (v !== undefined) {
+        rowObj['Category'] = v;
+        rowObj['General Information – Category'] = v;
+      }
+    }
     const arr = compositeKeys.map((k, i) => {
       const plain = curFlds[i];
-      return (obj?.[k] ?? obj?.[plain] ?? '');
+      return (rowObj?.[k] ?? rowObj?.[plain] ?? '');
     });
     ws.addRow(arr);
   }
@@ -563,7 +641,7 @@ async function readStationsAggregate() {
         totalRows++;
         const st = {
           station_id: pickOne(r, ['Station ID','StationID','ID']),
-          asset_type: pickOne(r, ['Category','Asset Type','Type','Structure Type']),
+          asset_type: pickOne(r, ['Category','Asset Type','Type']), // do NOT conflate "Structure Type"
           name:       pickOne(r, ['Site Name','Name','Station Name']),
           province:   pickOne(r, ['Province','Location','State','Region','General Information - Province','General Information – Province']),
           lat:        pickOne(r, ['Latitude','Lat','Y']),
@@ -716,16 +794,19 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
     
     // If not found by exact match, try variations
     if (!columnIndex) {
+
       // Try mapping standard field names
       const fieldMappings = {
-        'station id': ['stationid', 'id'],
-        'category': ['asset type', 'type'],
-        'site name': ['name', 'station name'],
-        'province': ['location', 'state', 'region'],
-        'latitude': ['lat', 'y'],
-        'longitude': ['long', 'lng', 'lon', 'x'],
-        'status': []
-      };
+            'station id': ['stationid', 'id'],
+            'category': ['asset type', 'type'],
+            'asset_type': ['category', 'asset type', 'type'], // normalize to Category
+            'site name': ['name', 'station name'],
+            'station name': ['site name', 'name'],
+            'province': ['location', 'state', 'region'],
+            'latitude': ['lat', 'y'],
+            'longitude': ['long', 'lng', 'lon', 'x'],
+            'status': []
+          };
       
       for (const [standardField, alternatives] of Object.entries(fieldMappings)) {
         if (keyLower === standardField) {
@@ -760,6 +841,13 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
       // Parse section and field from composite key
       let section = '';
       let field = newCol.key;
+
+      // Normalize GI section for common fields (but NOT "Structure Type")
+      const lcKey = String(field).trim().toLowerCase();
+      if (['category','asset_type','station id','stationid','id','site name','station name','name'].includes(lcKey)) {
+        section = 'General Information';
+        if (lcKey === 'asset_type') field = 'Category';
+      }
       
       if (newCol.key.includes(' – ')) {
         [section, field] = newCol.key.split(' – ', 2);
