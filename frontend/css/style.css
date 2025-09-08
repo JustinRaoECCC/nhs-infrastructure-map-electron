@@ -1533,3 +1533,228 @@ html.modal-open, body.modal-open { overflow: hidden; }
     margin: 16px;
   }
 }
+
+/* ==========================================================================
+   Add-Infra polish (CSS-only, filters untouched)
+   Targets:
+   - Add Infra wizard “Select data” table + toolbar
+   - Small create panels opened by “+” (".panel-form")
+   ========================================================================== */
+
+/* ---------------------------------------------
+   Small create panels (Create Company/Location/Assets)
+   --------------------------------------------- */
+.panel-form {
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  width: min(820px, 92vw);
+  margin: 14px auto;
+  padding: 16px 18px;
+}
+.panel-form h2 {
+  font-size: 18px;
+  margin: 0 0 10px;
+  letter-spacing: .01em;
+}
+.panel-form .form-row label { color: #374151; }
+.panel-form .wizard-footer {
+  margin-top: 8px;
+  border-top: 1px solid #e5e7eb;
+  padding-top: 12px;
+}
+
+/* Dark-scheme parity for panels */
+@media (prefers-color-scheme: dark) {
+  .panel-form {
+    background: #0f172a;     /* slate-900 */
+    border-color: #1f2937;   /* gray-800 */
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.02);
+  }
+  .panel-form h2 { color: #e5e7eb; }
+  .panel-form .form-row label { color: #cbd5e1; }
+  .panel-form .wizard-footer { border-top-color: #1f2937; }
+}
+
+/* ---------------------------------------------
+   Add Infra wizard — “Select data” area
+   --------------------------------------------- */
+#addInfraPage .table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(16,24,40,.06);
+  margin-bottom: 8px;
+}
+
+#addInfraPage .badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #eef2ff; /* indigo-100 */
+  color: #3730a3;      /* indigo-800 */
+  font-weight: 700;
+  letter-spacing: .01em;
+  border: 1px solid #e0e7ff;
+}
+
+/* Scroll container + table base */
+#addInfraPage .table-scroll {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 4px 10px rgba(16,24,40,.05);
+}
+#addInfraPage .data-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 14px;
+}
+
+/* Sticky header + grouped header row (first row = sections) */
+#addInfraPage .data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  font-weight: 700;
+  letter-spacing: .01em;
+  padding: 10px 12px;
+  white-space: nowrap;
+  background: linear-gradient(to bottom, rgba(248,250,252,1), rgba(248,250,252,.92));
+  border-bottom: 1px solid #e5e7eb;
+  backdrop-filter: saturate(140%) blur(4px);
+}
+#addInfraPage .data-table thead tr:first-child th {
+  font-size: 12px;
+  color: #64748b; /* slate-500 */
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+#addInfraPage .data-table thead th:first-child { border-top-left-radius: 12px; }
+#addInfraPage .data-table thead th:last-child  { border-top-right-radius: 12px; }
+
+/* Leading checkbox column */
+#addInfraPage .data-table thead th:first-child,
+#addInfraPage .data-table tbody td:first-child {
+  width: 36px;
+  text-align: center;
+}
+
+/* Body cells, zebra, hover accent */
+#addInfraPage .data-table tbody td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  color: #111827;
+  vertical-align: middle;
+}
+#addInfraPage .data-table tbody tr:nth-child(even) td { background: #fafcff; }
+#addInfraPage .data-table tbody tr:hover td { background: #eef6ff; }
+#addInfraPage .data-table tbody tr:hover td:first-child {
+  box-shadow: inset 3px 0 0 0 #3b82f6; /* blue-500 accent on hover */
+}
+
+/* Row checkboxes */
+#addInfraPage .data-table .rowchk2[type="checkbox"],
+#addInfraPage #chkAll2[type="checkbox"] {
+  accent-color: var(--primary-600, #2563eb);
+  width: 16px; height: 16px; cursor: pointer;
+}
+
+/* Bottom radius on last row */
+#addInfraPage .data-table tbody tr:last-child td:first-child { border-bottom-left-radius: 12px; }
+#addInfraPage .data-table tbody tr:last-child td:last-child  { border-bottom-right-radius: 12px; }
+
+/* Dark-scheme parity for the wizard table */
+@media (prefers-color-scheme: dark) {
+  #addInfraPage .table-toolbar {
+    background: #0f172a;
+    border-color: #1f2937;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.02);
+  }
+  #addInfraPage .table-scroll {
+    background: #0f172a;
+    border-color: #1f2937;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.02);
+  }
+  #addInfraPage .data-table thead th {
+    background: linear-gradient(to bottom, rgba(15,23,42,1), rgba(15,23,42,.92));
+    border-bottom-color: #1f2937;
+    color: #e5e7eb;
+  }
+  #addInfraPage .data-table tbody td {
+    border-bottom-color: #1f2937;
+    color: #e5e7eb;
+  }
+  #addInfraPage .data-table tbody tr:nth-child(even) td { background: #0b1326; }
+  #addInfraPage .data-table tbody tr:hover td { background: #0c1a33; }
+  #addInfraPage .badge {
+    background: rgba(99,102,241,.18);
+    border-color: rgba(99,102,241,.28);
+    color: #e0e7ff;
+  }
+}
+
+/* ---------------------------------------------
+   Filepicker focus/hover (wizard step 2 & panels)
+   --------------------------------------------- */
+.filepicker:hover {
+  border-color: #cbd5e1;
+  background: #f9fafb;
+}
+.filepicker:focus-within {
+  outline: none;
+  border-color: var(--primary-600, #2563eb);
+  box-shadow: 0 0 0 3px rgba(37,99,235,.18);
+}
+
+/* Reduced-motion friendliness */
+@media (prefers-reduced-motion: reduce) {
+  #addInfraPage .data-table tbody tr { transition: none; }
+}
+
+/* Filter tree — make the vertical guide start under the disclosure arrow */
+#filterTree details {               /* neutralize the old always-on border */
+  position: relative;
+  border-left: 0 !important;        /* overrides earlier rule */
+  padding-left: .5rem;              /* keep existing content indent */
+  margin-left: .25rem;
+}
+
+/* Height of a summary row (caret line starts below this). 
+   If it sits a bit high/low, tweak 32–38px. */
+#filterTree details.ft-company,
+#filterTree details.ft-location { --ft-summary-h: 36px; }
+
+/* Draw the guide only under the arrow, from below the summary row downwards */
+#filterTree details.ft-company::before,
+#filterTree details.ft-location::before {
+  content: "";
+  position: absolute;
+  left: 0;                          /* directly under the caret */
+  top: var(--ft-summary-h);         /* start below the summary row */
+  bottom: 6px;                      /* small breathing room at the bottom */
+  width: 2px;
+  background: rgba(148,163,184,.18);
+  pointer-events: none;
+}
+
+/* Keep your deeper asset indent, but the guide is now drawn by the rule above */
+#filterTree .ft-location > .ft-children {
+  margin-left: 3rem;                /* your preferred depth */
+  padding-left: .75rem;             /* space from the guide to the text */
+  border-left: 0;                   /* no extra inner line here */
+}
+
+#filterTree .ft-location > .ft-children .ft-row.ft-asset {
+  margin-left: .25rem;              /* nudge text clear of the guide */
+}
