@@ -239,6 +239,12 @@
   function onTreeChange(e) {
     const t = e.target;
     if (!(t instanceof HTMLInputElement) || t.type !== 'checkbox') return;
+    console.log('[filters] checkbox changed:', {
+      classList: Array.from(t.classList),
+      checked: t.checked,
+      value: t.value,
+      dataset: t.dataset
+    });
 
     if (t.classList.contains('company')) {
       const details = t.closest('details.ft-company');

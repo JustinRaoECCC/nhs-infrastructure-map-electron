@@ -155,6 +155,7 @@ function initMap() {
 }
 
 function getActiveFilters() {
+  console.log('[filters] getActiveFilters called');
   const norm = s => String(s ?? '').trim().toLowerCase();
   const locCbs = Array.from(document.querySelectorAll('.filter-checkbox.location'));
   const atCbs  = Array.from(document.querySelectorAll('.filter-checkbox.asset-type'));
@@ -179,12 +180,38 @@ function getActiveFilters() {
   const allLocationsSelected  = locCbs.length > 0 && locations.size === locCbs.length;
   const allAssetTypesSelected = atCbs.length  > 0 && assetTypes.size === atCbs.length;
 
+
+  console.log('[DEBUG] Filter state:', {
+    locations: Array.from(locations),
+    assetTypes: Array.from(assetTypes),
+    totalLocs: locCbs.length,
+    totalAts: atCbs.length
+  });
+
   return {
     locations, assetTypes,
     allLocationsSelected, allAssetTypesSelected,
     totalLocs: locCbs.length, totalAts: atCbs.length,
     _norm: norm
   };
+}
+
+function getActiveLocationAssetCombos() {
+  const atCbs = Array.from(document.querySelectorAll('.filter-checkbox.asset-type'));
+  const combos = new Set();
+  const _norm = (s) => String(s ?? '').trim().toLowerCase();
+  
+  atCbs.forEach(cb => {
+    if (cb.checked) {
+      const assetType = _norm(cb.value);
+      const location = cb.dataset.location ? _norm(cb.dataset.location) : '';
+      if (assetType && location) {
+        combos.add(`${location}|${assetType}`);
+      }
+    }
+  });
+  
+  return { combos, _norm, totalCombos: atCbs.length };
 }
 
 // Check if filters are actually restricting anything
@@ -491,34 +518,41 @@ async function refreshMarkers() {
     // Only apply filters if they are actually restricting something
     if (areFiltersActuallyRestricting()) {
       const { locations, assetTypes, totalLocs, totalAts, _norm } = getActiveFilters();
-            
-      filtered = allValid.filter(stn => {
-        // Location filter
-        let locOk = true;
-        if (locations.size > 0) {
-          const locCandidates = [
-            _norm(stn.province),
-            _norm(stn.location),
-            _norm(stn.location_file)
-          ].filter(Boolean);
-          locOk = locCandidates.some(v => locations.has(v));
-        } else if (totalLocs > 0) {
-          // Nothing selected but location filters exist => exclude all by location
-          locOk = false;
-        }
-        
-        // Asset type filter
-        let atOk = true;
-        if (assetTypes.size > 0) {
-          atOk = assetTypes.has(_norm(stn.asset_type));
-        } else if (totalAts > 0) {
-          // Nothing selected but asset-type filters exist => exclude all by asset type
-          atOk = false;
-        }
-        
-        return locOk && atOk;
-      });
+
+    filtered = allValid.filter(stn => {
+      const { combos, _norm, totalCombos } = getActiveLocationAssetCombos();
       
+      // If no asset type filters exist, fall back to location-only filtering
+      if (totalCombos === 0) {
+        const { locations, totalLocs } = getActiveFilters();
+        if (totalLocs === 0) return true; // No filters = show all
+        if (locations.size === 0) return false; // No locations selected = show nothing
+        
+        const stnLocCandidates = [
+          _norm(stn.province),
+          _norm(stn.location), 
+          _norm(stn.location_file)
+        ].filter(Boolean);
+        return stnLocCandidates.some(loc => locations.has(loc));
+      }
+      
+      // Asset type filters exist - check for exact location+assetType match
+      if (combos.size === 0) return false; // No combos selected = show nothing
+      
+      const stnAssetType = _norm(stn.asset_type);
+      const stnLocCandidates = [
+        _norm(stn.province),
+        _norm(stn.location),
+        _norm(stn.location_file)
+      ].filter(Boolean);
+      
+      // Check if any station location + asset type combination is allowed
+      return stnLocCandidates.some(loc => {
+        const combo = `${loc}|${stnAssetType}`;
+        return combos.has(combo);
+      });
+    });
+
     } else {
     }
 
