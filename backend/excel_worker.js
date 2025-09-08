@@ -867,6 +867,276 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
   }
 }
 
+// Read all sheets from a location workbook
+async function readLocationWorkbook(locationName) {
+  try {
+    const _ExcelJS = getExcel();
+    const locPath = path.join(LOCATIONS_DIR, `${normStr(locationName)}.xlsx`);
+    
+    if (!fs.existsSync(locPath)) {
+      return { success: false, message: `Location file not found: ${locationName}.xlsx` };
+    }
+    
+    const wb = new _ExcelJS.Workbook();
+    await wb.xlsx.readFile(locPath);
+    
+    const sheets = wb.worksheets.map(ws => ws.name).filter(Boolean);
+    
+    return { success: true, sheets, workbook: wb };
+  } catch (error) {
+    console.error('[readLocationWorkbook] Error:', error);
+    return { success: false, message: String(error) };
+  }
+}
+
+// Read data from a specific sheet in a location workbook
+async function readSheetData(locationName, sheetName) {
+  try {
+    const _ExcelJS = getExcel();
+    const locPath = path.join(LOCATIONS_DIR, `${normStr(locationName)}.xlsx`);
+    
+    if (!fs.existsSync(locPath)) {
+      return { success: false, message: `Location file not found: ${locationName}.xlsx` };
+    }
+    
+    const wb = new _ExcelJS.Workbook();
+    await wb.xlsx.readFile(locPath);
+    
+    const ws = getSheet(wb, sheetName);
+    if (!ws) {
+      return { success: false, message: `Sheet not found: ${sheetName}` };
+    }
+    
+    // Check if it's a two-row header sheet
+    const twoRowHeader = (ws.getRow(2)?.actualCellCount || 0) > 0;
+    
+    let rows, sections, fields;
+    if (twoRowHeader) {
+      const result = sheetToObjectsTwoRow(ws);
+      rows = result.rows;
+      sections = result.sections;
+      fields = result.fields;
+    } else {
+      rows = sheetToObjectsOneRow(ws);
+      sections = [];
+      fields = [];
+    }
+    
+    return { success: true, rows, sections, fields };
+  } catch (error) {
+    console.error('[readSheetData] Error:', error);
+    return { success: false, message: String(error) };
+  }
+}
+
+// Update all stations of a specific asset type with new schema
+async function updateAssetTypeSchema(assetType, schema, excludeStationId) {
+  try {
+    await ensureLookupsReady();
+    ensureDir(LOCATIONS_DIR);
+    
+    const files = listExcelFiles(LOCATIONS_DIR);
+    const _ExcelJS = getExcel();
+    
+    let totalUpdated = 0;
+    const results = [];
+    
+    for (const filePath of files) {
+      const locationName = path.basename(filePath, '.xlsx');
+      const wb = new _ExcelJS.Workbook();
+      
+      try {
+        await wb.xlsx.readFile(filePath);
+      } catch (e) {
+        console.error(`[updateAssetTypeSchema] Failed to read ${filePath}:`, e);
+        continue;
+      }
+      
+      let workbookModified = false;
+      
+      for (const ws of wb.worksheets) {
+        if (!ws || ws.rowCount < 2) continue;
+        
+        // Check if this sheet contains the asset type we're looking for
+        // Sheet names are like "Cableway BC" - we need to match the asset type part
+        const sheetName = ws.name;
+        const sheetParts = sheetName.split(' ');
+        if (sheetParts.length < 2) continue;
+        
+        // Extract asset type from sheet name (everything except last word which is location)
+        const sheetAssetType = sheetParts.slice(0, -1).join(' ');
+        
+        // Also check the actual data for Category field
+        const twoRowHeader = (ws.getRow(2)?.actualCellCount || 0) > 0;
+        const headerRowNum = twoRowHeader ? 2 : 1;
+        const dataStartRow = headerRowNum + 1;
+        
+        // Find Category/Asset Type column
+        let categoryColIndex = -1;
+        const headerRow = ws.getRow(headerRowNum);
+        const maxCol = ws.actualColumnCount || headerRow.cellCount || 0;
+        
+        for (let c = 1; c <= maxCol; c++) {
+          const cellText = takeText(headerRow.getCell(c)).toLowerCase();
+          if (cellText === 'category' || cellText === 'asset type' || cellText === 'type') {
+            categoryColIndex = c;
+            break;
+          }
+        }
+        
+        // Process rows if this sheet might contain our asset type
+        const lastRow = ws.actualRowCount || ws.rowCount || headerRowNum;
+        
+        for (let r = dataStartRow; r <= lastRow; r++) {
+          const row = ws.getRow(r);
+          
+          // Check if this row is for our asset type
+          let rowAssetType = '';
+          if (categoryColIndex > 0) {
+            rowAssetType = takeText(row.getCell(categoryColIndex));
+          }
+          
+          // Also check by sheet name
+          const matchesByCategory = rowAssetType.toLowerCase() === assetType.toLowerCase();
+          const matchesBySheetName = sheetAssetType.toLowerCase() === assetType.toLowerCase();
+          
+          if (!matchesByCategory && !matchesBySheetName) continue;
+          
+          // Get Station ID to check if we should skip this one
+          let stationId = '';
+          for (let c = 1; c <= maxCol; c++) {
+            const cellText = takeText(headerRow.getCell(c)).toLowerCase();
+            if (cellText === 'station id' || cellText === 'stationid' || cellText === 'id') {
+              stationId = takeText(row.getCell(c));
+              break;
+            }
+          }
+          
+          // Skip the station that triggered this update
+          if (String(stationId) === String(excludeStationId)) continue;
+          
+          // Apply schema update to this row
+          await applySchemaToRow(ws, row, r, schema, twoRowHeader);
+          workbookModified = true;
+          totalUpdated++;
+        }
+      }
+      
+      if (workbookModified) {
+        await wb.xlsx.writeFile(filePath);
+        results.push({ location: locationName, updated: true });
+      }
+    }
+    
+    return { 
+      success: true, 
+      totalUpdated, 
+      results,
+      message: `Updated ${totalUpdated} stations across ${results.length} locations` 
+    };
+    
+  } catch (error) {
+    console.error('[updateAssetTypeSchema] Fatal error:', error);
+    return { success: false, message: String(error) };
+  }
+}
+
+// Helper to apply schema changes to a row in Excel
+async function applySchemaToRow(worksheet, row, rowNumber, schema, twoRowHeader) {
+  const headerRowNum = twoRowHeader ? 2 : 1;
+  const sectionRowNum = twoRowHeader ? 1 : null;
+  
+  const headerRow = worksheet.getRow(headerRowNum);
+  const sectionRow = sectionRowNum ? worksheet.getRow(sectionRowNum) : null;
+  
+  const maxCol = worksheet.actualColumnCount || headerRow.cellCount || 0;
+  
+  // Build current column structure
+  const existingColumns = new Map(); // Map of "section – field" or "field" to column index
+  const giColumns = new Set(); // Track General Information columns to preserve them
+  
+  for (let c = 1; c <= maxCol; c++) {
+    const header = takeText(headerRow.getCell(c));
+    const section = sectionRow ? takeText(sectionRow.getCell(c)) : '';
+    
+    if (!header) continue;
+    
+    const key = section ? `${section} – ${header}` : header;
+    existingColumns.set(key, c);
+    
+    // Track General Information columns
+    if (section.toLowerCase() === 'general information') {
+      giColumns.add(c);
+    }
+  }
+  
+  // Preserve General Information and other standard fields
+  const preservedData = new Map();
+  for (let c = 1; c <= maxCol; c++) {
+    if (giColumns.has(c)) {
+      // Preserve General Information fields
+      preservedData.set(c, row.getCell(c).value);
+    } else {
+      // Check if it's a standard field we should preserve
+      const header = takeText(headerRow.getCell(c)).toLowerCase();
+      if (['station id', 'stationid', 'id', 'category', 'asset type', 'type',
+           'site name', 'station name', 'name', 'province', 'location',
+           'latitude', 'lat', 'longitude', 'lon', 'long', 'status'].includes(header)) {
+        preservedData.set(c, row.getCell(c).value);
+      }
+    }
+  }
+  
+  // Clear non-preserved cells in the row
+  for (let c = 1; c <= maxCol; c++) {
+    if (!preservedData.has(c)) {
+      row.getCell(c).value = '';
+    }
+  }
+  
+  // Apply new schema
+  let nextCol = maxCol + 1;
+  
+  for (let i = 0; i < schema.sections.length; i++) {
+    const section = schema.sections[i];
+    const field = schema.fields[i];
+    const compositeKey = section ? `${section} – ${field}` : field;
+    
+    // Skip General Information fields
+    if (section.toLowerCase() === 'general information') continue;
+    
+    let targetCol = existingColumns.get(compositeKey);
+    
+    if (!targetCol) {
+      // Need to add a new column
+      targetCol = nextCol++;
+      
+      // Add headers for the new column
+      if (twoRowHeader) {
+        worksheet.getRow(1).getCell(targetCol).value = section;
+        worksheet.getRow(2).getCell(targetCol).value = field;
+      } else {
+        worksheet.getRow(1).getCell(targetCol).value = field;
+      }
+    }
+    
+    // Preserve existing value if any (look for it in original data)
+    // This handles the case where a field moved to a different section
+    let value = '';
+    for (const [key, colIdx] of existingColumns.entries()) {
+      if (key.endsWith(` – ${field}`) || key === field) {
+        const existingValue = row.getCell(colIdx).value;
+        if (existingValue) {
+          value = existingValue;
+          break;
+        }
+      }
+    }
+    
+    row.getCell(targetCol).value = value;
+  }
+}
+
 // ─── RPC shim ─────────────────────────────────────────────────────────────
 const handlers = {
   ping: async () => 'pong',
@@ -884,6 +1154,9 @@ const handlers = {
   writeLocationRows,
   readStationsAggregate,
   updateStationInLocationFile,
+  readLocationWorkbook,
+  readSheetData,
+  updateAssetTypeSchema
 };
 
 parentPort.on('message', async (msg) => {

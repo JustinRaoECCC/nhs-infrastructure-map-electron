@@ -153,3 +153,27 @@ ipcMain.handle('photos:getRecent', async (_evt, { siteName, stationId, limit }) 
 );
 
 ipcMain.handle('stations:update', async (_evt, stationData) => backend.updateStationData(stationData));
+
+// Schema synchronization handlers
+ipcMain.handle('schema:sync', async (_evt, assetType, schema, excludeStationId) => {
+  const schemaSync = require('./backend/schema_sync');
+  return schemaSync.syncAssetTypeSchema(assetType, schema, excludeStationId);
+});
+
+ipcMain.handle('schema:getExisting', async (_evt, assetType) => {
+  const schemaSync = require('./backend/schema_sync');
+  return schemaSync.getExistingSchemaForAssetType(assetType);
+});
+
+// Add handler for Excel worker's new functions
+ipcMain.handle('excel:readLocationWorkbook', async (_evt, locationName) =>
+  excelClient.readLocationWorkbook(locationName)
+);
+
+ipcMain.handle('excel:readSheetData', async (_evt, locationName, sheetName) =>
+  excelClient.readSheetData(locationName, sheetName)
+);
+
+ipcMain.handle('excel:updateAssetTypeSchema', async (_evt, assetType, schema, excludeStationId) =>
+  excelClient.updateAssetTypeSchema(assetType, schema, excludeStationId)
+);

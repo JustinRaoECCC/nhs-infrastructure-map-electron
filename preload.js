@@ -44,4 +44,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ─── Station Updates ─────────────────────────────────────────────────────
   updateStationData: (stationData) => ipcRenderer.invoke('stations:update', stationData),
+
+  // Schema synchronization
+  syncAssetTypeSchema: (assetType, schema, excludeStationId) => 
+    ipcRenderer.invoke('schema:sync', assetType, schema, excludeStationId),
+    
+  getExistingSchema: (assetType) => 
+    ipcRenderer.invoke('schema:getExisting', assetType),
+
+  // Excel worker extensions
+  readLocationWorkbook: (locationName) =>
+    ipcRenderer.invoke('excel:readLocationWorkbook', locationName),
+    
+  readSheetData: (locationName, sheetName) =>
+    ipcRenderer.invoke('excel:readSheetData', locationName, sheetName),
+    
+  updateAssetTypeSchema: (assetType, schema, excludeStationId) =>
+    ipcRenderer.invoke('excel:updateAssetTypeSchema', assetType, schema, excludeStationId),
+
 });

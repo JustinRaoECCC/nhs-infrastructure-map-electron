@@ -1,19 +1,10 @@
-// frontend/js/add_infra.js
-// New LHS-driven flows (no legacy wizard):
-// - ＋ New Company → simple form panel
-// - Company [+]   → Create Project/Location (via window.openCreateLocationForm)
-// - Location [+]  → Create Assets (Excel upload → select sheet → select rows → import)
-// Also preserves Map/List/Docs/Settings navigation and safe fallbacks.
-
+// frontend/js/add_infra.js - Updated with schema conformance on import
 (function () {
   'use strict';
 
-  // ────────────────────────────────────────────────────────────────────────────
   // Utilities
-  // ────────────────────────────────────────────────────────────────────────────
   const debounce = (fn, ms = 150) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 
-  // Safe wrappers: honor global helpers if present, else no-op / gentle fallback
   function safeEnableFullWidthMode() {
     try {
       if (typeof window.enableFullWidthMode === 'function') return window.enableFullWidthMode();
@@ -27,9 +18,7 @@
     } catch (_) {}
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Nav helpers: set active tab & show the requested view
-  // ────────────────────────────────────────────────────────────────────────────
+  // Nav helpers
   function setActiveNav(activeId) {
     try {
       document.querySelectorAll('.left-panel .nav-item').forEach(li => li.classList.remove('active'));
@@ -52,16 +41,13 @@
     if (wizardWrap) wizardWrap.style.display = wizard ? 'block' : 'none';
     if (settingsEl) settingsEl.style.display = settings ? 'block' : 'none';
 
-    // Hide station page when switching to any main view
     if (stationEl && (map || list || docs || wizard || settings)) stationEl.style.display = 'none';
   }
 
-  // Public-ish view switches used by nav bindings
   async function showMapView() {
     setActiveNav('navMap');
     showViews({ map: true, list: false, docs: false, wizard: false, settings: false });
     safeDisableFullWidthMode();
-    // Nudge Leaflet
     if (window.map && typeof window.map.invalidateSize === 'function') {
       setTimeout(() => { try { window.map.invalidateSize(); } catch(_) {} }, 50);
     }
@@ -85,7 +71,6 @@
         if (window.initListView) requestAnimationFrame(() => window.initListView());
       } catch (e) {
         console.error('[showListView] failed to load list.html:', e);
-        // Minimal inline fallback
         listEl.innerHTML = `
           <div id="listPage" class="list-view">
             <div class="list-toolbar" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem;">
@@ -153,10 +138,6 @@
     if (!document.getElementById('dashboardContentContainer')) showMapView();
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // New LHS-driven creation flows
-  // ────────────────────────────────────────────────────────────────────────────
-
   // Panel host helpers
   function showPanel(html) {
     const container = document.getElementById('addInfraContainer');
@@ -167,12 +148,12 @@
     setActiveNav('navNewCompany');
     return container;
   }
+  
   function closePanel() {
     const container = document.getElementById('addInfraContainer');
     if (container) container.innerHTML = '';
     showViews({ map:true, list:false, docs:false, wizard:false, settings:false });
     safeDisableFullWidthMode();
-    // Nudge the map to repaint properly after layout shift
     if (window.map && typeof window.map.invalidateSize === 'function') {
       setTimeout(() => { try { window.map.invalidateSize(); } catch(_) {} }, 50);
     }
@@ -219,7 +200,7 @@
     });
   }
 
-  // Create Project/Location (company context fixed)
+  // Create Project/Location
   async function openCreateLocationForm(company) {
     const view = `
       <div class="panel-form">
@@ -256,7 +237,7 @@
     });
   }
 
-  // Create Assets under a given company+location
+  // Create Assets - Updated with schema conformance
   async function openCreateAssetsWizard(company, location) {
     const view = `
       <div class="panel-form" id="assetsPanel">
@@ -318,7 +299,6 @@
 
     const $ = sel => host.querySelector(sel);
 
-    // Local state
     const state = {
       excelB64: null,
       sheets: [],
@@ -326,13 +306,15 @@
       headers: [],
       sections: [],
       rows: [],
-      selectedIdx: new Set(),
+      selectedIdx: new Set()
     };
 
     const thead = $('#previewTable2 thead');
     const tbody = $('#previewTable2 tbody');
 
-    function updateBadge() { $('#rowCount2').textContent = `${state.selectedIdx.size} selected`; }
+    function updateBadge() { 
+      $('#rowCount2').textContent = `${state.selectedIdx.size} selected`; 
+    }
 
     function fileToBase64(file) {
       return new Promise((resolve, reject) => {
@@ -362,23 +344,32 @@
 
     function renderPreview() {
       if (!thead || !tbody) return;
-      thead.innerHTML = ''; tbody.innerHTML = '';
+      thead.innerHTML = ''; 
+      tbody.innerHTML = '';
+      
       if (!state.rows.length) {
         tbody.innerHTML = `<tr><td colspan="99" style="opacity:.7;padding:.75em;">Select an Excel file and sheet first.</td></tr>`;
-        updateBadge(); return;
+        updateBadge(); 
+        return;
       }
 
       // Build grouped headers from sections/headers
       const trSec = document.createElement('tr');
-      const thLead = document.createElement('th'); thLead.style.width = '36px';
-      thLead.innerHTML = '<input id="chkAll2" type="checkbox"/>'; trSec.appendChild(thLead);
+      const thLead = document.createElement('th'); 
+      thLead.style.width = '36px';
+      thLead.innerHTML = '<input id="chkAll2" type="checkbox"/>'; 
+      trSec.appendChild(thLead);
+      
       let i = 0;
       while (i < state.headers.length) {
         const sec = state.sections[i] || '';
         let span = 1;
         while (i + span < state.headers.length && (state.sections[i + span] || '') === sec) span++;
-        const th = document.createElement('th'); th.colSpan = span; th.textContent = sec || '';
-        trSec.appendChild(th); i += span;
+        const th = document.createElement('th'); 
+        th.colSpan = span; 
+        th.textContent = sec || '';
+        trSec.appendChild(th); 
+        i += span;
       }
       thead.appendChild(trSec);
 
@@ -396,17 +387,23 @@
       }
 
       tbody.innerHTML = '';
-      state.selectedIdx = new Set(state.rows.map((_, i) => i)); // default all
+      state.selectedIdx = new Set(state.rows.map((_, i) => i)); // default all selected
+      
       state.rows.forEach((r, i) => {
         const tr = document.createElement('tr');
         const c0 = document.createElement('td');
         const cb = document.createElement('input');
-        cb.type = 'checkbox'; cb.className = 'rowchk2'; cb.checked = true;
+        cb.type = 'checkbox'; 
+        cb.className = 'rowchk2'; 
+        cb.checked = true;
         cb.addEventListener('change', () => {
-          if (cb.checked) state.selectedIdx.add(i); else state.selectedIdx.delete(i);
+          if (cb.checked) state.selectedIdx.add(i); 
+          else state.selectedIdx.delete(i);
           updateBadge();
         });
-        c0.appendChild(cb); tr.appendChild(c0);
+        c0.appendChild(cb); 
+        tr.appendChild(c0);
+        
         state.headers.forEach((h, idx) => {
           const sec = state.sections[idx] || '';
           const key = sec ? `${sec} – ${h}` : h;
@@ -420,29 +417,39 @@
     }
 
     async function buildPreview() {
-      if (!state.excelB64 || !state.selectedSheet) { state.rows = []; renderPreview(); return; }
+      if (!state.excelB64 || !state.selectedSheet) { 
+        state.rows = []; 
+        renderPreview(); 
+        return; 
+      }
       try {
         const res = await window.electronAPI.excelParseRowsFromSheet(state.excelB64, state.selectedSheet);
         if (!res || res.success === false) {
           console.error('[assets] parseRowsFromSheet failed:', res?.message);
-          state.rows = []; renderPreview(); return;
+          state.rows = []; 
+          renderPreview(); 
+          return;
         }
-        state.rows     = res.rows || [];
-        state.headers  = res.headers || (state.rows.length ? Object.keys(state.rows[0]) : []);
-        state.sections = res.sections || state.headers.map(()=> '');
+        state.rows = res.rows || [];
+        state.headers = res.headers || (state.rows.length ? Object.keys(state.rows[0]) : []);
+        state.sections = res.sections || state.headers.map(() => '');
         renderPreview();
       } catch (e) {
-        console.error('[assets] buildPreview error', e); state.rows = []; renderPreview();
+        console.error('[assets] buildPreview error', e); 
+        state.rows = []; 
+        renderPreview();
       }
     }
 
     // Bind UI
     $('#btnCancel2')?.addEventListener('click', () => closePanel());
+    
     $('#btnSelectAll2')?.addEventListener('click', () => {
       state.selectedIdx = new Set(state.rows.map((_, i) => i));
       tbody?.querySelectorAll('input.rowchk2').forEach(cb => cb.checked = true);
       updateBadge();
     });
+    
     $('#btnDeselectAll2')?.addEventListener('click', () => {
       state.selectedIdx.clear();
       tbody?.querySelectorAll('input.rowchk2').forEach(cb => cb.checked = false);
@@ -452,7 +459,11 @@
     $('#excelFile2')?.addEventListener('change', async (e) => {
       const f = (e.target.files || [])[0];
       if (!f) {
-        state.excelB64 = null; state.sheets = []; populateSheetSelect([]); renderPreview(); return;
+        state.excelB64 = null; 
+        state.sheets = []; 
+        populateSheetSelect([]); 
+        renderPreview(); 
+        return;
       }
       $('#excelFile2Label').textContent = f.name || 'Selected Excel';
       try {
@@ -464,7 +475,8 @@
         await buildPreview();
       } catch (err) {
         console.error('[assets] list sheets failed', err);
-        populateSheetSelect([]); renderPreview();
+        populateSheetSelect([]); 
+        renderPreview();
       }
     });
 
@@ -477,15 +489,22 @@
       const assetName = ($('#assetName2')?.value || '').trim();
       if (!assetName) return alert('Please enter an asset name.');
       if (!state.rows.length) return alert('No rows to import (select a sheet).');
-      const idxs = Array.from(state.selectedIdx.values()).sort((a,b)=>a-b);
+      const idxs = Array.from(state.selectedIdx.values()).sort((a,b) => a-b);
       if (!idxs.length) return alert('Please select at least one row.');
 
       try {
+        // Show importing status
+        $('#btnImport2').textContent = 'Importing...';
+        $('#btnImport2').disabled = true;
+        
         // Ensure asset type exists under the location
         const up = await window.electronAPI.upsertAssetType(assetName, location);
         if (!up || up.success === false) return alert('Failed to create asset type.');
 
+        // Get selected rows AS-IS from the import
         const selectedRows = idxs.map(i => state.rows[i]).filter(Boolean);
+        
+        // Import with original structure
         const payload = {
           location,
           company,
@@ -495,30 +514,37 @@
           rows: selectedRows,
           assetType: assetName,
         };
+        
         const res = await window.electronAPI.importSelection(payload);
-        if (!res || res.success === false) return alert('Import failed.');
+        if (!res || res.success === false) {
+          alert('Import failed.');
+          return;
+        }
 
         // Refresh UI
         if (typeof window.invalidateStationData === 'function') window.invalidateStationData();
-        if (typeof window.electronAPI.invalidateStationCache === 'function') await window.electronAPI.invalidateStationCache();
+        if (typeof window.electronAPI.invalidateStationCache === 'function') {
+          await window.electronAPI.invalidateStationCache();
+        }
         await window.refreshFilters?.();
         await window.refreshMarkers?.();
         await window.renderList?.();
 
-        alert(`Imported ${res.added} row(s).`);
+        alert(`Successfully imported ${res.added} row(s). Data will be synchronized with existing ${assetName} schema if applicable.`);
         closePanel();
+        
       } catch (e) {
         console.error('[assets] import failed', e);
         alert('Unexpected import error. See console.');
+      } finally {
+        $('#btnImport2').textContent = 'Import Selected';
+        $('#btnImport2').disabled = false;
       }
     });
   }
 
-  // ────────────────────────────────────────────────────────────────────────────
   // Bootstrapping & Nav bindings
-  // ────────────────────────────────────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', () => {
-    // Left-nav: ＋ New Company → open our new form (no legacy wizard)
     const navNewCompany = document.getElementById('navNewCompany');
     if (navNewCompany && !navNewCompany.dataset.boundNew) {
       navNewCompany.addEventListener('click', (e) => {
@@ -528,7 +554,6 @@
       navNewCompany.dataset.boundNew = '1';
     }
 
-    // Map/List/Docs/Settings toggles
     const navMap  = document.getElementById('navMap');
     const navList = document.getElementById('navList');
     const navDash = document.getElementById('navDash');
@@ -557,7 +582,7 @@
   window.openCreateLocationForm = window.openCreateLocationForm || openCreateLocationForm;
   window.openCreateAssetsWizard = window.openCreateAssetsWizard || openCreateAssetsWizard;
 
-  // Also expose view switches if other modules want to use them
+  // Also expose view switches
   window.showMapView   = window.showMapView   || showMapView;
   window.showListView  = window.showListView  || showListView;
   window.showDocsView  = window.showDocsView  || showDocsView;

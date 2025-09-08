@@ -245,6 +245,7 @@ async function addStationsFromSelection(payload) {
   if (!Array.isArray(rows) || !rows.length) {
     return { success:false, message:'No rows selected.' };
   }
+  
   // 0) Make sure the location exists (creates workbook too)
   try {
     if (location && company && lookupsRepo?.upsertLocation) {
@@ -254,9 +255,10 @@ async function addStationsFromSelection(payload) {
     console.warn('[importSelection] upsertLocation failed (continuing):', e?.message || e);
   }
 
-  // 1) Prepare headers/rows: ensure Category + Province/Location headers and values
+  // 1) First, import the data AS-IS without any schema changes
   try {
     const at = String(assetType || '').trim();
+    
     // Build working headers/sections
     let hdrs = Array.isArray(headers) && headers.length ? headers.slice() : Object.keys(rows[0] || {});
     let secs = Array.isArray(sections) && sections.length === hdrs.length ? sections.slice() : hdrs.map(()=>'');
@@ -265,17 +267,17 @@ async function addStationsFromSelection(payload) {
     const hLower = hdrs.map(h => String(h || '').trim().toLowerCase());
     if (!hLower.includes('category')) {
       hdrs.push('Category');
-      secs.push('');
+      secs.push('General Information'); // Put Category under General Information
       hLower.push('category');
     }
 
-    // Ensure a Province/Location field exists; prefer "Province"
+    // Ensure a Province/Location field exists
     const hasProvince = hLower.includes('province');
     const hasLocation = hLower.includes('location');
     const locFieldName = hasProvince ? 'Province' : (hasLocation ? 'Location' : 'Province');
     if (!hasProvince && !hasLocation) {
       hdrs.push(locFieldName);
-      secs.push('');
+      secs.push('General Information'); // Put Province under General Information
     }
 
     // Stamp Category and default Province/Location value when blank
@@ -286,13 +288,54 @@ async function addStationsFromSelection(payload) {
       return out;
     });
 
-    await excel.writeLocationRows(location, sheetName || 'Data', secs, hdrs, rowsStamped);
+    // Write to Excel using the proper sheet naming convention
+    const targetSheetName = `${at} ${location}`; // e.g., "Cableway AB"
+    await excel.writeLocationRows(location, targetSheetName, secs, hdrs, rowsStamped);
+    
+    console.log(`[importSelection] Successfully imported ${rowsStamped.length} rows to ${targetSheetName}`);
+    
   } catch (e) {
     console.error('[importSelection] writeLocationRows failed:', e);
     return { success:false, message:'Failed writing to location workbook.' };
   }
 
-  // No state writes. The map view will re-read from files.
+  // 2) AFTER successful import, check if we need to sync schema
+  try {
+    const schemaSync = require('./schema_sync');
+    
+    // Check if there are existing stations of this asset type
+    const existingSchema = await schemaSync.getExistingSchemaForAssetType(assetType);
+    
+    if (existingSchema && existingSchema.sections && existingSchema.sections.length > 0) {
+      console.log(`[importSelection] Found existing schema for ${assetType}, syncing...`);
+      
+      // Get all station IDs we just imported (to exclude them from getting their data overwritten)
+      const importedStationIds = rows.map(r => 
+        r['Station ID'] || r['station_id'] || r['StationID'] || r['ID'] || ''
+      ).filter(Boolean);
+      
+      // Apply the existing schema to the newly imported stations
+      const syncResult = await schemaSync.syncNewlyImportedStations(
+        assetType, 
+        location, 
+        existingSchema,
+        importedStationIds
+      );
+      
+      if (syncResult.success) {
+        console.log(`[importSelection] Schema sync completed: ${syncResult.message}`);
+      } else {
+        console.warn(`[importSelection] Schema sync failed: ${syncResult.message}`);
+      }
+    } else {
+      console.log(`[importSelection] No existing schema found for ${assetType}, using imported structure as-is`);
+    }
+    
+  } catch (schemaError) {
+    // Don't fail the whole import if schema sync fails
+    console.error('[importSelection] Schema sync error (import succeeded):', schemaError);
+  }
+
   const total = rows.length;
   return { success:true, added: total, merged: 0, total };
 }

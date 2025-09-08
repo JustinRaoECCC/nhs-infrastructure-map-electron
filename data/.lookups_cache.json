@@ -1,1 +1,1 @@
-{"mtimeMs":1757287978375.5789,"colorsGlobal":{},"colorsByLoc":{},"colorsByCompanyLoc":{"NHS":{"BC":{"Cableway":"#fc5d37"}}},"companies":["NHS"],"locsByCompany":{"NHS":["BC"]},"assetsByLocation":{"BC":["Cableway"]}}
+{"mtimeMs":1757291926245.3306,"colorsGlobal":{},"colorsByLoc":{},"colorsByCompanyLoc":{"NHS":{"BC":{"Cableway":"#bc97a3"},"AB":{"Cableway":"#2df207"}}},"companies":["NHS"],"locsByCompany":{"NHS":["AB","BC"]},"assetsByLocation":{"BC":["Cableway"],"AB":["Cableway"]}}

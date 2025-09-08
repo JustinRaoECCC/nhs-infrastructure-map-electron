@@ -1,4 +1,4 @@
-// frontend/js/station.js
+// frontend/js/station.js - Updated with schema synchronization
 let currentStationData = null;
 let hasUnsavedChanges = false;
 let generalInfoUnlocked = false;
@@ -245,8 +245,8 @@ function createEditableSection(sectionName, fields) {
   addFieldBtn.addEventListener('click', () => addFieldToSection(sectionDiv));
 
   const deleteSectionBtn = document.createElement('button');
-  deleteSectionBtn.className = 'delete-section-btn'; // Changed class
-  deleteSectionBtn.textContent = 'Delete Section'; // Changed from trash icon
+  deleteSectionBtn.className = 'delete-section-btn';
+  deleteSectionBtn.textContent = 'Delete Section';
   deleteSectionBtn.title = 'Delete Section';
   deleteSectionBtn.addEventListener('click', () => deleteSection(sectionDiv));
 
@@ -270,7 +270,6 @@ function createEditableSection(sectionName, fields) {
   return sectionDiv;
 }
 
-
 function createEditableField(fieldName, value) {
   const fieldDiv = document.createElement('div');
   fieldDiv.className = 'field-row';
@@ -291,7 +290,7 @@ function createEditableField(fieldName, value) {
 
   const deleteBtn = document.createElement('button');
   deleteBtn.className = 'btn btn-ghost btn-sm btn-danger';
-  deleteBtn.textContent = '✕'; // Changed from '🗑️' to red X
+  deleteBtn.textContent = '✕';
   deleteBtn.title = 'Delete Field';
   deleteBtn.addEventListener('click', () => deleteField(fieldDiv));
 
@@ -302,13 +301,11 @@ function createEditableField(fieldName, value) {
   return fieldDiv;
 }
 
-
 function addFieldToSection(sectionDiv) {
   const fieldsContainer = sectionDiv.querySelector('.section-fields');
   const newField = createEditableField('New Field', '');
   fieldsContainer.appendChild(newField);
   
-  // Focus on the new field name input
   const labelInput = newField.querySelector('.field-label-input');
   labelInput.focus();
   labelInput.select();
@@ -338,7 +335,6 @@ function addNewSection() {
   const newSection = createEditableSection('New Section', {});
   sectionsContainer.appendChild(newSection);
   
-  // Focus on the section title input
   const titleInput = newSection.querySelector('.section-title-input');
   titleInput.focus();
   titleInput.select();
@@ -356,28 +352,23 @@ function markUnsavedChanges() {
 }
 
 function setupEventHandlers(container, stn) {
-  // Add Section button
   const addSectionBtn = container.querySelector('#addSectionBtn');
   if (addSectionBtn) {
     addSectionBtn.addEventListener('click', addNewSection);
   }
 
-  // Save Changes button
   const saveBtn = container.querySelector('#saveChangesBtn');
   if (saveBtn) {
-    saveBtn.addEventListener('click', saveStationChanges);
+    saveBtn.addEventListener('click', () => saveStationChanges(stn.asset_type));
   }
 
-  // Unlock editing button
   const unlockBtn = container.querySelector('#unlockEditing');
   if (unlockBtn) {
     unlockBtn.addEventListener('click', showPasswordModal);
   }
 
-  // Password modal
   setupPasswordModal(container);
 
-  // General Information input listeners (when unlocked)
   const generalInputs = container.querySelectorAll('#giStationId, #giCategory, #giSiteName, #giProvince, #giLatitude, #giLongitude, #giStatus');
   generalInputs.forEach(input => {
     input.addEventListener('input', () => {
@@ -445,7 +436,7 @@ function unlockGeneralInformation(container) {
   const inputs = container.querySelectorAll('#giStationId, #giCategory, #giSiteName, #giProvince, #giLatitude, #giLongitude, #giStatus');
   inputs.forEach(input => {
     input.disabled = false;
-    input.style.backgroundColor = '#fff3cd'; // Light yellow to indicate editable
+    input.style.backgroundColor = '#fff3cd';
   });
 
   const unlockBtn = container.querySelector('#unlockEditing');
@@ -456,7 +447,7 @@ function unlockGeneralInformation(container) {
   }
 }
 
-async function saveStationChanges() {
+async function saveStationChanges(assetType) {
   const container = document.getElementById('stationContentContainer');
   if (!hasUnsavedChanges) return;
 
@@ -486,17 +477,17 @@ async function saveStationChanges() {
       updatedData.status = getValue('giStatus');
     }
 
-    // Dynamic sections data
-    const sections = container.querySelectorAll('.editable-section');
-    
-    // First, remove old section data from updatedData
+    // Dynamic sections data - clear old ones first
     Object.keys(updatedData).forEach(key => {
       if (key.includes(' – ')) {
         delete updatedData[key];
       }
     });
 
-    // Add new section data
+    // Collect new section data
+    const sections = container.querySelectorAll('.editable-section');
+    const schemaData = { sections: [], fields: [] };
+    
     sections.forEach(sectionDiv => {
       const sectionTitle = sectionDiv.querySelector('.section-title-input').value.trim();
       const fieldRows = sectionDiv.querySelectorAll('.field-row');
@@ -508,19 +499,41 @@ async function saveStationChanges() {
         if (sectionTitle && fieldName) {
           const compositeKey = `${sectionTitle} – ${fieldName}`;
           updatedData[compositeKey] = fieldValue;
+          
+          // Build schema for synchronization (exclude General Information)
+          if (sectionTitle.toLowerCase() !== 'general information') {
+            schemaData.sections.push(sectionTitle);
+            schemaData.fields.push(fieldName);
+          }
         }
       });
     });
 
-    // Send to backend
+    // Save to this station's Excel file
     const result = await window.electronAPI.updateStationData(updatedData);
     
     if (result.success) {
+      // Now sync schema to all other stations of same asset type
+      if (assetType && schemaData.sections.length > 0) {
+        saveBtn.textContent = 'Syncing schema...';
+        
+        const syncResult = await window.electronAPI.syncAssetTypeSchema(
+          assetType,
+          schemaData,
+          updatedData.station_id
+        );
+        
+        if (syncResult.success) {
+          console.log(`Schema synchronized: ${syncResult.message}`);
+        } else {
+          console.warn('Schema sync failed:', syncResult.message);
+        }
+      }
+      
       hasUnsavedChanges = false;
       currentStationData = { ...updatedData };
       
       if (saveBtn) {
-        // Add green flash animation
         saveBtn.classList.add('btn-success-flash');
         saveBtn.classList.remove('btn-warning');
         saveBtn.textContent = 'Saved';
@@ -531,7 +544,6 @@ async function saveStationChanges() {
         }, 2000);
       }
 
-      // Refresh the main map/list if needed
       await window.electronAPI.invalidateStationCache();
       
     } else {
@@ -545,7 +557,7 @@ async function saveStationChanges() {
     const saveBtn = container.querySelector('#saveChangesBtn');
     if (saveBtn) {
       saveBtn.disabled = false;
-      if (saveBtn.textContent === 'Saving...') {
+      if (saveBtn.textContent === 'Saving...' || saveBtn.textContent === 'Syncing schema...') {
         saveBtn.textContent = 'Save Changes';
       }
     }
@@ -579,7 +591,6 @@ function setupBackButton(container) {
       if (rightPanel) rightPanel.style.display = '';
       disableFullWidthMode();
 
-      // Reset editing state
       hasUnsavedChanges = false;
       generalInfoUnlocked = false;
     });
