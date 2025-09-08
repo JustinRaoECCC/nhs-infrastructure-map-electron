@@ -1758,3 +1758,7 @@ html.modal-open, body.modal-open { overflow: hidden; }
 #filterTree .ft-location > .ft-children .ft-row.ft-asset {
   margin-left: .25rem;              /* nudge text clear of the guide */
 }
+
+/* Tab panels: show only the active one */
+.tab-content { display: none; }
+.tab-content.active { display: block; }

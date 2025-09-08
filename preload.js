@@ -62,4 +62,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateAssetTypeSchema: (assetType, schema, excludeStationId) =>
     ipcRenderer.invoke('excel:updateAssetTypeSchema', assetType, schema, excludeStationId),
 
+  // ─── Inspections ─────────────────────────────────────────────────────────
+  listInspections: (siteName, stationId) =>
+    ipcRenderer.invoke('inspections:list', siteName, stationId),
+
+  deleteInspection: (siteName, stationId, folderName) =>
+    ipcRenderer.invoke('inspections:delete', siteName, stationId, folderName),
+
 });

@@ -37,6 +37,30 @@ async function loadStationPage(stationId, origin = 'map') {
 
   // Setup UI
   setupStationDetailUI(container, stn);
+
+  // Load Inspection History tab template + script, then init
+  try {
+    // 1) Inject the tab template
+    const ihHost = container.querySelector('#inspection-history');
+    if (ihHost) {
+      const tmpl = await fetch('inspection_history.html');
+      if (tmpl.ok) ihHost.innerHTML = await tmpl.text();
+    }
+    // 2) Ensure the script is loaded once
+    if (!window.__ihLoaded) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'js/inspection_history.js';
+        s.onload = () => { window.__ihLoaded = true; resolve(); };
+        s.onerror = reject;
+        document.head.appendChild(s);
+      });
+    }
+    // 3) Initialize the tab
+    window.initInspectionHistoryTab?.(container, stn);
+  } catch (e) {
+    console.warn('[inspection-history bootstrap] failed:', e);
+  }
 }
 
 function setupStationDetailUI(container, stn) {
@@ -64,6 +88,8 @@ function setupStationDetailUI(container, stn) {
 
   // Status + Type pills
   setHeaderPills(container, stn);
+
+  setupTabs(container);
 
   // Photos
   renderPhotoPlaceholders(container);
@@ -349,6 +375,25 @@ function markUnsavedChanges() {
     saveBtn.style.display = 'inline-block';
     saveBtn.classList.add('btn-warning');
   }
+}
+
+function setupTabs(container) {
+  const tabButtons = container.querySelectorAll('.tabs .tab');
+  const panels = container.querySelectorAll('.tab-content');
+
+  tabButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      // switch active tab button
+      tabButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      // switch visible panel
+      panels.forEach(p => p.classList.remove('active'));
+      const targetId = btn.dataset.target;
+      const target = container.querySelector('#' + targetId);
+      if (target) target.classList.add('active');
+    });
+  });
 }
 
 function setupEventHandlers(container, stn) {

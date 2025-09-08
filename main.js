@@ -7,7 +7,7 @@ const backend     = require('./backend/app');
 const lookups     = require('./backend/lookups_repo');
 const excelClient = require('./backend/excel_worker_client');
 const dataApi = require('./backend/data_manager');
-
+const inspectionHistory = require('./backend/inspection_history');
 
 app.disableHardwareAcceleration();
 
@@ -176,4 +176,12 @@ ipcMain.handle('excel:readSheetData', async (_evt, locationName, sheetName) =>
 
 ipcMain.handle('excel:updateAssetTypeSchema', async (_evt, assetType, schema, excludeStationId) =>
   excelClient.updateAssetTypeSchema(assetType, schema, excludeStationId)
+);
+
+// ─── IPC: Inspections ─────────────────────────────────────────────────────
+ipcMain.handle('inspections:list', async (_evt, siteName, stationId) =>
+  inspectionHistory.listInspections(siteName, stationId)
+);
+ipcMain.handle('inspections:delete', async (_evt, siteName, stationId, folderName) =>
+  inspectionHistory.deleteInspectionFolder(siteName, stationId, folderName)
 );
