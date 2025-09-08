@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const os   = require('os');
 
@@ -8,6 +8,7 @@ const lookups     = require('./backend/lookups_repo');
 const excelClient = require('./backend/excel_worker_client');
 const dataApi = require('./backend/data_manager');
 const inspectionHistory = require('./backend/inspection_history');
+const repairsBackend = require('./backend/repairs');
 
 app.disableHardwareAcceleration();
 
@@ -184,4 +185,38 @@ ipcMain.handle('inspections:list', async (_evt, siteName, stationId) =>
 );
 ipcMain.handle('inspections:delete', async (_evt, siteName, stationId, folderName) =>
   inspectionHistory.deleteInspectionFolder(siteName, stationId, folderName)
+);
+
+// ─── IPC: Inspections (pickers) ───────────────────────────────────────────
+ipcMain.handle('inspections:pickPhotos', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: 'Select inspection photos',
+    properties: ['openFile', 'multiSelections'],
+    filters: [
+      { name: 'Images', extensions: ['jpg','jpeg','png','gif','webp','bmp','tif','tiff'] }
+    ]
+  });
+  return canceled ? { filePaths: [] } : { filePaths };
+});
+
+ipcMain.handle('inspections:pickReport', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: 'Select inspection report (PDF)',
+    properties: ['openFile'],
+    filters: [{ name: 'PDF', extensions: ['pdf'] }]
+  });
+  return canceled || !filePaths?.length ? { filePath: null } : { filePath: filePaths[0] };
+});
+
+// ─── IPC: Inspections (create) ────────────────────────────────────────────
+ipcMain.handle('inspections:create', async (_evt, siteName, stationId, payload) =>
+  inspectionHistory.createInspectionFolder(siteName, stationId, payload)
+);
+
+// ─── IPC: Repairs ─────────────────────────────────────────────────────────
+ipcMain.handle('repairs:list', async (_evt, siteName, stationId) =>
+  repairsBackend.listRepairs(siteName, stationId)
+);
+ipcMain.handle('repairs:save', async (_evt, siteName, stationId, items) =>
+  repairsBackend.saveRepairs(siteName, stationId, items)
 );

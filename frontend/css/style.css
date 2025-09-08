@@ -1762,3 +1762,67 @@ html.modal-open, body.modal-open { overflow: hidden; }
 /* Tab panels: show only the active one */
 .tab-content { display: none; }
 .tab-content.active { display: block; }
+
+/* Repairs: resolve mode selection */
+.resolve-selectable { cursor: pointer; }
+.resolve-selected td { background: #fee2e2 !important; } /* red-200 tint */
+
+/* ───────────────── Reusable table styles (work anywhere) ──────────────── */
+.table-scroll{
+  flex: 1 1 auto;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 4px 10px rgba(16,24,40,.05);
+}
+
+/* use the same look your List View has, but unscoped */
+.data-table{
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 14px;
+}
+
+/* sticky header */
+.data-table thead th{
+  position: sticky; top: 0; z-index: 1;
+  text-align: left; font-weight: 600; letter-spacing: .01em;
+  padding: 10px 12px; white-space: nowrap;
+  background: linear-gradient(to bottom, rgba(248,250,252,1), rgba(248,250,252,.92));
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: saturate(140%) blur(4px);
+}
+.data-table thead th:first-child{ border-top-left-radius: 12px; }
+.data-table thead th:last-child { border-top-right-radius: 12px; }
+
+/* body cells, zebra, hover accent */
+.data-table tbody td{
+  padding: 10px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  color: #111827;
+  vertical-align: middle;
+}
+.data-table tbody tr:nth-child(even) td{ background: #fafcff; }
+.data-table tbody tr:hover td{ background: #eef6ff; }
+.data-table tbody tr:hover td:first-child{ box-shadow: inset 3px 0 0 0 #3b82f6; }
+
+.data-table tbody tr:last-child td:first-child{ border-bottom-left-radius: 12px; }
+.data-table tbody tr:last-child td:last-child { border-bottom-right-radius: 12px; }
+
+/* dark-scheme parity */
+@media (prefers-color-scheme: dark){
+  .table-scroll{
+    background:#0f172a; border-color:#1f2937;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.02);
+  }
+  .data-table thead th{
+    background: linear-gradient(to bottom, rgba(15,23,42,1), rgba(15,23,42,.92));
+    border-bottom-color:#1f2937; color:#e5e7eb;
+  }
+  .data-table tbody td{ border-bottom-color:#1f2937; color:#e5e7eb; }
+  .data-table tbody tr:nth-child(even) td{ background:#0b1326; }
+  .data-table tbody tr:hover td{ background:#0c1a33; }
+  .data-table tbody tr:hover td:first-child{ box-shadow: inset 3px 0 0 0 #60a5fa; }
+}

@@ -96,6 +96,14 @@ function setupStationDetailUI(container, stn) {
   setupPhotoLightbox(container);
   renderRecentPhotos(container, stn);
 
+  // Tab-specific initializers (if present)
+  if (window.initInspectionHistoryTab) {
+    window.initInspectionHistoryTab(container, stn);
+  }
+  if (window.initRepairsTab) {
+    window.initRepairsTab(container, stn);
+  }
+
   // Dynamic sections
   renderDynamicSections(container, stn);
 

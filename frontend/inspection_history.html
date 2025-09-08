@@ -1,8 +1,8 @@
 <!-- frontend/inspection_history.html -->
 <div class="inspection-history card">
-  <div class="ih-header" style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+  <div class="ih-header" style="display:flex;align-items:center;gap:12px;">
     <button id="ihAddBtn" class="btn btn-primary" disabled>+ Add Inspection</button>
-    <div class="ih-next" style="font-weight:700;">Next Inspection Due — <span>DATE</span></div>
+    <div class="ih-next" style="font-weight:700;">Next Inspection Due - <span>DATE</span></div>
   </div>
 
   <div id="ihList" class="ih-list" style="display:flex;flex-direction:column;gap:12px;margin-top:12px;"></div>
@@ -16,5 +16,51 @@
       <button id="pdfClose" class="btn btn-ghost">Close</button>
     </div>
     <iframe id="pdfFrame" title="Inspection Report" style="flex:1;width:100%;border:1px solid var(--border);border-radius:8px;"></iframe>
+  </div>
+</div>
+
+<!-- Add Inspection Modal -->
+<div id="ihModal" class="modal" style="display:none;">
+  <div class="modal-content" style="max-width:720px;width:92%;">
+    <h3 style="margin-top:0;">Add Inspection</h3>
+
+    <div class="form-grid" style="display:grid;grid-template-columns:1fr;gap:10px;">
+      <div class="form-row">
+        <label for="ihYear">Year (YYYY) *</label>
+        <input id="ihYear" type="number" min="1000" max="9999" placeholder="2025" />
+      </div>
+
+      <div class="form-row">
+        <label for="ihName">Name (must include “inspection”) *</label>
+        <input id="ihName" type="text" placeholder="Cableway Engineering Inspection" />
+      </div>
+
+      <div class="form-row">
+        <label for="ihInspector">Inspector</label>
+        <input id="ihInspector" type="text" placeholder="E.g. Matthias Gasser" />
+      </div>
+
+      <div class="form-row">
+        <label for="ihComment">Comment</label>
+        <textarea id="ihComment" rows="4" placeholder="Any notes..."></textarea>
+      </div>
+
+      <div class="form-row" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <button id="ihPickPhotos" class="btn">+ Add Photos…</button>
+        <span id="ihPhotosSummary" class="badge">0 selected</span>
+      </div>
+
+      <div class="form-row" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <button id="ihPickReport" class="btn">+ Add Inspection Report (PDF)…</button>
+        <span id="ihReportSummary" class="badge">None</span>
+      </div>
+
+      <div id="ihError" style="display:none;color:#b91c1c;font-weight:600;"></div>
+    </div>
+
+    <div class="modal-actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+      <button id="ihCreateBtn" class="btn btn-primary">Create</button>
+      <button id="ihCancelBtn" class="btn btn-ghost">Cancel</button>
+    </div>
   </div>
 </div>

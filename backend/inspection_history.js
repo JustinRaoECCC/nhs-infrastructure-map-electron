@@ -4,6 +4,7 @@ const fsp = fs.promises;
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { PHOTOS_BASE, IMAGE_EXTS } = require('./config');
+const { ensureDir } = require('./utils/fs_utils');
 
 // Local copy (matches app.js); consider moving to a shared util if you like.
 function folderNameFor(siteName, stationId) {
@@ -16,9 +17,59 @@ function folderNameFor(siteName, stationId) {
   return `${site}_${id}`;
 }
 
+function sanitizeSegment(s) {
+  return String(s || '')
+    .normalize('NFKD')
+    .replace(/[^\p{L}\p{N}\-_ ]+/gu, ' ')
+    .replace(/\s+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+async function uniquePath(dir, baseName) {
+  let candidate = path.join(dir, baseName);
+  let i = 0;
+  for (;;) {
+    try { await fsp.access(candidate); i++; candidate = path.join(dir, `${baseName}_${i}`); }
+    catch { return candidate; }
+  }
+}
+
+async function copyWithUniqueName(src, destDir) {
+  const base = path.basename(src);
+  const name = base.replace(/\.[^.]+$/, '');
+  const ext  = path.extname(base);
+  let target = path.join(destDir, base);
+  let i = 0;
+  for (;;) {
+    try { await fsp.access(target); i++; target = path.join(destDir, `${name} (${i})${ext}`); }
+    catch { break; }
+  }
+  await fsp.copyFile(src, target);
+  return target;
+}
+
 function containsInspectionWord(s) {
   const x = String(s || '').toLowerCase();
   return x.includes('inspection') || x.includes('assessment');
+}
+
+function parseDateFromFolderName(name) {
+  const s = String(name || '').trim();
+  // Accept: YYYY, YYYY[-_ ]MM, YYYY[-_ ]MM[-_ ]DD (e.g., 2020, 2020-05, 2020_05_17, 2020 Cableway ...)
+  const m = s.match(/^(\d{4})(?:[ _-]?(\d{2}))?(?:[ _-]?(\d{2}))?/);
+  if (!m) return null;
+  const y = Number(m[1]);
+  let mo = m[2] ? Number(m[2]) : 1;
+  let da = m[3] ? Number(m[3]) : 1;
+  if (Number.isNaN(y) || y < 1900 || y > 3000) return null;
+  // Clamp to safe ranges
+  if (!Number.isFinite(mo) || mo < 1 || mo > 12) mo = 1;
+  if (!Number.isFinite(da) || da < 1 || da > 31) da = 1;
+  const dateMs = Date.UTC(y, mo - 1, da);
+  const human = m[3] ? `${y}-${String(mo).padStart(2,'0')}-${String(da).padStart(2,'0')}`
+            : m[2] ? `${y}-${String(mo).padStart(2,'0')}`
+            : `${y}`;
+  return { dateMs, human };
 }
 
 function titleCase(s) {
@@ -86,8 +137,8 @@ async function listInspections(siteName, stationId, perPhotos = 5) {
     const out = [];
     for (const folderName of folders) {
       const full = path.join(stnDir, folderName);
-      const stat = await fsp.stat(full).catch(() => null);
-      const mtimeMs = stat?.mtimeMs || 0;
+      const parsedDate = parseDateFromFolderName(folderName);
+      const dateMs = parsedDate ? parsedDate.dateMs : Number.NEGATIVE_INFINITY;
 
       // Pretty display name (strip leading date chunk if present)
       const m = folderName.match(/^(\d{4})(?:[ _-]?(\d{2}))?(?:[ _-]?(\d{2}))?(.*)$/);
@@ -105,29 +156,22 @@ async function listInspections(siteName, stationId, perPhotos = 5) {
       pdfs.sort((a, b) => b.mtimeMs - a.mtimeMs);
       const rep = pdfs.find(f => /report/i.test(f.name)) || pdfs.find(f => /inspection/i.test(f.name)) || pdfs[0] || null;
 
-      // Date to show
-      let dateHuman = '';
-      if (m) {
-        const y = m[1], mo = m[2], da = m[3];
-        dateHuman = da ? `${y}-${mo}-${da}` : (mo ? `${y}-${mo}` : `${y}`);
-      } else {
-        const d = new Date(mtimeMs || Date.now());
-        dateHuman = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-      }
+      // Date to show (from folder name only)
+      const dateHuman = parsedDate ? parsedDate.human : '';
 
       out.push({
         folderName,
         fullPath: full,
         displayName: displayName || folderName,
         dateHuman,
-        sortMs: mtimeMs,
+        dateMs,
         photos,
         moreCount,
         reportUrl: rep ? toFileUrl(rep.path) : null
       });
     }
 
-    out.sort((a, b) => (b.sortMs || 0) - (a.sortMs || 0));
+    out.sort((a, b) => (b.dateMs || 0) - (a.dateMs || 0));
     return out;
   } catch (e) {
     console.error('[inspection_history:listInspections] failed:', e);
@@ -155,7 +199,69 @@ async function deleteInspectionFolder(siteName, stationId, folderName) {
   }
 }
 
+/** Create a new inspection folder and populate photos/report/comment.txt */
+async function createInspectionFolder(siteName, stationId, payload) {
+  try {
+    const year = Number(payload?.year);
+    const name = String(payload?.name || '').trim();
+    const inspector = String(payload?.inspector || '').trim();
+    const comment = String(payload?.comment || '').trim();
+    const photos = Array.isArray(payload?.photos) ? payload.photos : [];
+    const report = payload?.report || null;
+
+    if (!Number.isInteger(year) || year < 1000 || year > 9999) {
+      return { success: false, message: 'Invalid year. Must be 4 digits between 1000 and 9999.' };
+    }
+    if (!name || !/inspection/i.test(name)) {
+      return { success: false, message: 'Name is required and must include the word "inspection".' };
+    }
+
+    // Station directory — prefer the canonical exact folder, create if missing.
+    if (!PHOTOS_BASE) return { success: false, message: 'PHOTOS_BASE is not configured.' };
+    const stationDir = path.join(PHOTOS_BASE, folderNameFor(siteName, stationId));
+    ensureDir(stationDir);
+
+    // New inspection folder: "YYYY_<Name…>"
+    const desiredName = `${year}_${sanitizeSegment(name)}`;
+    const targetDir = await uniquePath(stationDir, desiredName);
+    ensureDir(targetDir);
+
+    // Photos subfolder
+    const photosDir = path.join(targetDir, 'photos');
+    ensureDir(photosDir);
+
+    // Copy photos (if any), keep original filenames, uniquify on collision
+    for (const p of photos) {
+      if (!p || typeof p !== 'string') continue;
+      const ext = path.extname(p).toLowerCase();
+      if (!IMAGE_EXTS.includes(ext)) continue; // ignore non-images
+      try { await copyWithUniqueName(p, photosDir); } catch (e) { /* continue */ }
+    }
+
+    // Copy report as "Inspection Report.pdf" (if provided)
+    if (report && typeof report === 'string') {
+      const dest = path.join(targetDir, 'Inspection Report.pdf');
+      try { await fsp.copyFile(report, dest); } catch (e) { /* ignore copy failure */ }
+    }
+
+    // Write comment.txt
+    const body =
+`Comment:
+${comment || ''}
+
+Inspector:
+${inspector || ''}`;
+    await fsp.writeFile(path.join(targetDir, 'comment.txt'), body, 'utf-8');
+
+    return { success: true, folderName: path.basename(targetDir) };
+  } catch (e) {
+    console.error('[inspection_history:createInspectionFolder] failed:', e);
+    return { success: false, message: String(e) };
+  }
+}
+
 module.exports = {
   listInspections,
   deleteInspectionFolder,
+  createInspectionFolder,
 };

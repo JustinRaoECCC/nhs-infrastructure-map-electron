@@ -1,5 +1,24 @@
 // frontend/js/inspection_history.js
 (() => {
+  function parseFrequencyYearsFromStation(stn) {
+    if (!stn) return null;
+    // Find any key that mentions both "inspection" and "frequency"
+    const keys = Object.keys(stn);
+    const k = keys.find(
+      (key) => /inspection/i.test(key) && /frequency/i.test(key)
+    ) || keys.find(
+      (key) => /^inspection\s*frequency$/i.test(String(key).replace(/.* – /, '')) // handles "General Information – Inspection Frequency"
+    );
+    if (!k) return null;
+    const raw = String(stn[k] ?? '').trim();
+    if (!raw) return null;
+    const m = raw.match(/(\d+(?:\.\d+)?)/); // first number
+    if (!m) return null;
+    const n = Number(m[1]);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    // You only mentioned years, so treat any unit as years.
+    return Math.round(n); // keep it an integer year count
+  }
   function titleCase(s) {
     return String(s || '')
       .replace(/[_\-]+/g, ' ')
@@ -97,7 +116,7 @@
     const title = document.createElement('div');
     title.style.fontWeight = '700';
     title.style.fontSize = '14px';
-    title.textContent = `${item.displayName} — ${item.dateHuman}`;
+    title.textContent = `${item.displayName} - ${item.dateHuman}`;
     header.appendChild(title);
 
     const actions = document.createElement('div');
@@ -213,10 +232,23 @@
       return;
     }
 
-    // sort newest first by best-available timestamp
-    items.sort((a, b) => (b.sortMs || 0) - (a.sortMs || 0));
+    // sort newest first by folder-name date (backend provides dateMs)
+    items.sort((a, b) => (b.dateMs || 0) - (a.dateMs || 0));
 
     for (const it of items) renderItem(list, stn, it);
+
+    try {
+      const freqYears = parseFrequencyYearsFromStation(stn);
+      const nextSpan = host.querySelector('.ih-next span');
+      if (freqYears && nextSpan && items[0]?.dateMs) {
+        const d = new Date(items[0].dateMs); // most recent folder-name date
+        const nextYear = d.getUTCFullYear() + freqYears;
+        nextSpan.textContent = String(nextYear);
+      } // else leave as "DATE"
+    } catch (e) {
+      console.warn('[ih next-due compute] failed:', e);
+    }
+
   }
 
   async function initInspectionHistoryTab(container, stn) {
@@ -224,35 +256,126 @@
     const host = await fetchTemplateInto(container);
     if (!host) return;
 
-    // Wire lightbox close if not already
+    // Lightbox close wiring
     const lbClose = document.querySelector('#lightboxClose');
     const lbBackdrop = document.querySelector('.photo-lightbox__backdrop');
     lbClose?.addEventListener('click', closePhotoLightbox);
     lbBackdrop?.addEventListener('click', closePhotoLightbox);
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') closePhotoLightbox();
-    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePhotoLightbox(); });
 
-    // Render on first open
+    // Lazy render on first open
     let loaded = false;
     const ensureLoad = async () => {
       if (loaded) return;
       loaded = true;
       await renderList(host, stn);
     };
-
-    // If user clicks the tab, load
     tabBtn?.addEventListener('click', ensureLoad);
-
-    // If tab is already active (unlikely on open), load immediately
     const content = container.querySelector('#inspection-history');
-    if (content?.classList.contains('active')) {
-      await ensureLoad();
+    if (content?.classList.contains('active')) await ensureLoad();
+
+    // ---- NEW: Add Inspection modal logic ----
+    const addBtn = host.querySelector('#ihAddBtn');
+    const modal  = document.querySelector('#ihModal');
+    const closeModal = () => { if (modal) modal.style.display = 'none'; };
+    const openModal  = () => { if (modal) { modal.style.display = 'flex'; setTimeout(()=>yearEl?.focus(),50); } };
+
+    const yearEl      = document.querySelector('#ihYear');
+    const nameEl      = document.querySelector('#ihName');
+    const inspEl      = document.querySelector('#ihInspector');
+    const commEl      = document.querySelector('#ihComment');
+    const errEl       = document.querySelector('#ihError');
+    const createEl    = document.querySelector('#ihCreateBtn');
+    const cancelEl    = document.querySelector('#ihCancelBtn');
+    const pickPhotos  = document.querySelector('#ihPickPhotos');
+    const photosSum   = document.querySelector('#ihPhotosSummary');
+    const pickReport  = document.querySelector('#ihPickReport');
+    const reportSum   = document.querySelector('#ihReportSummary');
+
+    let selectedPhotos = [];
+    let selectedReport = null;
+
+    function setError(msg) {
+      if (!errEl) return;
+      if (msg) { errEl.textContent = msg; errEl.style.display = 'block'; }
+      else { errEl.textContent = ''; errEl.style.display = 'none'; }
     }
 
-    // Keep "Add Inspection" disabled per your current decision
-    host.querySelector('#ihAddBtn')?.setAttribute('title', 'Disabled for now');
+    function validate() {
+      const year = Number(yearEl?.value || '');
+      const name = String(nameEl?.value || '').trim();
+      if (!Number.isInteger(year) || year < 1000 || year > 9999) {
+        return 'Enter a valid 4-digit year (1000–9999).';
+      }
+      if (!name || !/inspection/i.test(name)) {
+        return 'Name is required and must include the word "inspection".';
+      }
+      return null;
+    }
+
+    addBtn?.removeAttribute('disabled');
+    addBtn?.removeAttribute('title');
+    addBtn?.addEventListener('click', () => {
+      setError('');
+      selectedPhotos = [];
+      selectedReport = null;
+      if (photosSum) photosSum.textContent = '0 selected';
+      if (reportSum) reportSum.textContent = 'None';
+      openModal();
+    });
+
+    cancelEl?.addEventListener('click', closeModal);
+    modal?.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+
+    pickPhotos?.addEventListener('click', async (e) => {
+      e.preventDefault();
+      try {
+        const res = await window.electronAPI.pickInspectionPhotos();
+        selectedPhotos = Array.isArray(res?.filePaths) ? res.filePaths : [];
+        if (photosSum) photosSum.textContent = `${selectedPhotos.length} selected`;
+      } catch (_) {}
+    });
+
+    pickReport?.addEventListener('click', async (e) => {
+      e.preventDefault();
+      try {
+        const res = await window.electronAPI.pickInspectionReport();
+        selectedReport = res?.filePath || null;
+        if (reportSum) reportSum.textContent = selectedReport ? '1 PDF selected' : 'None';
+      } catch (_) {}
+    });
+
+    createEl?.addEventListener('click', async () => {
+      const err = validate();
+      if (err) { setError(err); return; }
+      setError('');
+      createEl.disabled = true; createEl.textContent = 'Creating…';
+
+      try {
+        const payload = {
+          year: Number(yearEl.value),
+          name: String(nameEl.value || '').trim(),
+          inspector: String(inspEl?.value || '').trim(),
+          comment: String(commEl?.value || '').trim(),
+          photos: selectedPhotos,
+          report: selectedReport
+        };
+        const res = await window.electronAPI.createInspection(stn.name, stn.station_id, payload);
+        if (!res?.success) {
+          setError(res?.message || 'Failed to create inspection.');
+          return;
+        }
+        closeModal();
+        await renderList(host, stn); // refresh list (and recompute Next Due)
+      } catch (e) {
+        console.error('[createInspection] failed', e);
+        setError('Failed to create inspection.');
+      } finally {
+        createEl.disabled = false; createEl.textContent = 'Create';
+      }
+    });
   }
+
 
   // expose
   window.initInspectionHistoryTab = initInspectionHistoryTab;

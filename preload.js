@@ -69,4 +69,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteInspection: (siteName, stationId, folderName) =>
     ipcRenderer.invoke('inspections:delete', siteName, stationId, folderName),
 
+  // ─── Inspections (extended) ─────────────────────────────────────────────
+  listInspections: (siteName, stationId) =>
+    ipcRenderer.invoke('inspections:list', siteName, stationId),
+
+  deleteInspection: (siteName, stationId, folderName) =>
+    ipcRenderer.invoke('inspections:delete', siteName, stationId, folderName),
+
+  pickInspectionPhotos: () =>
+    ipcRenderer.invoke('inspections:pickPhotos'),
+
+  pickInspectionReport: () =>
+    ipcRenderer.invoke('inspections:pickReport'),
+
+  createInspection: (siteName, stationId, payload) =>
+    ipcRenderer.invoke('inspections:create', siteName, stationId, payload),
+
+  // Repairs
+  listRepairs: (siteName, stationId) =>
+    ipcRenderer.invoke('repairs:list', siteName, stationId),
+  saveRepairs: (siteName, stationId, items) =>
+    ipcRenderer.invoke('repairs:save', siteName, stationId, items),  
+
 });
