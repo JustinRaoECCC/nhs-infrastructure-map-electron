@@ -6,6 +6,7 @@ const os   = require('os');
 const backend     = require('./backend/app');
 const lookups     = require('./backend/lookups_repo');
 const excelClient = require('./backend/excel_worker_client');
+const nukeBackend = require('./backend/nuke');
 const dataApi = require('./backend/data_manager');
 const inspectionHistory = require('./backend/inspection_history');
 const repairsBackend = require('./backend/repairs');
@@ -223,6 +224,19 @@ ipcMain.handle('repairs:list', async (_evt, siteName, stationId) =>
 ipcMain.handle('repairs:save', async (_evt, siteName, stationId, items) =>
   repairsBackend.saveRepairs(siteName, stationId, items)
 );
+
+// ─── IPC: Nuke (delete .xlsx + cache, then relaunch) ───────────────────────
+ipcMain.handle('nuke:run', async () => {
+  try {
+    const res = await nukeBackend.nuke();
+    if (!res || res.success === false) return res || { success:false };
+    app.relaunch();   // schedule relaunch
+    app.exit(0);      // exit current instance
+    return { success: true }; // likely not reached
+  } catch (e) {
+    return { success: false, message: String(e) };
+  }
+});
 
 // ─── IPC: Status / Repair settings ─────────────────────────────────────────
 ipcMain.handle('status:get', async () => lookups.getStatusAndRepairSettings());

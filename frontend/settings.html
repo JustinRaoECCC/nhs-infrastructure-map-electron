@@ -6,6 +6,7 @@
   <div class="settings-body">
     <div class="settings-tabs">
       <button class="tab-btn active" data-tab="mapPin">Map Pin</button>
+      <button class="tab-btn" data-tab="nuke">Nuke</button>
       <button class="tab-btn" data-tab="comingSoon" disabled>Coming Soon</button>
     </div>
 
@@ -106,6 +107,13 @@
         </div>
       </div>
 
+    </div>
+
+    <div class="tab-panel" id="tab-nuke" data-tab="nuke" style="display:none;">
+      <p class="hint" style="opacity:.8;margin:.25rem 0 .5rem;">
+        Danger zone – use only for debugging.
+      </p>
+      <div id="nukeMount"></div>
     </div>
 
     <div class="tab-panel" id="tab-comingSoon" data-tab="comingSoon" style="display:none;">

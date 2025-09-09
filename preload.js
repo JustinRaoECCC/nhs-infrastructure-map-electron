@@ -98,4 +98,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setStatusColor: (statusKey, color) => ipcRenderer.invoke('status:setColor', statusKey, color),
   setApplyStatusColors: (flag) => ipcRenderer.invoke('status:setApply', !!flag),
   setApplyRepairColors: (flag) => ipcRenderer.invoke('repair:setApply', !!flag),
+
+  // Nuke
+  nukeProgram: () =>
+    ipcRenderer.invoke('nuke:run'),
 });
