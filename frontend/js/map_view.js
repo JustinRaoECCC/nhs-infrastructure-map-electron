@@ -420,7 +420,6 @@ async function loadRecentPhotoForRHS(stn) {
         <img class="rhs-photo-thumb" 
              src="${photo.url}" 
              alt="${photo.name || `${stn.name} photo`}"
-             title="Click to view full size" />
       </div>`;
 
     // Add click handler to open lightbox (reuse station detail lightbox if available)

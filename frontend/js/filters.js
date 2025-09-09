@@ -94,20 +94,21 @@
   // Preserve your initial-render gating so map pins aren’t cleared at boot
   let INITIAL_RENDER = true;
 
-  function rowActions({ kind, company, location }) {
-    // Only show [+] on company and location rows; assets have no row actions.
-    if (!(kind === 'company' || kind === 'location')) return null;
+  function rowActions({ kind, company, location, assetType }) {
+    // Show [+] on company, location, and asset rows.
+    if (!(kind === 'company' || kind === 'location' || kind === 'asset')) return null;
 
     const wrap = el('div', { class: 'ft-actions', style: 'display:inline-flex;gap:.4rem;margin-left:auto;' });
     const plus = el('button', {
       type: 'button',
       class: 'ft-plus',
-      title: (kind === 'company') ? 'Add location' : 'Add assets'
+      title: (kind === 'company') ? 'Add location' : (kind === 'location' ? 'Add assets' : 'Add instance')
     }, '+');
 
     wrap.appendChild(plus);
     if (company)  wrap.dataset.company  = company;
     if (location) wrap.dataset.location = location;
+    if (assetType) wrap.dataset.assetType = assetType;
     wrap.dataset.kind = kind;
     return wrap;
   }
@@ -180,7 +181,9 @@
             el('label', { class: 'ft-label', style: 'display:inline-flex;gap:.5rem;align-items:center;flex:1;' },
               atCb,
               el('span', { class: 'ft-text' }, at)
-            )
+            ),
+            // [+] on asset row
+            rowActions({ kind: 'asset', company, location: loc, assetType: at })
           );
           atWrap.appendChild(row);
         });
@@ -262,8 +265,28 @@
     dispatchChange();
   }
 
+  // small inline menu for [+] actions on asset row
+  function showPlusMenu(anchorBtn, items = []) {
+    const rect = anchorBtn.getBoundingClientRect();
+    const menu = el('div', { class: 'ft-plus-menu',
+      style: `
+        position: fixed; z-index: 9999; top:${rect.bottom + 4}px; left:${rect.left}px;
+        background:#fff;border:1px solid rgba(0,0,0,.1);box-shadow:0 6px 24px rgba(0,0,0,.12);
+        border-radius:8px; overflow:hidden; min-width:220px;`
+    });
+    items.forEach(({ label, onClick }) => {
+      const it = el('button', { class: 'btn btn-ghost', style: 'display:block;width:100%;text-align:left;padding:.5rem .75rem;border:0;' }, label);
+      it.addEventListener('click', () => { try { onClick(); } finally { cleanup(); } });
+      menu.appendChild(it);
+    });
+    document.body.appendChild(menu);
+    function cleanup() { menu.remove(); document.removeEventListener('click', onDoc); }
+    function onDoc(e) { if (!menu.contains(e.target) && e.target !== anchorBtn) cleanup(); }
+    setTimeout(() => document.addEventListener('click', onDoc), 0);
+  }  
+
   function wireActions(root) {
-    // [+] opens the appropriate creation UI
+    // [+] opens the appropriate creation UI (company/location/asset)
     root.querySelectorAll('.ft-actions .ft-plus').forEach(btn => {
       if (btn.dataset.bound) return;
       btn.addEventListener('click', (e) => {
@@ -271,10 +294,23 @@
         const kind = wrap?.dataset.kind;
         const company = wrap?.dataset.company || '';
         const location = wrap?.dataset.location || '';
+        const assetType = wrap?.dataset.assetType || '';
         if (kind === 'company' && window.openCreateLocationForm) {
           window.openCreateLocationForm(company);
         } else if (kind === 'location' && window.openCreateAssetsWizard) {
           window.openCreateAssetsWizard(company, location);
+        } else if (kind === 'asset') {
+          // Two choices: Import from Excel, or Manually add instance
+          showPlusMenu(e.currentTarget, [
+            {
+              label: 'Import from Excel…',
+              onClick: () => window.openImportMoreForAsset && window.openImportMoreForAsset(company, location, assetType)
+            },
+            {
+              label: 'Manually add an instance…',
+              onClick: () => window.openManualInstanceWizard && window.openManualInstanceWizard(company, location, assetType)
+            }
+          ]);
         }
       });
       btn.dataset.bound = '1';

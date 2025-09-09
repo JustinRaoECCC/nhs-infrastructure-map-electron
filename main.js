@@ -99,6 +99,9 @@ ipcMain.handle('stations:import', async (_evt, b64) => backend.importMultipleSta
 ipcMain.handle('stations:importSelection', async (_evt, payload) => backend.addStationsFromSelection(payload));
 ipcMain.handle('stations:invalidate', async () => backend.invalidateStationCache());
 
+// ─── IPC: Manual Asset Creation ───────────────────────────────────────────
+ipcMain.handle('manual:addInstance', async (_evt, payload) => backend.manualAddInstance(payload));
+
 // ─── IPC: Lookups (reads) ──────────────────────────────────────────────────
 ipcMain.handle('lookups:getActiveCompanies', async () => backend.getActiveCompanies());
 ipcMain.handle('lookups:getLocationsForCompany', async (_evt, company) => backend.getLocationsForCompany(company));

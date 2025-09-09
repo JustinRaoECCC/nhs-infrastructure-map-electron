@@ -237,6 +237,432 @@
     });
   }
 
+  // Manual Instance Wizard (2 steps)
+  async function openManualInstanceWizard(company, location, assetType) {
+    const view = `
+      <div class="panel-form" id="manualPanel">
+        <h2 style="margin-top:0;">Add ${assetType ? `“${assetType}”` : 'Asset'} Manually</h2>
+        <div class="card">
+          <div class="card-title">Context</div>
+          <div class="kv">
+            <div><strong>Company:</strong> ${company || '—'}</div>
+            <div><strong>Location / Province:</strong> ${location || '—'}</div>
+            <div><strong>Asset Type (Category):</strong> ${assetType || '—'}</div>
+          </div>
+        </div>
+
+        <div id="mStep1" class="wizard-step active">
+          <h3>General Information</h3>
+          <div class="form-row">
+            <label>Station ID*</label>
+            <input type="text" id="mStationId" placeholder="e.g., 12345" />
+          </div>
+          <div class="form-row">
+            <label>Site Name*</label>
+            <input type="text" id="mSiteName" placeholder="e.g., River Bridge" />
+          </div>
+          <div class="form-row">
+            <label>Latitude*</label>
+            <input type="text" id="mLat" placeholder="e.g., 49.2827" />
+          </div>
+          <div class="form-row">
+            <label>Longitude*</label>
+            <input type="text" id="mLon" placeholder="e.g., -123.1207" />
+          </div>
+          <div class="form-row">
+            <label>Status*</label>
+            <select id="mStatus">
+              <option value="ACTIVE">ACTIVE</option>
+              <option value="INACTIVE">INACTIVE</option>
+              <option value="MOTHBALLED">MOTHBALLED</option>
+              <option value="UNKNOWN">UNKNOWN</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="mStep2" class="wizard-step" style="display:none;">
+          <h3>Additional Sections & Fields</h3>
+          <p class="hint" style="margin-top:.25rem;">Add as many as you want. <strong>Section</strong> and <strong>Field</strong> are required. Value can be blank.</p>
+          <div class="table-scroll">
+            <table class="data-table" id="mSfTable">
+              <thead>
+                <tr><th style="width:32%;">Section*</th><th style="width:32%;">Field*</th><th>Value</th><th style="width:1%;"></th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div style="margin-top:.5rem;">
+            <button id="mAddRow" class="btn btn-ghost">+ Add row</button>
+          </div>
+        </div>
+
+        <div class="wizard-footer" style="justify-content:flex-end;">
+          <button id="mCancel" class="btn btn-ghost">Cancel</button>
+          <button id="mBack" class="btn btn-ghost" disabled>Back</button>
+          <button id="mNext" class="btn btn-primary">Next</button>
+          <button id="mSave" class="btn btn-primary" style="display:none;">Save</button>
+        </div>
+      </div>`;
+    const host = showPanel(view);
+    if (!host) return;
+
+    const $ = sel => host.querySelector(sel);
+    const tbody = $('#mSfTable tbody');
+
+    function addRow(sec = '', fld = '', val = '') {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><input type="text" class="mSec" placeholder="Section name" value="${sec}"/></td>
+        <td><input type="text" class="mFld" placeholder="Field name" value="${fld}"/></td>
+        <td><input type="text" class="mVal" placeholder="Value (optional)" value="${val}"/></td>
+        <td><button class="btn btn-ghost mDelRow" title="Remove">×</button></td>`;
+      tr.querySelector('.mDelRow').addEventListener('click', () => tr.remove());
+      tbody.appendChild(tr);
+    }
+
+    $('#mAddRow').addEventListener('click', () => addRow());
+
+    $('#mCancel').addEventListener('click', () => closePanel());
+    $('#mNext').addEventListener('click', () => {
+      const stationId = ($('#mStationId')?.value || '').trim();
+      const siteName  = ($('#mSiteName')?.value || '').trim();
+      const lat       = ($('#mLat')?.value || '').trim();
+      const lon       = ($('#mLon')?.value || '').trim();
+      const status    = ($('#mStatus')?.value || '').trim() || 'UNKNOWN';
+      if (!stationId || !siteName || !lat || !lon) {
+        return alert('Please fill Station ID, Site Name, Latitude, and Longitude.');
+      }
+      if (isNaN(Number(lat)) || isNaN(Number(lon))) {
+        return alert('Latitude and Longitude must be numeric.');
+      }
+      $('#mStep1').style.display = 'none';
+      $('#mStep1').classList.remove('active');
+      $('#mStep2').style.display = '';
+      $('#mStep2').classList.add('active');
+      $('#mBack').disabled = false;
+      $('#mNext').style.display = 'none';
+      $('#mSave').style.display = '';
+      if (!tbody.children.length) addRow();
+    });
+    $('#mBack').addEventListener('click', () => {
+      $('#mStep2').style.display = 'none';
+      $('#mStep2').classList.remove('active');
+      $('#mStep1').style.display = '';
+      $('#mStep1').classList.add('active');
+      $('#mBack').disabled = true;
+      $('#mNext').style.display = '';
+      $('#mSave').style.display = 'none';
+    });
+
+    $('#mSave').addEventListener('click', async () => {
+      const payload = {
+        company,
+        location,
+        assetType,
+        general: {
+          stationId: ($('#mStationId')?.value || '').trim(),
+          siteName:  ($('#mSiteName')?.value || '').trim(),
+          lat:       ($('#mLat')?.value || '').trim(),
+          lon:       ($('#mLon')?.value || '').trim(),
+          status:    ($('#mStatus')?.value || 'UNKNOWN').trim()
+        },
+        extras: []
+      };
+      if (!payload.general.stationId || !payload.general.siteName || !payload.general.lat || !payload.general.lon) {
+        return alert('General Information is incomplete.');
+      }
+      if (isNaN(Number(payload.general.lat)) || isNaN(Number(payload.general.lon))) {
+        return alert('Latitude and Longitude must be numeric.');
+      }
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+      for (const tr of rows) {
+        const sec = (tr.querySelector('.mSec')?.value || '').trim();
+        const fld = (tr.querySelector('.mFld')?.value || '').trim();
+        const val = (tr.querySelector('.mVal')?.value || '').trim();
+        if (!sec && !fld && !val) continue; // allow empty rows
+        if (!sec || !fld) {
+          return alert('Each added row requires both Section and Field.');
+        }
+        payload.extras.push({ section: sec, field: fld, value: val });
+      }
+      try {
+        $('#mSave').disabled = true;
+        $('#mSave').textContent = 'Saving…';
+        const res = await window.electronAPI.manualCreateInstance(payload);
+        if (!res || res.success === false) {
+          alert(res?.message || 'Failed to create instance.');
+          return;
+        }
+        if (typeof window.electronAPI.invalidateStationCache === 'function') {
+          await window.electronAPI.invalidateStationCache();
+        }
+        await window.refreshFilters?.();
+        await window.refreshMarkers?.();
+        await window.renderList?.();
+        alert('Asset created.');
+        closePanel();
+      } catch (e) {
+        console.error('[manualCreate] failed', e);
+        alert('Unexpected error while creating the asset.');
+      } finally {
+        $('#mSave').disabled = false;
+        $('#mSave').textContent = 'Save';
+      }
+    });
+  }
+
+  // Import MORE for an existing Asset Type (new standalone window)
+  async function openImportMoreForAsset(company, location, assetType) {
+    const view = `
+      <div class="panel-form" id="importMorePanel">
+        <h2 style="margin-top:0;">Import more into “${assetType || 'Asset'}”</h2>
+
+        <div class="card">
+          <div class="card-title">Context</div>
+          <div class="kv">
+            <div><strong>Company:</strong> ${company || '—'}</div>
+            <div><strong>Location / Province:</strong> ${location || '—'}</div>
+            <div><strong>Asset Type (Category):</strong> ${assetType || '—'}</div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label>Excel File</label>
+          <div class="filepicker">
+            <input type="file" id="imExcel" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+            <span id="imExcelLabel">Select Excel File</span>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label>Select sheet</label>
+          <select id="imSheet" disabled>
+            <option>Select Excel file first</option>
+          </select>
+        </div>
+
+        <hr style="margin:1rem 0;">
+
+        <h3>Select data</h3>
+        <div class="table-toolbar">
+          <div>
+            <button id="imSelectAll" class="btn btn-ghost">Select all</button>
+            <button id="imDeselectAll" class="btn btn-ghost">Deselect all</button>
+          </div>
+          <div id="imCount" class="badge">0 selected</div>
+        </div>
+
+        <div class="table-scroll">
+          <table id="imTable" class="data-table">
+            <thead></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="wizard-footer" style="justify-content:flex-end;">
+          <button id="imCancel" class="btn btn-ghost">Cancel</button>
+          <button id="imImport" class="btn btn-primary" disabled>Import Selected</button>
+        </div>
+      </div>`;
+    const host = showPanel(view);
+    if (!host) return;
+
+    const $ = sel => host.querySelector(sel);
+    const state = {
+      excelB64: null,
+      sheets: [],
+      selectedSheet: null,
+      headers: [],
+      sections: [],
+      rows: [],
+      selectedIdx: new Set()
+    };
+
+    const thead = $('#imTable thead');
+    const tbody = $('#imTable tbody');
+
+    function updateBadge() { $('#imCount').textContent = `${state.selectedIdx.size} selected`; }
+    function setButtons() { $('#imImport').disabled = !(state.rows && state.rows.length && state.selectedIdx.size); }
+
+    function fileToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const rdr = new FileReader();
+        rdr.onload = () => {
+          const s = String(rdr.result || '');
+          const i = s.indexOf(',');
+          resolve(i >= 0 ? s.slice(i + 1) : s);
+        };
+        rdr.onerror = reject;
+        rdr.readAsDataURL(file);
+      });
+    }
+    function populateSheetSelect(names) {
+      const sel = $('#imSheet');
+      sel.innerHTML = '';
+      if (!names || !names.length) {
+        sel.appendChild(new Option('No sheets detected', '', true, true));
+        sel.disabled = true;
+        return;
+      }
+      names.forEach((n, i) => sel.appendChild(new Option(n, n, i===0, i===0)));
+      sel.disabled = false;
+      state.selectedSheet = sel.value || null;
+    }
+    function renderPreview() {
+      if (!thead || !tbody) return;
+      thead.innerHTML = ''; 
+      tbody.innerHTML = '';
+      if (!state.rows.length) {
+        tbody.innerHTML = `<tr><td colspan="99" style="opacity:.7;padding:.75em;">Select an Excel file and sheet first.</td></tr>`;
+        updateBadge(); 
+        setButtons();
+        return;
+      }
+      // Sections row
+      const trSec = document.createElement('tr');
+      const thLead = document.createElement('th'); 
+      thLead.style.width = '36px';
+      thLead.innerHTML = '<input id="imChkAll" type="checkbox"/>'; 
+      trSec.appendChild(thLead);
+      let i = 0;
+      while (i < state.headers.length) {
+        const sec = state.sections[i] || '';
+        let span = 1;
+        while (i + span < state.headers.length && (state.sections[i + span] || '') === sec) span++;
+        const th = document.createElement('th'); 
+        th.colSpan = span; 
+        th.textContent = sec || '';
+        trSec.appendChild(th); 
+        i += span;
+      }
+      thead.appendChild(trSec);
+      // Fields row
+      const trFld = document.createElement('tr');
+      trFld.innerHTML = '<th></th>' + state.headers.map(h => `<th>${h}</th>`).join('');
+      thead.appendChild(trFld);
+      // Check-all
+      const chkAll = thead.querySelector('#imChkAll');
+      if (chkAll) {
+        chkAll.addEventListener('change', () => {
+          state.selectedIdx = chkAll.checked ? new Set(state.rows.map((_, i) => i)) : new Set();
+          tbody.querySelectorAll('input.imRowChk[type=checkbox]').forEach((cb, i) => cb.checked = chkAll.checked);
+          updateBadge(); setButtons();
+        });
+      }
+      // Body
+      state.selectedIdx = new Set(state.rows.map((_, i) => i)); // default all selected
+      state.rows.forEach((r, i) => {
+        const tr = document.createElement('tr');
+        const c0 = document.createElement('td');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox'; 
+        cb.className = 'imRowChk'; 
+        cb.checked = true;
+        cb.addEventListener('change', () => {
+          if (cb.checked) state.selectedIdx.add(i); else state.selectedIdx.delete(i);
+          updateBadge(); setButtons();
+        });
+        c0.appendChild(cb); tr.appendChild(c0);
+        state.headers.forEach((h, idx) => {
+          const sec = state.sections[idx] || '';
+          const key = sec ? `${sec} – ${h}` : h;
+          const td = document.createElement('td');
+          td.textContent = (r?.[key] ?? r?.[h] ?? '');
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      updateBadge(); setButtons();
+    }
+    async function buildPreview() {
+      if (!state.excelB64 || !state.selectedSheet) { 
+        state.rows = []; renderPreview(); return; 
+      }
+      try {
+        const res = await window.electronAPI.excelParseRowsFromSheet(state.excelB64, state.selectedSheet);
+        if (!res || res.success === false) {
+          console.error('[importMore] parseRowsFromSheet failed:', res?.message);
+          state.rows = []; renderPreview(); return;
+        }
+        state.rows = res.rows || [];
+        state.headers = res.headers || (state.rows.length ? Object.keys(state.rows[0]) : []);
+        state.sections = res.sections || state.headers.map(() => '');
+        renderPreview();
+      } catch (e) {
+        console.error('[importMore] buildPreview error', e); 
+        state.rows = []; renderPreview();
+      }
+    }
+
+    // Bindings
+    $('#imCancel').addEventListener('click', () => closePanel());
+    $('#imSelectAll').addEventListener('click', () => {
+      state.selectedIdx = new Set(state.rows.map((_, i) => i));
+      tbody?.querySelectorAll('input.imRowChk').forEach(cb => cb.checked = true);
+      updateBadge(); setButtons();
+    });
+    $('#imDeselectAll').addEventListener('click', () => {
+      state.selectedIdx.clear();
+      tbody?.querySelectorAll('input.imRowChk').forEach(cb => cb.checked = false);
+      updateBadge(); setButtons();
+    });
+    $('#imExcel').addEventListener('change', async (e) => {
+      const f = (e.target.files || [])[0];
+      if (!f) {
+        state.excelB64 = null; state.sheets = []; populateSheetSelect([]); renderPreview(); return;
+      }
+      $('#imExcelLabel').textContent = f.name || 'Selected Excel';
+      try {
+        state.excelB64 = await fileToBase64(f);
+        const res = await window.electronAPI.excelListSheets(state.excelB64);
+        state.sheets = (res && res.sheets) || [];
+        populateSheetSelect(state.sheets);
+        await buildPreview();
+      } catch (err) {
+        console.error('[importMore] list sheets failed', err);
+        populateSheetSelect([]); renderPreview();
+      }
+    });
+    $('#imSheet').addEventListener('change', async () => {
+      state.selectedSheet = $('#imSheet').value || null;
+      await buildPreview();
+    });
+    $('#imImport').addEventListener('click', async () => {
+      const idxs = Array.from(state.selectedIdx.values()).sort((a,b) => a-b);
+      if (!idxs.length) return alert('Please select at least one row.');
+      try {
+        $('#imImport').textContent = 'Importing…';
+        $('#imImport').disabled = true;
+        const selectedRows = idxs.map(i => state.rows[i]).filter(Boolean);
+        const payload = {
+          location,
+          company,
+          sheetName: state.selectedSheet || 'Data',
+          sections: state.sections,
+          headers: state.headers,
+          rows: selectedRows,
+          assetType
+        };
+        const res = await window.electronAPI.importSelection(payload);
+        if (!res || res.success === false) return alert(res?.message || 'Import failed.');
+        if (typeof window.electronAPI.invalidateStationCache === 'function') {
+          await window.electronAPI.invalidateStationCache();
+        }
+        await window.refreshFilters?.();
+        await window.refreshMarkers?.();
+        await window.renderList?.();
+        alert(`Successfully imported ${res.added} row(s) into “${assetType}”.`);
+        closePanel();
+      } catch (e) {
+        console.error('[importMore] import failed', e);
+        alert('Unexpected import error. See console.');
+      } finally {
+        $('#imImport').textContent = 'Import Selected';
+        setButtons();
+      }
+    });
+  }
+
   // Create Assets - Updated with schema conformance
   async function openCreateAssetsWizard(company, location) {
     const view = `
@@ -291,7 +717,7 @@
 
         <div class="wizard-footer" style="justify-content:flex-end;">
           <button id="btnCancel2" class="btn btn-ghost">Cancel</button>
-          <button id="btnImport2" class="btn btn-primary" disabled>Import Selected</button>
+          <button id="btnImport2" class="btn btn-primary" disabled>Import Selected</button><button id="btnManual2" class="btn btn-ghost" style="margin-left:.5rem;">Create Manually…</button>
         </div>
       </div>`;
     const host = showPanel(view);
@@ -314,6 +740,12 @@
 
     function updateBadge() { 
       $('#rowCount2').textContent = `${state.selectedIdx.size} selected`; 
+    }
+
+    function setButtonsState() {
+      const hasExcel = !!(state.rows && state.rows.length);
+      $('#btnImport2').disabled = !hasExcel;
+      $('#btnManual2').disabled = !($('#assetName2')?.value || '').trim();
     }
 
     function fileToBase64(file) {
@@ -392,6 +824,7 @@
       state.rows.forEach((r, i) => {
         const tr = document.createElement('tr');
         const c0 = document.createElement('td');
+        // per-row checkbox
         const cb = document.createElement('input');
         cb.type = 'checkbox'; 
         cb.className = 'rowchk2'; 
@@ -416,6 +849,7 @@
       updateBadge();
     }
 
+    // Build/refresh preview based on excel + sheet
     async function buildPreview() {
       if (!state.excelB64 || !state.selectedSheet) { 
         state.rows = []; 
@@ -439,6 +873,7 @@
         state.rows = []; 
         renderPreview();
       }
+      setButtonsState();
     }
 
     // Bind UI
@@ -456,6 +891,16 @@
       updateBadge();
     });
 
+    // Enable/disable buttons depending on inputs
+    host.querySelector('#assetName2')?.addEventListener('input', setButtonsState);
+
+    // Manual path from Create Assets window (no Excel needed)
+    $('#btnManual2')?.addEventListener('click', () => {
+      const assetName = ($('#assetName2')?.value || '').trim();
+      if (!assetName) return alert('Please enter an asset name first.');
+      openManualInstanceWizard(company, location, assetName);
+    });    
+
     $('#excelFile2')?.addEventListener('change', async (e) => {
       const f = (e.target.files || [])[0];
       if (!f) {
@@ -471,7 +916,7 @@
         const res = await window.electronAPI.excelListSheets(state.excelB64);
         state.sheets = (res && res.sheets) || [];
         populateSheetSelect(state.sheets);
-        $('#btnImport2').disabled = false;
+        setButtonsState();
         await buildPreview();
       } catch (err) {
         console.error('[assets] list sheets failed', err);
@@ -538,7 +983,7 @@
         alert('Unexpected import error. See console.');
       } finally {
         $('#btnImport2').textContent = 'Import Selected';
-        $('#btnImport2').disabled = false;
+        setButtonsState();
       }
     });
   }
@@ -581,6 +1026,8 @@
   window.openCreateCompanyForm  = window.openCreateCompanyForm  || openCreateCompanyForm;
   window.openCreateLocationForm = window.openCreateLocationForm || openCreateLocationForm;
   window.openCreateAssetsWizard = window.openCreateAssetsWizard || openCreateAssetsWizard;
+  window.openManualInstanceWizard = window.openManualInstanceWizard || openManualInstanceWizard;
+  window.openImportMoreForAsset = window.openImportMoreForAsset || openImportMoreForAsset;
 
   // Also expose view switches
   window.showMapView   = window.showMapView   || showMapView;

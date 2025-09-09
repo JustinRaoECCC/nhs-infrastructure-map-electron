@@ -341,6 +341,87 @@ async function addStationsFromSelection(payload) {
 }
 
 /**
+ * Manually add a single asset instance without Excel import.
+ * payload: {
+ *   company, location, assetType,
+ *   general: { stationId, siteName, lat, lon, status },
+ *   extras: [ { section, field, value }, ... ]
+ * }
+ */
+async function manualAddInstance(payload = {}) {
+  try {
+    const company   = String(payload.company || '').trim();
+    const location  = String(payload.location || '').trim();
+    const assetType = String(payload.assetType || '').trim();
+    const gi        = payload.general || {};
+    const extras    = Array.isArray(payload.extras) ? payload.extras : [];
+
+    if (!location || !assetType) {
+      return { success:false, message:'Location and Asset Type are required.' };
+    }
+    const sid = String(gi.stationId || '').trim();
+    const name= String(gi.siteName  || '').trim();
+    const lat = String(gi.lat       || '').trim();
+    const lon = String(gi.lon       || '').trim();
+    const status = String(gi.status || 'UNKNOWN').trim();
+    if (!sid || !name || !lat || !lon) {
+      return { success:false, message:'Station ID, Site Name, Latitude, and Longitude are required.' };
+    }
+    if (isNaN(Number(lat)) || isNaN(Number(lon))) {
+      return { success:false, message:'Latitude and Longitude must be numeric.' };
+    }
+
+    // Ensure lookup rows exist
+    try {
+      if (company) await lookupsRepo.upsertCompany(company, true);
+      if (location && company) await lookupsRepo.upsertLocation(location, company);
+      await lookupsRepo.upsertAssetType(assetType, location);
+    } catch (e) {
+      // non-fatal
+      console.warn('[manualAddInstance] upserts (lookups) failed:', e?.message || e);
+    }
+
+    // Build minimal two-row header set (GI anchors + extras)
+    const giFields = ['Station ID','Category','Site Name','Province','Latitude','Longitude','Status'];
+    const headers = giFields.slice();
+    const sections = giFields.map(() => 'General Information');
+    for (const x of extras) {
+      const sec = String(x.section || '').trim();
+      const fld = String(x.field || '').trim();
+      if (!sec || !fld) continue; // enforce required sec/field
+      headers.push(fld);
+      sections.push(sec);
+    }
+
+    // Compose single row
+    const row = {
+      'Station ID': sid,
+      'Category': assetType,                 // Category comes from selected asset type
+      'Site Name': name,
+      'Province': location,                  // Province comes from chosen location
+      'Latitude': lat,
+      'Longitude': lon,
+      'Status': status
+    };
+    for (const x of extras) {
+      const sec = String(x.section || '').trim();
+      const fld = String(x.field || '').trim();
+      const val = (x.value ?? '');
+      if (!sec || !fld) continue;
+      row[`${sec} – ${fld}`] = val;
+      row[fld] = val;
+    }
+
+    const sheetName = `${assetType} ${location}`;
+    await excel.writeLocationRows(location, sheetName, sections, headers, [row]);
+    return { success:true, added:1, sheet: sheetName };
+  } catch (e) {
+    console.error('[manualAddInstance] failed:', e);
+    return { success:false, message:String(e) };
+  }
+}
+
+/**
  * List sheet names from a base64 .xlsx payload.
  * Renderer calls this to populate the Step 3 sheet selector.
  */
@@ -506,6 +587,7 @@ module.exports = {
   importMultipleStations,
   listExcelSheets,
   addStationsFromSelection,
+  manualAddInstance,
   upsertCompany: lookupsRepo.upsertCompany,
   upsertLocation: lookupsRepo.upsertLocation,
   upsertAssetType: lookupsRepo.upsertAssetType,

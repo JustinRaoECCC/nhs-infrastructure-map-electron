@@ -9,6 +9,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   importMultipleStations: (b64) => ipcRenderer.invoke('stations:import', b64),
   invalidateStationCache: () => ipcRenderer.invoke('stations:invalidate'),
 
+  // ─── Manual instance creation ───────────────────────────────────────────
+  manualCreateInstance:   (payload) => ipcRenderer.invoke('manual:addInstance', payload),
+
   // ─── Lookups (reads) ────────────────────────────────────────────────────
   // Drives the hierarchical filter tree (Company ▸ Locations ▸ Asset Types).
   // Lookups / colors
