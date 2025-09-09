@@ -89,6 +89,17 @@ async function getStationData(opts = {}) {
     }
   }
 
+  // NEW: load status override settings once (used to optionally override color)
+  let applyStatus = false;
+  let statusColors = new Map();
+  try {
+    const sr = await lookupsRepo.getStatusAndRepairSettings();
+    applyStatus = !!sr.applyStatusColorsOnMap;
+    statusColors = new Map(Object.entries(sr.statusColors || {})); // keys expected lower-cased
+  } catch (e) {
+    console.warn('[colors] failed to read status settings:', e?.message || e);
+  }
+
   // Continue with the rest of the function...
   for (let i = 0; i < rows.length; i++) {
     const st = rows[i];
@@ -116,6 +127,18 @@ async function getStationData(opts = {}) {
         }
       }
     }
+    out[i] = { ...st, color };
+
+    // NEW: Status overrides (only for non-Active). If enabled, override computed color.
+    // Supported keys: 'inactive', 'mothballed', 'unknown'. Keys matched case-insensitively.
+    if (!skipColors && applyStatus) {
+      const s = norm(st.status || '');
+      if (s && s !== 'active') {
+        const override = statusColors.get(s);
+        if (override) color = override;
+      }
+    }
+
     out[i] = { ...st, color };
   }
 

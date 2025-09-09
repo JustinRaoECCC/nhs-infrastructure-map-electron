@@ -223,3 +223,9 @@ ipcMain.handle('repairs:list', async (_evt, siteName, stationId) =>
 ipcMain.handle('repairs:save', async (_evt, siteName, stationId, items) =>
   repairsBackend.saveRepairs(siteName, stationId, items)
 );
+
+// ─── IPC: Status / Repair settings ─────────────────────────────────────────
+ipcMain.handle('status:get', async () => lookups.getStatusAndRepairSettings());
+ipcMain.handle('status:setColor', async (_evt, key, color) => lookups.setStatusColor(key, color));
+ipcMain.handle('status:setApply', async (_evt, flag) => lookups.setApplyStatusColors(!!flag));
+ipcMain.handle('repair:setApply', async (_evt, flag) => lookups.setApplyRepairColors(!!flag));

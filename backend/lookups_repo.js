@@ -43,6 +43,11 @@ let _cache = {
   companies: [],
   locsByCompany: {},               // { [company]: string[] }
   assetsByLocation: {},            // { [location]: string[] }
+  // NEW: status/repair settings
+  statusColors: new Map(),         // Map<statusKey, color> (keys lowercased: inactive, mothballed, unknown)
+  applyStatusColorsOnMap: false,
+  repairColors: new Map(),         // reserved for future
+  applyRepairColorsOnMap: false,
 };
 
 function _invalidateAllCaches() { _cache.mtimeMs = -1; try { fs.unlinkSync(CACHE_PATH); } catch(_) {} }
@@ -72,6 +77,12 @@ function _loadJsonCache(mtimeMs) {
       companies: raw.companies || [],
       locsByCompany: raw.locsByCompany || {},
       assetsByLocation: raw.assetsByLocation || {},
+      assetsByLocation: raw.assetsByLocation || {},
+      // NEW
+      statusColors: new Map(Object.entries(raw.statusColors || {})),
+      applyStatusColorsOnMap: !!raw.applyStatusColorsOnMap,
+      repairColors: new Map(Object.entries(raw.repairColors || {})),
+      applyRepairColorsOnMap: !!raw.applyRepairColorsOnMap,
     };
     return true;
   } catch(_) { return false; }
@@ -102,6 +113,11 @@ function _saveJsonCache() {
       companies: _cache.companies,
       locsByCompany: _cache.locsByCompany,
       assetsByLocation: _cache.assetsByLocation,
+      // NEW
+      statusColors: Object.fromEntries(_cache.statusColors),
+      applyStatusColorsOnMap: _cache.applyStatusColorsOnMap,
+      repairColors: Object.fromEntries(_cache.repairColors),
+      applyRepairColorsOnMap: _cache.applyRepairColorsOnMap,
     };
     fs.writeFileSync(CACHE_PATH, JSON.stringify(json));
   } catch(_) {}
@@ -131,6 +147,11 @@ async function _primeAllCaches() {
   const locsByCompany = snap.locsByCompany || {};
   const assetsByLocation = snap.assetsByLocation || {};
 
+  // NEW: status/repair settings from snapshot
+  const statusColors = new Map(Object.entries(snap.statusColors || {}));
+  const applyStatusColorsOnMap = !!snap.applyStatusColorsOnMap;
+  const applyRepairColorsOnMap = !!snap.applyRepairColorsOnMap;
+
   _cache = {
     mtimeMs,
     colorsGlobal: global,
@@ -139,6 +160,11 @@ async function _primeAllCaches() {
     companies: uniqSorted(companies),
     locsByCompany,
     assetsByLocation,
+    // NEW
+    statusColors,
+    applyStatusColorsOnMap,
+    repairColors: new Map(), // future
+    applyRepairColorsOnMap,
   };
   _saveJsonCache()
 }
@@ -239,6 +265,35 @@ async function upsertAssetType(assetType, location) {
   return res;
 }
 
+// ─── NEW: Status/Repair settings APIs ──────────────────────────────────────
+async function getStatusAndRepairSettings() {
+  await _primeAllCaches();
+  return {
+    statusColors: Object.fromEntries(_cache.statusColors),
+    applyStatusColorsOnMap: _cache.applyStatusColorsOnMap,
+    repairColors: Object.fromEntries(_cache.repairColors),
+    applyRepairColorsOnMap: _cache.applyRepairColorsOnMap
+  };
+}
+
+async function setStatusColor(statusKey, color) {
+  const res = await excel.setStatusColor(statusKey, color);
+  _invalidateAllCaches();
+  return res;
+}
+
+async function setApplyStatusColors(flag) {
+  const res = await excel.setSettingBoolean('applyStatusColorsOnMap', !!flag);
+  _invalidateAllCaches();
+  return res;
+}
+
+async function setApplyRepairColors(flag) {
+  const res = await excel.setSettingBoolean('applyRepairColorsOnMap', !!flag);
+  _invalidateAllCaches();
+  return res;
+}
+
 module.exports = {
   // ensure/init
   ensureLookupsReady,
@@ -267,6 +322,11 @@ module.exports = {
   setAssetTypeColor,
   setAssetTypeColorForLocation,
   setAssetTypeColorForCompanyLocation,
+  // NEW: status/repair settings
+  getStatusAndRepairSettings,
+  setStatusColor,
+  setApplyStatusColors,
+  setApplyRepairColors,
   // paths
   LOOKUPS_PATH,
   DATA_DIR, LOCATIONS_DIR, REPAIRS_DIR,

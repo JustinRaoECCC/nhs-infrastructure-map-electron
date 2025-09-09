@@ -35,32 +35,52 @@ const getSheet = (wb, name) => wb.getWorksheet(name) || wb.worksheets.find(ws =>
 async function ensureLookupsReady() {
   progress('ensure', 40, 'Ensuring data folders…');
   ensureDir(DATA_DIR); ensureDir(LOCATIONS_DIR); ensureDir(REPAIRS_DIR);
-  // If missing, prefer copying the seed file (instant, no ExcelJS load).
   if (!fs.existsSync(LOOKUPS_PATH)) {
     if (fs.existsSync(SEED_PATH)) {
       progress('ensure', 45, 'Copying seed workbook…');
       fs.copyFileSync(SEED_PATH, LOOKUPS_PATH);
       progress('ensure', 55, 'Seed workbook copied');
-      return true;
+      // fall through to post-creation validation to add new sheets if seed lacks them
     }
   }
-  // If the file exists (or no seed available), ensure required sheets.
   const _ExcelJS = getExcel();
   const wb = new _ExcelJS.Workbook();
+
   if (fs.existsSync(LOOKUPS_PATH)) {
     progress('ensure', 55, 'Opening lookups.xlsx…');
     await wb.xlsx.readFile(LOOKUPS_PATH);
     progress('ensure', 65, 'Validating sheets…');
+
     const need = (n) => !wb.worksheets.some(ws => ws.name === n);
     let changed = false;
-    if (need('Companies'))         { wb.addWorksheet('Companies').addRow(['company','active']); changed = true; }
-    if (need('Locations'))         { wb.addWorksheet('Locations').addRow(['location','company']); changed = true; }
-    if (need('AssetTypes'))        { wb.addWorksheet('AssetTypes').addRow(['asset_type','location','company','color']); changed = true; }
-    if (need('Custom Weights'))    { wb.addWorksheet('Custom Weights').addRow(['weight','active']); changed = true; }
-    if (need('Workplan Constants')){ wb.addWorksheet('Workplan Constants').addRow(['Field','Value']); changed = true; }
-    if (need('Algorithm Parameters')) { wb.addWorksheet('Algorithm Parameters')
-                                         .addRow(['Applies To','Parameter','Condition','MaxWeight','Option','Weight','Selected']); changed = true; }
-    if (need('Workplan Details'))  { wb.addWorksheet('Workplan Details').addRow(['Parameter','Value']); changed = true; }
+
+    if (need('Companies'))          { wb.addWorksheet('Companies').addRow(['company','active']); changed = true; }
+    if (need('Locations'))          { wb.addWorksheet('Locations').addRow(['location','company']); changed = true; }
+    if (need('AssetTypes'))         { wb.addWorksheet('AssetTypes').addRow(['asset_type','location','company','color']); changed = true; }
+    if (need('Custom Weights'))     { wb.addWorksheet('Custom Weights').addRow(['weight','active']); changed = true; }
+    if (need('Workplan Constants')) { wb.addWorksheet('Workplan Constants').addRow(['Field','Value']); changed = true; }
+    if (need('Algorithm Parameters')) {
+      wb.addWorksheet('Algorithm Parameters').addRow(['Applies To','Parameter','Condition','MaxWeight','Option','Weight','Selected']); changed = true;
+    }
+    if (need('Workplan Details'))   { wb.addWorksheet('Workplan Details').addRow(['Parameter','Value']); changed = true; }
+
+    // NEW sheets
+    if (need('Status Colors')) {
+      const ws = wb.addWorksheet('Status Colors');
+      ws.addRow(['Status','Color']);
+      ws.addRow(['Inactive',    '#8e8e8e']);
+      ws.addRow(['Mothballed',  '#a87ecb']);
+      ws.addRow(['Unknown',     '#999999']);
+      changed = true;
+    }
+    if (need('Settings')) {
+      const ws = wb.addWorksheet('Settings');
+      ws.addRow(['Key','Value']);
+      ws.addRow(['applyStatusColorsOnMap','FALSE']);
+      ws.addRow(['applyRepairColorsOnMap','FALSE']);
+      changed = true;
+    }
+
     if (changed) {
       progress('ensure', 75, 'Writing workbook changes…');
       await wb.xlsx.writeFile(LOOKUPS_PATH);
@@ -76,6 +96,19 @@ async function ensureLookupsReady() {
     wb.addWorksheet('Workplan Constants').addRow(['Field','Value']);
     wb.addWorksheet('Algorithm Parameters').addRow(['Applies To','Parameter','Condition','MaxWeight','Option','Weight','Selected']);
     wb.addWorksheet('Workplan Details').addRow(['Parameter','Value']);
+
+    // NEW: default Status Colors & Settings
+    const wsS = wb.addWorksheet('Status Colors');
+    wsS.addRow(['Status','Color']);
+    wsS.addRow(['Inactive','#8e8e8e']);
+    wsS.addRow(['Mothballed','#a87ecb']);
+    wsS.addRow(['Unknown','#999999']);
+
+    const wsCfg = wb.addWorksheet('Settings');
+    wsCfg.addRow(['Key','Value']);
+    wsCfg.addRow(['applyStatusColorsOnMap','FALSE']);
+    wsCfg.addRow(['applyRepairColorsOnMap','FALSE']);
+
     progress('ensure', 70, 'Saving new workbook…');
     await wb.xlsx.writeFile(LOOKUPS_PATH);
     progress('ensure', 80, 'Workbook ready');
@@ -101,6 +134,7 @@ async function readLookupsSnapshot() {
   const colorsGlobal = {};               // { assetType: color }
   const colorsByLoc  = {};               // { location: { assetType: color } }
   const colorsByCompanyLoc = {};         // { company: { location: { assetType: color } } }
+  
   if (wsA) {
     wsA.eachRow({ includeEmpty:false }, (row, i) => {
       if (i === 1) return;
@@ -151,12 +185,40 @@ async function readLookupsSnapshot() {
       (assetsByLocation[loc] ||= new Set()).add(at);
     });
   }
+  // NEW: Status Colors + Settings
+  const wsSC = getSheet(wb, 'Status Colors');
+  const statusColors = {};
+  if (wsSC) {
+    wsSC.eachRow({ includeEmpty:false }, (row, i) => {
+      if (i === 1) return;
+      const k = normStr(row.getCell(1)?.text).toLowerCase(); // inactive/mothballed/unknown
+      const col = normStr(row.getCell(2)?.text);
+      if (k) statusColors[k] = col || '';
+    });
+  }
+
+  const wsCfg = getSheet(wb, 'Settings');
+  let applyStatusColorsOnMap = false;
+  let applyRepairColorsOnMap = false;
+  if (wsCfg) {
+    wsCfg.eachRow({ includeEmpty:false }, (row, i) => {
+      if (i === 1) return;
+      const key = normStr(row.getCell(1)?.text);
+      const val = normStr(row.getCell(2)?.text);
+      if (key.toLowerCase() === 'applystatuscolorsonmap') applyStatusColorsOnMap = toBool(val);
+      if (key.toLowerCase() === 'applyrepaircolorsonmap') applyRepairColorsOnMap = toBool(val);
+    });
+  }
+
   Object.keys(locsByCompany).forEach(k => { locsByCompany[k] = Array.from(locsByCompany[k]).sort((a,b)=>a.localeCompare(b)); });
   Object.keys(assetsByLocation).forEach(k => { assetsByLocation[k] = Array.from(assetsByLocation[k]).sort((a,b)=>a.localeCompare(b)); });
 
   const payload = {
     mtimeMs, colorsGlobal, colorsByLoc, colorsByCompanyLoc,
-    companies: uniqSorted(companies), locsByCompany, assetsByLocation
+    companies: uniqSorted(companies), locsByCompany, assetsByLocation,
+    statusColors,
+    applyStatusColorsOnMap,
+    applyRepairColorsOnMap
   };
   progress('done', 100, 'Excel ready');
   return payload;
@@ -170,6 +232,48 @@ async function setAssetTypeColor(assetType, color) {
   // Global colors are deliberately disabled in the strict model.
   // Kept for backward calls: no-op with explicit response.
   return { success: false, disabled: true, message: 'Global colors are disabled; use setAssetTypeColorForCompanyLocation' };
+}
+
+async function setStatusColor(statusKey, color) {
+  await ensureLookupsReady();
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(LOOKUPS_PATH);
+  const ws = getSheet(wb, 'Status Colors') || wb.addWorksheet('Status Colors');
+  if (ws.rowCount === 0) ws.addRow(['Status','Color']);
+  const tgt = lc(statusKey);
+  let found = false;
+  ws.eachRow({ includeEmpty:false }, (row, i) => {
+    if (i === 1) return;
+    if (lc(row.getCell(1)?.text) === tgt) {
+      row.getCell(2).value = color;
+      found = true;
+    }
+  });
+  if (!found) ws.addRow([statusKey, color]);
+  await wb.xlsx.writeFile(LOOKUPS_PATH);
+  return { success:true };
+}
+
+async function setSettingBoolean(key, flag) {
+  await ensureLookupsReady();
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(LOOKUPS_PATH);
+  const ws = getSheet(wb, 'Settings') || wb.addWorksheet('Settings');
+  if (ws.rowCount === 0) ws.addRow(['Key','Value']);
+  const tgt = lc(key);
+  let found = false;
+  ws.eachRow({ includeEmpty:false }, (row, i) => {
+    if (i === 1) return;
+    if (lc(row.getCell(1)?.text) === tgt) {
+      row.getCell(2).value = flag ? 'TRUE' : 'FALSE';
+      found = true;
+    }
+  });
+  if (!found) ws.addRow([key, flag ? 'TRUE' : 'FALSE']);
+  await wb.xlsx.writeFile(LOOKUPS_PATH);
+  return { success:true };
 }
 
 async function setAssetTypeColorForLocation(assetType, location, color) {
@@ -1156,7 +1260,9 @@ const handlers = {
   updateStationInLocationFile,
   readLocationWorkbook,
   readSheetData,
-  updateAssetTypeSchema
+  updateAssetTypeSchema,
+  setStatusColor,
+  setSettingBoolean,
 };
 
 parentPort.on('message', async (msg) => {

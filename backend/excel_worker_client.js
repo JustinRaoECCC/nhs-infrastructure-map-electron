@@ -70,5 +70,6 @@ module.exports = {
   readSheetData: (locationName, sheetName) => call('readSheetData', locationName, sheetName),
   updateAssetTypeSchema: (assetType, schema, excludeStationId) => 
     call('updateAssetTypeSchema', assetType, schema, excludeStationId),
-
+  setStatusColor: (statusKey, color) => call('setStatusColor', statusKey, color),
+  setSettingBoolean: (key, flag) => call('setSettingBoolean', key, !!flag),
 };
