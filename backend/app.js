@@ -200,47 +200,8 @@ async function setAssetTypeColorForLocation(assetType, loc, color) {
   return await lookupsRepo.setAssetTypeColorForLocation(assetType, loc, color);
 }
 
-/**
- * Import: base64 .xlsx → merge empty fields, add new if missing.
- * Uses exceljs. Reads FIRST worksheet, row 1 = headers.
- * Recognizes: Station ID, Category, Site Name, Province, Latitude, Longitude, Status
- * plus any "Section – Field" columns (kept verbatim).
- */
-async function importMultipleStations(b64) {
-  try {
-    // Global import now routes data into <Province>.xlsx (or Location) files,
-    // preserving two-row headers from the source sheet (first sheet).
-    const sheets = await excel.listSheets(b64);
-    if (!sheets?.success || !sheets.sheets?.length) {
-      return { success:false, message:'No sheets to import.' };
-    }
-    const sheetName = sheets.sheets[0];
-    const parsed = await excel.parseRowsFromSheet(b64, sheetName);
-    if (!parsed?.success) return { success:false, message: parsed?.message || 'Parse failed.' };
-    const rows = parsed.rows || [];
-    const sections = parsed.sections || parsed.headers.map(()=>'');
-    const headers  = parsed.headers  || Object.keys(rows[0] || {});
 
-    // Group rows by Province (acts as "Location")
-    const groups = new Map();
-    for (const r of rows) {
-      const province = String(r['Province'] ?? r['province'] ?? r['General Information – Province'] ?? '').trim();
-      const key = province || 'Unknown';
-      (groups.get(key) || groups.set(key, []).get(key)).push(r);
-    }
-    let total = 0;
-    for (const [loc, rowsForLoc] of groups.entries()) {
-      await excel.writeLocationRows(loc, sheetName, sections, headers, rowsForLoc);
-      total += rowsForLoc.length;
-    }
-    return { success:true, added: total, merged: 0, total };
-  } catch (e) {
-    console.error('[importMultipleStations] exceljs load/parse failed:', e);
-    return { success: false, message: String(e) };
-  }
-}
-
-// Normalize one row into our station shape (same rules as importMultipleStations)
+// Normalize one row into our station shape
 function normalizeRow(r) {
   const id = String(r['Station ID'] ?? r['station_id'] ?? '').trim();
   if (!id) return null;
@@ -607,7 +568,6 @@ module.exports = {
   setAssetTypeColor,
   getAssetTypeColorForLocation,
   setAssetTypeColorForLocation,
-  importMultipleStations,
   listExcelSheets,
   addStationsFromSelection,
   manualAddInstance,

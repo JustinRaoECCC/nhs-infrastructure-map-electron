@@ -96,7 +96,6 @@ app.on('window-all-closed', function () {
 
 // ─── IPC: Stations ─────────────────────────────────────────────────────────
 ipcMain.handle('stations:get', async (_evt, opts) => backend.getStationData(opts || {}));
-ipcMain.handle('stations:import', async (_evt, b64) => backend.importMultipleStations(b64));
 ipcMain.handle('stations:importSelection', async (_evt, payload) => backend.addStationsFromSelection(payload));
 ipcMain.handle('stations:invalidate', async () => backend.invalidateStationCache());
 
@@ -200,6 +199,11 @@ ipcMain.handle('inspections:pickPhotos', async () => {
       { name: 'Images', extensions: ['jpg','jpeg','png','gif','webp','bmp','tif','tiff'] }
     ]
   });
+  // Nudge focus back to our window (fixes occasional "can't type" after dialog)
+  try {
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()?.[0];
+    setTimeout(() => win?.focus(), 0);
+  } catch(_) {}
   return canceled ? { filePaths: [] } : { filePaths };
 });
 
@@ -209,6 +213,10 @@ ipcMain.handle('inspections:pickReport', async () => {
     properties: ['openFile'],
     filters: [{ name: 'PDF', extensions: ['pdf'] }]
   });
+  try {
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()?.[0];
+    setTimeout(() => win?.focus(), 0);
+  } catch(_) {}
   return canceled || !filePaths?.length ? { filePath: null } : { filePath: filePaths[0] };
 });
 

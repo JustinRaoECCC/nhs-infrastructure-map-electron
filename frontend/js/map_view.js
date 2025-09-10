@@ -24,6 +24,75 @@ const MAX_INITIAL_PINS = 800;   // tune for your dataset
 let DID_FIT_BOUNDS = false;     // only fit once on first real data
 let RENDER_IN_PROGRESS = false; // Prevent concurrent renders
 
+// Title/link helper for RHS quick view
+function setRhsTitle(stnOrText) {
+  const h = document.querySelector('#rightPanel > h2');
+  if (!h) return;
+
+  // Always clear previous link state first
+  h.classList.remove('clickable');
+  h.removeAttribute('role');
+  h.removeAttribute('tabindex');
+  h.removeAttribute('data-station-id');
+  h.removeAttribute('title');
+
+  if (stnOrText && typeof stnOrText === 'object') {
+    // Station selected → make clickable link-like header
+    const name = stnOrText.name || 'Station Details';
+    h.textContent = name;
+    h.classList.add('clickable');
+    h.setAttribute('role', 'link');
+    h.setAttribute('tabindex', '0');
+    h.dataset.stationId = String(stnOrText.station_id || '');
+    h.title = 'Open station details';
+  } else {
+    // No station selected → plain header
+    h.textContent = typeof stnOrText === 'string' ? stnOrText : 'Station Details';
+  }
+
+  // Attach open handler once
+  if (!h.dataset.clickHandlerAttached) {
+    const openDetails = () => {
+      const sid = h.dataset.stationId;
+      if (!sid) return;
+      const list = document.getElementById('listContainer');
+      const origin = (list && list.style.display !== 'none') ? 'list' : 'map';
+      if (typeof window.loadStationPage === 'function') {
+        window.loadStationPage(sid, origin);
+      }
+    };
+    h.addEventListener('click', openDetails);
+    h.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetails(); }
+    });
+    h.dataset.clickHandlerAttached = '1';
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// RHS panel helpers (programmatic open/close that mirror the toggle button)
+// ────────────────────────────────────────────────────────────────────────────
+function isRightCollapsed() {
+  const root = document.getElementById('mainContent');
+  if (root) return root.classList.contains('right-collapsed');
+  return localStorage.getItem('ui.collapse.right') === '1';
+}
+function setRightCollapsed(flag) {
+  const root = document.getElementById('mainContent');
+  const btnR = document.getElementById('toggleRight');
+  localStorage.setItem('ui.collapse.right', flag ? '1' : '0');
+  if (root) root.classList.toggle('right-collapsed', !!flag);
+  if (btnR) {
+    btnR.setAttribute('aria-pressed', String(!!flag));
+    btnR.textContent = !!flag ? '⟨' : '⟩';
+  }
+  // nudge layout so Leaflet/list recompute sizes
+  setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+  setTimeout(() => window.dispatchEvent(new Event('resize')), 250);
+}
+function ensureRightPanelOpen()  { if (isRightCollapsed()) setRightCollapsed(false); }
+function ensureRightPanelClosed(){ if (!isRightCollapsed()) setRightCollapsed(true); }
+
 // ────────────────────────────────────────────────────────────────────────────
 // Init (same as before)
 // ────────────────────────────────────────────────────────────────────────────
@@ -52,8 +121,16 @@ function initMap() {
   map = L.map('map', {
     maxBounds: [[-90, -180], [90, 180]],
     maxBoundsViscosity: 1.0,
-    zoomControl: true
+    zoomControl: true,
+    // Prevent Leaflet from taking keyboard focus (arrows, +/- etc.)
+    keyboard: false
   }).setView([54.5, -119], 5);
+
+  // Make sure the map container itself cannot be focused by tabbing/clicks
+  try { 
+    const mapContainerEl = map.getContainer();
+    if (mapContainerEl) mapContainerEl.setAttribute('tabindex', '-1');
+  } catch (_) {}
 
   function addTiles() {
     try {
@@ -143,6 +220,12 @@ function initMap() {
   map.on('click', () => {
     const container = document.getElementById('station-details');
     if (container) container.innerHTML = `<p><em>Click a pin to see details</em></p>`;
+    // Release keyboard focus from the map on empty clicks
+    try { map.getContainer()?.blur?.(); } catch(_) {}
+    // Reset RHS title when no pin is selected
+    setRhsTitle('Station Details');
+    // Treat clicking empty map as "toggle RHS closed" if it’s currently open
+    ensureRightPanelClosed();
   });
 
   map.on('tileload', () => {});
@@ -288,6 +371,13 @@ function addTriRingMarker(lat, lon, color) {
 }
 
 async function showStationDetails(stn) {
+
+  // Update RHS header to the site name (clickable)
+  setRhsTitle(stn);
+
+  // Opening a pin/list row should surface the quick-view
+  ensureRightPanelOpen();
+
   const container = document.getElementById('station-details');
   if (!container) return;
 
@@ -675,56 +765,6 @@ window.invalidateStationData = function invalidateStationData() {
 };
 
 // ────────────────────────────────────────────────────────────────────────────
-function bindGlobalImportToolbar() {
-  const btn  = document.getElementById('btnImportDataGlobal');
-  const file = document.getElementById('fileImportDataGlobal');
-  if (!btn || !file) return;
-
-  if (!btn.dataset.bound) {
-    btn.addEventListener('click', () => file.click());
-    btn.dataset.bound = '1';
-  }
-  if (!file.dataset.bound) {
-    file.addEventListener('change', async (e) => {
-      const f = (e.target.files || [])[0];
-      if (!f) return;
-      try {
-        const b64 = await new Promise((resolve, reject) => {
-          const rdr = new FileReader();
-          rdr.onload = () => {
-            const s = String(rdr.result || '');
-            const i = s.indexOf(',');
-            resolve(i >= 0 ? s.slice(i + 1) : s);
-          };
-          rdr.onerror = reject;
-          rdr.readAsDataURL(f);
-        });
-
-        const res = await window.electronAPI.importMultipleStations(b64);
-        if (!res || !res.success) {
-          alert('Import failed: ' + (res?.message || 'Unknown error'));
-          return;
-        }
-
-        if (typeof window.invalidateStationData === 'function') window.invalidateStationData();
-        if (typeof window.electronAPI.invalidateStationCache === 'function') {
-          await window.electronAPI.invalidateStationCache();
-        }
-
-        await refreshMarkers();
-        if (typeof window.renderList === 'function') await window.renderList();
-      } catch (err) {
-        console.error('[GlobalImport] unexpected error:', err);
-        alert('Unexpected error during import. See console.');
-      } finally {
-        e.target.value = '';
-      }
-    });
-    file.dataset.bound = '1';
-  }
-}
-
-// ────────────────────────────────────────────────────────────────────────────
 // Startup
 // ────────────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -735,7 +775,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     initMap();
-    bindGlobalImportToolbar();
 
     refreshMarkers();
 
@@ -774,4 +813,17 @@ document.addEventListener('DOMContentLoaded', () => {
       console.error('[map] Leaflet failed to load');
     }
   })();
+
+  // Global focus guard: any click on an editable control re-focuses it.
+  // Helps recover from rare cases where focus is "lost" to the document/map.
+  document.addEventListener('pointerdown', (e) => {
+    const t = e.target;
+    if (!t) return;
+    const isEditable =
+      t.matches?.('input, textarea, select, [contenteditable=""], [contenteditable="true"]');
+    if (isEditable) {
+      // Ensure the element *actually* gains focus after the event bubble
+      setTimeout(() => t.focus?.(), 0);
+    }
+  }, true); // capture phase so it runs even if something stops propagation
 });

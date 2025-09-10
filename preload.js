@@ -6,7 +6,6 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   // ─── Stations ────────────────────────────────────────────────────────────
   getStationData:         (opts) => ipcRenderer.invoke('stations:get', opts || {}),
-  importMultipleStations: (b64) => ipcRenderer.invoke('stations:import', b64),
   invalidateStationCache: () => ipcRenderer.invoke('stations:invalidate'),
 
   // ─── Manual instance creation ───────────────────────────────────────────

@@ -1075,6 +1075,20 @@ html.modal-open, body.modal-open { overflow: hidden; }
   border-color: #e5e7eb; 
 }
 
+.right-panel h2.clickable,
+#rightPanel h2.clickable { cursor: pointer; }
+.right-panel h2.clickable:hover,
+#rightPanel h2.clickable:hover {
+  color: var(--primary);
+  text-decoration: underline;
+}
+.right-panel h2.clickable:focus,
+#rightPanel h2.clickable:focus {
+  outline: 2px solid rgba(37, 99, 235, 0.35);
+  outline-offset: 2px;
+  text-decoration: underline;
+}
+
 /* RHS Accordion (collapsible extra sections) */
 .rhs-accordion { 
   display: flex; 
@@ -1932,3 +1946,4 @@ html.modal-open, body.modal-open { overflow: hidden; }
   font-size: 14px;
 }
 .empty-note.show { display: block; }
+
