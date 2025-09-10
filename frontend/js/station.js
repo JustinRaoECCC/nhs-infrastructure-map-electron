@@ -63,6 +63,20 @@ async function loadStationPage(stationId, origin = 'map') {
   }
 }
 
+// -- Per-section edit mode helpers --
+function setSectionEditing(sectionEl, on) {
+  sectionEl.classList.toggle('editing', !!on);
+  const btn = sectionEl.querySelector('.js-section-edit');
+  if (btn) {
+    btn.textContent = on ? 'Exit edit mode' : 'Edit section';
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+}
+function isSectionEditing(sectionEl) {
+  return sectionEl.classList.contains('editing');
+}
+
+
 function setupStationDetailUI(container, stn) {
   // Populate basic info
   const setVal = (id, v) => { 
@@ -273,19 +287,29 @@ function createEditableSection(sectionName, fields) {
   const actionsDiv = document.createElement('div');
   actionsDiv.className = 'section-actions';
 
+  // NEW: per-section edit toggle (visible always)
+  const editToggleBtn = document.createElement('button');
+  editToggleBtn.className = 'btn btn-outline btn-sm js-section-edit';
+  editToggleBtn.textContent = 'Edit section';
+  editToggleBtn.setAttribute('type', 'button');
+  editToggleBtn.setAttribute('aria-pressed', 'false');
+
   const addFieldBtn = document.createElement('button');
-  addFieldBtn.className = 'btn btn-ghost btn-sm';
+  addFieldBtn.className = 'btn btn-ghost btn-sm edit-only'; // HIDDEN until editing
   addFieldBtn.textContent = '+ Add Field';
   addFieldBtn.addEventListener('click', () => addFieldToSection(sectionDiv));
 
   const deleteSectionBtn = document.createElement('button');
-  deleteSectionBtn.className = 'delete-section-btn';
+  deleteSectionBtn.className = 'btn btn-danger btn-sm edit-only'; // HIDDEN until editing
   deleteSectionBtn.textContent = 'Delete Section';
   deleteSectionBtn.title = 'Delete Section';
   deleteSectionBtn.addEventListener('click', () => deleteSection(sectionDiv));
 
+  // order: [Edit/Exit][Add Field][Delete Section]
+  actionsDiv.appendChild(editToggleBtn);
   actionsDiv.appendChild(addFieldBtn);
   actionsDiv.appendChild(deleteSectionBtn);
+
   headerDiv.appendChild(titleInput);
   headerDiv.appendChild(actionsDiv);
 
@@ -300,6 +324,9 @@ function createEditableSection(sectionName, fields) {
 
   sectionDiv.appendChild(headerDiv);
   sectionDiv.appendChild(fieldsDiv);
+
+  // ensure starts in non-editing state
+  setSectionEditing(sectionDiv, false);
 
   return sectionDiv;
 }
@@ -323,7 +350,7 @@ function createEditableField(fieldName, value) {
   valueInput.addEventListener('input', markUnsavedChanges);
 
   const deleteBtn = document.createElement('button');
-  deleteBtn.className = 'btn btn-ghost btn-sm btn-danger';
+  deleteBtn.className = 'btn btn-ghost btn-sm btn-danger edit-only';
   deleteBtn.textContent = '✕';
   deleteBtn.title = 'Delete Field';
   deleteBtn.addEventListener('click', () => deleteField(fieldDiv));
@@ -428,7 +455,18 @@ function setupEventHandlers(container, stn) {
       if (!input.disabled) markUnsavedChanges();
     });
   });
+
+  // Per-section edit toggle
+  container.addEventListener('click', (e) => {
+    const toggle = e.target.closest('.js-section-edit');
+    if (!toggle) return;
+    const section = toggle.closest('.station-section');
+    if (!section) return;
+    setSectionEditing(section, !isSectionEditing(section));
+  });
 }
+
+
 
 function setupPasswordModal(container) {
   const modal = container.querySelector('#passwordModal');

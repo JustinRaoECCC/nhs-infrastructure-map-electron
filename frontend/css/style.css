@@ -1947,3 +1947,6 @@ html.modal-open, body.modal-open { overflow: hidden; }
 }
 .empty-note.show { display: block; }
 
+/* Edit-mode visibility for per-section controls */
+.station-section .edit-only { display: none; }
+.station-section.editing .edit-only { display: inline-flex; } /* or inline-block */
