@@ -4,6 +4,108 @@
 
   // Utilities
   const debounce = (fn, ms = 150) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+
+  // ===== Virtualized table helper (windowing) =====
+  function mountVirtualizedTable({
+    rows,
+    tbody,
+    renderRowHTML,
+    rowHeight = 44,
+    overscan = 10,
+    // NEW: only create a viewport when useful; otherwise shrink to content
+    adaptiveHeight = true,
+    maxViewport = 520,   // cap table height (px) when long
+    minViewport = 0      // allow full shrink; set e.g. 120 if you want a floor
+  }) {
+    const topSpacer = document.createElement('tr');
+    const bottomSpacer = document.createElement('tr');
+    topSpacer.innerHTML = `<td colspan="999" style="height:0;padding:0;border:0"></td>`;
+    bottomSpacer.innerHTML = `<td colspan="999" style="height:0;padding:0;border:0"></td>`;
+
+    tbody.innerHTML = '';
+    tbody.appendChild(topSpacer);
+    tbody.appendChild(bottomSpacer);
+
+    const scroller = tbody.closest('.table-scroll') || tbody.parentElement;
+    let start = 0, end = 0, rafId = 0;
+
+    const recompute = () => {
+      rafId = 0;
+
+      // Re-attach spacers if tbody got nuked
+      if (topSpacer.parentNode !== tbody || bottomSpacer.parentNode !== tbody) {
+        tbody.innerHTML = '';
+        tbody.appendChild(topSpacer);
+        tbody.appendChild(bottomSpacer);
+      }
+
+      // --- NEW: adaptive viewport sizing ---
+      if (adaptiveHeight) {
+        const table = tbody.closest('table');
+        const headH = (table && table.tHead) ? table.tHead.offsetHeight || 0 : 0;
+        const total = rows.length;
+        const bodyH = Math.max(0, total) * rowHeight;
+        const needed = headH + bodyH;                     // exact content height
+        const target = Math.max(minViewport, Math.min(maxViewport, needed));
+        // If data is short, we shrink; if long, we cap at maxViewport for scrolling.
+        scroller.style.height = target + 'px';
+        scroller.style.overflowY = 'auto';
+        scroller.style.position = scroller.style.position || 'relative';
+      }
+      // -------------------------------------
+
+      const viewH = scroller.clientHeight || 400;
+      const scrollTop = scroller.scrollTop | 0;
+      const total = rows.length;
+
+      const first = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
+      const last  = Math.min(total, Math.ceil((scrollTop + viewH) / rowHeight) + overscan);
+      if (first === start && last === end) return;
+      start = first; end = last;
+
+      topSpacer.firstElementChild.style.height = (start * rowHeight) + 'px';
+      bottomSpacer.firstElementChild.style.height = ((rows.length - end) * rowHeight) + 'px';
+
+      // clear current slice
+      while (topSpacer.nextSibling && topSpacer.nextSibling !== bottomSpacer) {
+        tbody.removeChild(topSpacer.nextSibling);
+      }
+
+      const frag = document.createDocumentFragment();
+      for (let i = start; i < end; i++) {
+        const tr = document.createElement('tr');
+        tr.dataset.index = i;
+        tr.innerHTML = renderRowHTML(rows[i], i);
+        frag.appendChild(tr);
+      }
+      tbody.insertBefore(frag, bottomSpacer);
+    };
+
+    const onScroll = () => { if (!rafId) rafId = requestAnimationFrame(recompute); };
+    scroller.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+    recompute();
+    requestAnimationFrame(recompute);
+    setTimeout(recompute, 0);
+
+    return {
+      update(newRows) {
+        rows = newRows || [];
+        start = -1; end = -1;
+        recompute();
+        requestAnimationFrame(recompute);
+      },
+      refresh() { recompute(); },
+      destroy() {
+        scroller.removeEventListener('scroll', onScroll);
+        window.removeEventListener('resize', onScroll);
+        if (rafId) cancelAnimationFrame(rafId);
+        // Let the page flow naturally when we tear down
+        if (adaptiveHeight) scroller.style.height = '';
+      }
+    };
+  }
 
   function safeEnableFullWidthMode() {
     try {
@@ -148,7 +250,6 @@
     setActiveNav('navNewCompany');
     return container;
   }
-  
   function closePanel() {
     const container = document.getElementById('addInfraContainer');
     if (container) container.innerHTML = '';
@@ -379,7 +480,7 @@
         const sec = (tr.querySelector('.mSec')?.value || '').trim();
         const fld = (tr.querySelector('.mFld')?.value || '').trim();
         const val = (tr.querySelector('.mVal')?.value || '').trim();
-        if (!sec && !fld && !val) continue; // allow empty rows
+        if (!sec && !fld && !val) continue;
         if (!sec || !fld) {
           return alert('Each added row requires both Section and Field.');
         }
@@ -411,8 +512,14 @@
     });
   }
 
-  // Import MORE for an existing Asset Type (new standalone window)
+  // Import MORE for an existing Asset Type — opens NEW window if available
   async function openImportMoreForAsset(company, location, assetType) {
+    if (window.electronAPI && typeof window.electronAPI.openImportMoreWindow === 'function') {
+      try { await window.electronAPI.openImportMoreWindow({ company, location, assetType }); } catch (_) {}
+      return;
+    }
+
+    // Fallback: in-panel importer
     const view = `
       <div class="panel-form" id="importMorePanel">
         <h2 style="margin-top:0;">Import more into “${assetType || 'Asset'}”</h2>
@@ -468,6 +575,9 @@
     if (!host) return;
 
     const $ = sel => host.querySelector(sel);
+    const thead = $('#imTable thead');
+    const tbody = $('#imTable tbody');
+
     const state = {
       excelB64: null,
       sheets: [],
@@ -478,11 +588,167 @@
       selectedIdx: new Set()
     };
 
-    const thead = $('#imTable thead');
-    const tbody = $('#imTable tbody');
+    let vtIM = null;
+    let bound = false;
 
     function updateBadge() { $('#imCount').textContent = `${state.selectedIdx.size} selected`; }
     function setButtons() { $('#imImport').disabled = !(state.rows && state.rows.length && state.selectedIdx.size); }
+    function setHeaderTriState() {
+      const chkAll = thead.querySelector('#imChkAll');
+      if (!chkAll) return;
+      const total = state.rows.length;
+      const sel = state.selectedIdx.size;
+      chkAll.checked = sel > 0 && sel === total;
+      chkAll.indeterminate = sel > 0 && sel < total;
+    }
+
+    function renderTable() {
+      const scroller = tbody.closest('.table-scroll');
+      // Ensure we have a nice empty note element right before the scroller
+      let empty = host.querySelector('#imEmptyNote');
+      if (!empty) {
+        empty = document.createElement('div');
+        empty.id = 'imEmptyNote';
+        empty.className = 'empty-note';
+        empty.textContent = 'Select an Excel file and sheet to preview rows.';
+        scroller.parentNode.insertBefore(empty, scroller);
+      }
+
+      thead.innerHTML = '';
+      // Do NOT clear tbody if a virtualizer exists; otherwise we drop its spacers.
+      if (!vtIM) tbody.innerHTML = '';
+
+      if (!state.rows.length) {
+        // Hide table entirely; show empty note
+        scroller.classList.add('is-hidden');
+        empty.classList.add('show');
+
+        // Tear down any existing virtualizer to free DOM
+        if (vtIM) { vtIM.destroy(); vtIM = null; }
+        tbody.innerHTML = '';             // keep it truly empty
+        updateBadge(); setButtons();       // 0 selected
+        return;
+      }
+
+      // We have data: show table, hide note
+      scroller.classList.remove('is-hidden');
+      empty.classList.remove('show');
+
+      // section header
+      const trSec = document.createElement('tr');
+      const thLead = document.createElement('th');
+      thLead.style.width = '36px';
+      thLead.innerHTML = '<input id="imChkAll" type="checkbox"/>';
+      trSec.appendChild(thLead);
+
+      let i = 0;
+      while (i < state.headers.length) {
+        const sec = state.sections[i] || '';
+        let span = 1;
+        while (i + span < state.headers.length && (state.sections[i + span] || '') === sec) span++;
+        const th = document.createElement('th');
+        th.colSpan = span;
+        th.textContent = sec || '';
+        trSec.appendChild(th);
+        i += span;
+      }
+      thead.appendChild(trSec);
+
+      // field header
+      const trFld = document.createElement('tr');
+      trFld.innerHTML = '<th></th>' + state.headers.map(h => `<th>${esc(h)}</th>`).join('');
+      thead.appendChild(trFld);
+
+      const chkAll = thead.querySelector('#imChkAll');
+      if (chkAll) {
+        chkAll.addEventListener('change', () => {
+          state.selectedIdx = chkAll.checked ? new Set(state.rows.map((_, i) => i)) : new Set();
+          updateBadge(); setHeaderTriState(); setButtons(); vtIM?.refresh();
+        });
+      }
+
+      // default all selected
+      state.selectedIdx = new Set(state.rows.map((_, idx) => idx));
+
+      const renderRowHTML = (row, i) => {
+        const checked = state.selectedIdx.has(i) ? 'checked' : '';
+        let cells = `<td><input type="checkbox" class="imRowChk" ${checked}></td>`;
+        for (let idx = 0; idx < state.headers.length; idx++) {
+          const h = state.headers[idx];
+          const sec = state.sections[idx] || '';
+          const key = sec ? `${sec} – ${h}` : h;
+          const val = (row?.[key] ?? row?.[h] ?? '');
+          cells += `<td>${esc(val)}</td>`;
+        }
+        return cells;
+      };
+
+      if (!vtIM) {
+        vtIM = mountVirtualizedTable({
+          rows: state.rows,
+          tbody,
+          renderRowHTML,
+          rowHeight: 44,
+          overscan: 10,
+          adaptiveHeight: true,  // <-- key line
+          maxViewport: 520,
+          minViewport: 0
+        });
+      } else {
+        vtIM.update(state.rows);
+      }
+
+      requestAnimationFrame(() => vtIM && vtIM.refresh());
+
+      if (!bound) {
+        bound = true;
+        tbody.addEventListener('change', (e) => {
+          const t = e.target;
+          if (!(t instanceof HTMLInputElement) || !t.classList.contains('imRowChk')) return;
+          const tr = t.closest('tr'); if (!tr) return;
+          const idx = Number(tr.dataset.index); if (Number.isNaN(idx)) return;
+          if (t.checked) state.selectedIdx.add(idx); else state.selectedIdx.delete(idx);
+          updateBadge(); setHeaderTriState(); setButtons();
+        });
+      }
+
+      updateBadge(); setHeaderTriState(); setButtons();
+    }
+
+    async function buildPreview() {
+      if (!state.excelB64 || !state.selectedSheet) {
+        state.rows = [];
+        renderTable();
+        return;
+      }
+      try {
+        const res = await window.electronAPI.excelParseRowsFromSheet(state.excelB64, state.selectedSheet);
+        if (!res || res.success === false) {
+          console.error('[importMore] parseRowsFromSheet failed:', res?.message);
+          state.rows = [];
+          renderTable();
+          return;
+        }
+        state.rows = res.rows || [];
+        state.headers = res.headers || (state.rows.length ? Object.keys(state.rows[0]) : []);
+        state.sections = res.sections || state.headers.map(() => '');
+        renderTable();
+      } catch (e) {
+        console.error('[importMore] buildPreview error', e);
+        state.rows = [];
+        renderTable();
+      }
+    }
+
+    $('#imCancel').addEventListener('click', () => closePanel());
+    $('#imSelectAll').addEventListener('click', () => {
+      state.selectedIdx = new Set(state.rows.map((_, i) => i));
+      updateBadge(); setHeaderTriState(); setButtons(); vtIM?.refresh();
+    });
+    $('#imDeselectAll').addEventListener('click', () => {
+      state.selectedIdx.clear();
+      updateBadge(); setHeaderTriState(); setButtons(); vtIM?.refresh();
+    });
 
     function fileToBase64(file) {
       return new Promise((resolve, reject) => {
@@ -496,6 +762,7 @@
         rdr.readAsDataURL(file);
       });
     }
+
     function populateSheetSelect(names) {
       const sel = $('#imSheet');
       sel.innerHTML = '';
@@ -504,112 +771,15 @@
         sel.disabled = true;
         return;
       }
-      names.forEach((n, i) => sel.appendChild(new Option(n, n, i===0, i===0)));
+      names.forEach((n, i) => sel.appendChild(new Option(n, n, i === 0, i === 0)));
       sel.disabled = false;
       state.selectedSheet = sel.value || null;
     }
-    function renderPreview() {
-      if (!thead || !tbody) return;
-      thead.innerHTML = ''; 
-      tbody.innerHTML = '';
-      if (!state.rows.length) {
-        tbody.innerHTML = `<tr><td colspan="99" style="opacity:.7;padding:.75em;">Select an Excel file and sheet first.</td></tr>`;
-        updateBadge(); 
-        setButtons();
-        return;
-      }
-      // Sections row
-      const trSec = document.createElement('tr');
-      const thLead = document.createElement('th'); 
-      thLead.style.width = '36px';
-      thLead.innerHTML = '<input id="imChkAll" type="checkbox"/>'; 
-      trSec.appendChild(thLead);
-      let i = 0;
-      while (i < state.headers.length) {
-        const sec = state.sections[i] || '';
-        let span = 1;
-        while (i + span < state.headers.length && (state.sections[i + span] || '') === sec) span++;
-        const th = document.createElement('th'); 
-        th.colSpan = span; 
-        th.textContent = sec || '';
-        trSec.appendChild(th); 
-        i += span;
-      }
-      thead.appendChild(trSec);
-      // Fields row
-      const trFld = document.createElement('tr');
-      trFld.innerHTML = '<th></th>' + state.headers.map(h => `<th>${h}</th>`).join('');
-      thead.appendChild(trFld);
-      // Check-all
-      const chkAll = thead.querySelector('#imChkAll');
-      if (chkAll) {
-        chkAll.addEventListener('change', () => {
-          state.selectedIdx = chkAll.checked ? new Set(state.rows.map((_, i) => i)) : new Set();
-          tbody.querySelectorAll('input.imRowChk[type=checkbox]').forEach((cb, i) => cb.checked = chkAll.checked);
-          updateBadge(); setButtons();
-        });
-      }
-      // Body
-      state.selectedIdx = new Set(state.rows.map((_, i) => i)); // default all selected
-      state.rows.forEach((r, i) => {
-        const tr = document.createElement('tr');
-        const c0 = document.createElement('td');
-        const cb = document.createElement('input');
-        cb.type = 'checkbox'; 
-        cb.className = 'imRowChk'; 
-        cb.checked = true;
-        cb.addEventListener('change', () => {
-          if (cb.checked) state.selectedIdx.add(i); else state.selectedIdx.delete(i);
-          updateBadge(); setButtons();
-        });
-        c0.appendChild(cb); tr.appendChild(c0);
-        state.headers.forEach((h, idx) => {
-          const sec = state.sections[idx] || '';
-          const key = sec ? `${sec} – ${h}` : h;
-          const td = document.createElement('td');
-          td.textContent = (r?.[key] ?? r?.[h] ?? '');
-          tr.appendChild(td);
-        });
-        tbody.appendChild(tr);
-      });
-      updateBadge(); setButtons();
-    }
-    async function buildPreview() {
-      if (!state.excelB64 || !state.selectedSheet) { 
-        state.rows = []; renderPreview(); return; 
-      }
-      try {
-        const res = await window.electronAPI.excelParseRowsFromSheet(state.excelB64, state.selectedSheet);
-        if (!res || res.success === false) {
-          console.error('[importMore] parseRowsFromSheet failed:', res?.message);
-          state.rows = []; renderPreview(); return;
-        }
-        state.rows = res.rows || [];
-        state.headers = res.headers || (state.rows.length ? Object.keys(state.rows[0]) : []);
-        state.sections = res.sections || state.headers.map(() => '');
-        renderPreview();
-      } catch (e) {
-        console.error('[importMore] buildPreview error', e); 
-        state.rows = []; renderPreview();
-      }
-    }
 
-    // Bindings
-    $('#imCancel').addEventListener('click', () => closePanel());
-    $('#imSelectAll').addEventListener('click', () => {
-      state.selectedIdx = new Set(state.rows.map((_, i) => i));
-      tbody?.querySelectorAll('input.imRowChk').forEach(cb => cb.checked = true);
-      updateBadge(); setButtons();
-    });
-    $('#imDeselectAll').addEventListener('click', () => {
-      state.selectedIdx.clear();
-      tbody?.querySelectorAll('input.imRowChk').forEach(cb => cb.checked = false);
-      updateBadge(); setButtons();
-    });
     $('#imExcel').addEventListener('change', async (e) => {
       const f = (e.target.files || [])[0];
       if (!f) {
-        state.excelB64 = null; state.sheets = []; populateSheetSelect([]); renderPreview(); return;
+        state.excelB64 = null; state.sheets = []; populateSheetSelect([]); renderTable(); return;
       }
       $('#imExcelLabel').textContent = f.name || 'Selected Excel';
       try {
@@ -620,15 +790,17 @@
         await buildPreview();
       } catch (err) {
         console.error('[importMore] list sheets failed', err);
-        populateSheetSelect([]); renderPreview();
+        populateSheetSelect([]); renderTable();
       }
     });
+
     $('#imSheet').addEventListener('change', async () => {
       state.selectedSheet = $('#imSheet').value || null;
       await buildPreview();
     });
+
     $('#imImport').addEventListener('click', async () => {
-      const idxs = Array.from(state.selectedIdx.values()).sort((a,b) => a-b);
+      const idxs = Array.from(state.selectedIdx.values()).sort((a, b) => a - b);
       if (!idxs.length) return alert('Please select at least one row.');
       try {
         $('#imImport').textContent = 'Importing…';
@@ -661,9 +833,12 @@
         setButtons();
       }
     });
+
+    // initial empty render
+    renderTable();
   }
 
-  // Create Assets - Updated with schema conformance
+  // Create Assets - Updated with schema conformance + virtualization
   async function openCreateAssetsWizard(company, location) {
     const view = `
       <div class="panel-form" id="assetsPanel">
@@ -724,6 +899,8 @@
     if (!host) return;
 
     const $ = sel => host.querySelector(sel);
+    const thead = $('#previewTable2 thead');
+    const tbody = $('#previewTable2 tbody');
 
     const state = {
       excelB64: null,
@@ -735,18 +912,172 @@
       selectedIdx: new Set()
     };
 
-    const thead = $('#previewTable2 thead');
-    const tbody = $('#previewTable2 tbody');
+    let vt2 = null;
+    let bound = false;
 
-    function updateBadge() { 
-      $('#rowCount2').textContent = `${state.selectedIdx.size} selected`; 
-    }
-
+    function updateBadge() { $('#rowCount2').textContent = `${state.selectedIdx.size} selected`; }
     function setButtonsState() {
       const hasExcel = !!(state.rows && state.rows.length);
-      $('#btnImport2').disabled = !hasExcel;
+      $('#btnImport2').disabled = !hasExcel || !state.selectedIdx.size;
       $('#btnManual2').disabled = !($('#assetName2')?.value || '').trim();
     }
+    function setHeaderTriState() {
+      const chkAll = thead.querySelector('#chkAll2');
+      if (!chkAll) return;
+      const total = state.rows.length;
+      const sel = state.selectedIdx.size;
+      chkAll.checked = sel > 0 && sel === total;
+      chkAll.indeterminate = sel > 0 && sel < total;
+    }
+
+    function renderTable() {
+      const scroller = tbody.closest('.table-scroll');
+      let empty = host.querySelector('#caEmptyNote');
+      if (!empty) {
+        empty = document.createElement('div');
+        empty.id = 'caEmptyNote';
+        empty.className = 'empty-note';
+        empty.textContent = 'Select an Excel file and sheet to preview rows.';
+        scroller.parentNode.insertBefore(empty, scroller);
+      }
+
+      thead.innerHTML = '';
+      if (!vt2) tbody.innerHTML = '';
+
+      if (!state.rows.length) {
+        scroller.classList.add('is-hidden');
+        empty.classList.add('show');
+        if (vt2) { vt2.destroy(); vt2 = null; }
+        tbody.innerHTML = '';
+        updateBadge(); setButtonsState();
+        return;
+      }
+
+      scroller.classList.remove('is-hidden');
+      empty.classList.remove('show');
+
+      // section header
+      const trSec = document.createElement('tr');
+      const thLead = document.createElement('th');
+      thLead.style.width = '36px';
+      thLead.innerHTML = '<input id="chkAll2" type="checkbox"/>';
+      trSec.appendChild(thLead);
+
+      let i = 0;
+      while (i < state.headers.length) {
+        const sec = state.sections[i] || '';
+        let span = 1;
+        while (i + span < state.headers.length && (state.sections[i + span] || '') === sec) span++;
+        const th = document.createElement('th');
+        th.colSpan = span;
+        th.textContent = sec || '';
+        trSec.appendChild(th);
+        i += span;
+      }
+      thead.appendChild(trSec);
+
+      // field header
+      const trFld = document.createElement('tr');
+      trFld.innerHTML = '<th></th>' + state.headers.map(h => `<th>${esc(h)}</th>`).join('');
+      thead.appendChild(trFld);
+
+      const chkAll = thead.querySelector('#chkAll2');
+      if (chkAll) {
+        chkAll.addEventListener('change', () => {
+          state.selectedIdx = chkAll.checked ? new Set(state.rows.map((_, i) => i)) : new Set();
+          updateBadge(); setHeaderTriState(); setButtonsState(); vt2?.refresh();
+        });
+      }
+
+      state.selectedIdx = new Set(state.rows.map((_, idx) => idx));
+
+      const renderRowHTML = (row, i) => {
+        const checked = state.selectedIdx.has(i) ? 'checked' : '';
+        let cells = `<td><input type="checkbox" class="rowchk2" ${checked}></td>`;
+        for (let idx = 0; idx < state.headers.length; idx++) {
+          const h = state.headers[idx];
+          const sec = state.sections[idx] || '';
+          const key = sec ? `${sec} – ${h}` : h;
+          const val = (row?.[key] ?? row?.[h] ?? '');
+          cells += `<td>${esc(val)}</td>`;
+        }
+        return cells;
+      };
+
+      if (!vt2) {
+        vt2 = mountVirtualizedTable({
+          rows: state.rows,
+          tbody,
+          renderRowHTML,
+          rowHeight: 44,
+          overscan: 10,
+          adaptiveHeight: true, // <-- key line
+          maxViewport: 520,
+          minViewport: 0
+        });
+      } else {
+        vt2.update(state.rows);
+      }
+      requestAnimationFrame(() => vt2 && vt2.refresh());
+
+      if (!bound) {
+        bound = true;
+        tbody.addEventListener('change', (e) => {
+          const t = e.target;
+          if (!(t instanceof HTMLInputElement) || !t.classList.contains('rowchk2')) return;
+          const tr = t.closest('tr'); if (!tr) return;
+          const idx = Number(tr.dataset.index); if (Number.isNaN(idx)) return;
+          if (t.checked) state.selectedIdx.add(idx); else state.selectedIdx.delete(idx);
+          updateBadge(); setHeaderTriState(); setButtonsState();
+        });
+      }
+
+      updateBadge(); setHeaderTriState(); setButtonsState();
+    }
+
+    async function buildPreview() {
+      if (!state.excelB64 || !state.selectedSheet) {
+        state.rows = [];
+        renderTable();
+        return;
+      }
+      try {
+        const res = await window.electronAPI.excelParseRowsFromSheet(state.excelB64, state.selectedSheet);
+        if (!res || res.success === false) {
+          console.error('[assets] parseRowsFromSheet failed:', res?.message);
+          state.rows = [];
+          renderTable();
+          return;
+        }
+        state.rows = res.rows || [];
+        state.headers = res.headers || (state.rows.length ? Object.keys(state.rows[0]) : []);
+        state.sections = res.sections || state.headers.map(() => '');
+        renderTable();
+      } catch (e) {
+        console.error('[assets] buildPreview error', e);
+        state.rows = [];
+        renderTable();
+      }
+    }
+
+    // Bind UI
+    $('#btnCancel2')?.addEventListener('click', () => closePanel());
+    $('#btnSelectAll2')?.addEventListener('click', () => {
+      state.selectedIdx = new Set(state.rows.map((_, i) => i));
+      updateBadge(); setHeaderTriState(); setButtonsState(); vt2?.refresh();
+    });
+    $('#btnDeselectAll2')?.addEventListener('click', () => {
+      state.selectedIdx.clear();
+      updateBadge(); setHeaderTriState(); setButtonsState(); vt2?.refresh();
+    });
+
+    host.querySelector('#assetName2')?.addEventListener('input', setButtonsState);
+
+    $('#btnManual2')?.addEventListener('click', () => {
+      const assetName = ($('#assetName2')?.value || '').trim();
+      if (!assetName) return alert('Please enter an asset name first.');
+      openManualInstanceWizard(company, location, assetName);
+    });
 
     function fileToBase64(file) {
       return new Promise((resolve, reject) => {
@@ -774,141 +1105,10 @@
       state.selectedSheet = sel.value || null;
     }
 
-    function renderPreview() {
-      if (!thead || !tbody) return;
-      thead.innerHTML = ''; 
-      tbody.innerHTML = '';
-      
-      if (!state.rows.length) {
-        tbody.innerHTML = `<tr><td colspan="99" style="opacity:.7;padding:.75em;">Select an Excel file and sheet first.</td></tr>`;
-        updateBadge(); 
-        return;
-      }
-
-      // Build grouped headers from sections/headers
-      const trSec = document.createElement('tr');
-      const thLead = document.createElement('th'); 
-      thLead.style.width = '36px';
-      thLead.innerHTML = '<input id="chkAll2" type="checkbox"/>'; 
-      trSec.appendChild(thLead);
-      
-      let i = 0;
-      while (i < state.headers.length) {
-        const sec = state.sections[i] || '';
-        let span = 1;
-        while (i + span < state.headers.length && (state.sections[i + span] || '') === sec) span++;
-        const th = document.createElement('th'); 
-        th.colSpan = span; 
-        th.textContent = sec || '';
-        trSec.appendChild(th); 
-        i += span;
-      }
-      thead.appendChild(trSec);
-
-      const trFld = document.createElement('tr');
-      trFld.innerHTML = '<th></th>' + state.headers.map(h => `<th>${h}</th>`).join('');
-      thead.appendChild(trFld);
-
-      const chkAll = thead.querySelector('#chkAll2');
-      if (chkAll) {
-        chkAll.addEventListener('change', () => {
-          state.selectedIdx = chkAll.checked ? new Set(state.rows.map((_, i) => i)) : new Set();
-          tbody.querySelectorAll('input.rowchk2[type=checkbox]').forEach((cb, i) => cb.checked = chkAll.checked);
-          updateBadge();
-        });
-      }
-
-      tbody.innerHTML = '';
-      state.selectedIdx = new Set(state.rows.map((_, i) => i)); // default all selected
-      
-      state.rows.forEach((r, i) => {
-        const tr = document.createElement('tr');
-        const c0 = document.createElement('td');
-        // per-row checkbox
-        const cb = document.createElement('input');
-        cb.type = 'checkbox'; 
-        cb.className = 'rowchk2'; 
-        cb.checked = true;
-        cb.addEventListener('change', () => {
-          if (cb.checked) state.selectedIdx.add(i); 
-          else state.selectedIdx.delete(i);
-          updateBadge();
-        });
-        c0.appendChild(cb); 
-        tr.appendChild(c0);
-        
-        state.headers.forEach((h, idx) => {
-          const sec = state.sections[idx] || '';
-          const key = sec ? `${sec} – ${h}` : h;
-          const td = document.createElement('td');
-          td.textContent = (r?.[key] ?? r?.[h] ?? '');
-          tr.appendChild(td);
-        });
-        tbody.appendChild(tr);
-      });
-      updateBadge();
-    }
-
-    // Build/refresh preview based on excel + sheet
-    async function buildPreview() {
-      if (!state.excelB64 || !state.selectedSheet) { 
-        state.rows = []; 
-        renderPreview(); 
-        return; 
-      }
-      try {
-        const res = await window.electronAPI.excelParseRowsFromSheet(state.excelB64, state.selectedSheet);
-        if (!res || res.success === false) {
-          console.error('[assets] parseRowsFromSheet failed:', res?.message);
-          state.rows = []; 
-          renderPreview(); 
-          return;
-        }
-        state.rows = res.rows || [];
-        state.headers = res.headers || (state.rows.length ? Object.keys(state.rows[0]) : []);
-        state.sections = res.sections || state.headers.map(() => '');
-        renderPreview();
-      } catch (e) {
-        console.error('[assets] buildPreview error', e); 
-        state.rows = []; 
-        renderPreview();
-      }
-      setButtonsState();
-    }
-
-    // Bind UI
-    $('#btnCancel2')?.addEventListener('click', () => closePanel());
-    
-    $('#btnSelectAll2')?.addEventListener('click', () => {
-      state.selectedIdx = new Set(state.rows.map((_, i) => i));
-      tbody?.querySelectorAll('input.rowchk2').forEach(cb => cb.checked = true);
-      updateBadge();
-    });
-    
-    $('#btnDeselectAll2')?.addEventListener('click', () => {
-      state.selectedIdx.clear();
-      tbody?.querySelectorAll('input.rowchk2').forEach(cb => cb.checked = false);
-      updateBadge();
-    });
-
-    // Enable/disable buttons depending on inputs
-    host.querySelector('#assetName2')?.addEventListener('input', setButtonsState);
-
-    // Manual path from Create Assets window (no Excel needed)
-    $('#btnManual2')?.addEventListener('click', () => {
-      const assetName = ($('#assetName2')?.value || '').trim();
-      if (!assetName) return alert('Please enter an asset name first.');
-      openManualInstanceWizard(company, location, assetName);
-    });    
-
     $('#excelFile2')?.addEventListener('change', async (e) => {
       const f = (e.target.files || [])[0];
       if (!f) {
-        state.excelB64 = null; 
-        state.sheets = []; 
-        populateSheetSelect([]); 
-        renderPreview(); 
-        return;
+        state.excelB64 = null; state.sheets = []; populateSheetSelect([]); renderTable(); return;
       }
       $('#excelFile2Label').textContent = f.name || 'Selected Excel';
       try {
@@ -916,12 +1116,10 @@
         const res = await window.electronAPI.excelListSheets(state.excelB64);
         state.sheets = (res && res.sheets) || [];
         populateSheetSelect(state.sheets);
-        setButtonsState();
         await buildPreview();
       } catch (err) {
         console.error('[assets] list sheets failed', err);
-        populateSheetSelect([]); 
-        renderPreview();
+        populateSheetSelect([]); renderTable();
       }
     });
 
@@ -938,18 +1136,14 @@
       if (!idxs.length) return alert('Please select at least one row.');
 
       try {
-        // Show importing status
         $('#btnImport2').textContent = 'Importing...';
         $('#btnImport2').disabled = true;
-        
-        // Ensure asset type exists under the location
+
         const up = await window.electronAPI.upsertAssetType(assetName, location);
         if (!up || up.success === false) return alert('Failed to create asset type.');
 
-        // Get selected rows AS-IS from the import
         const selectedRows = idxs.map(i => state.rows[i]).filter(Boolean);
-        
-        // Import with original structure
+
         const payload = {
           location,
           company,
@@ -959,14 +1153,13 @@
           rows: selectedRows,
           assetType: assetName,
         };
-        
+
         const res = await window.electronAPI.importSelection(payload);
         if (!res || res.success === false) {
           alert('Import failed.');
           return;
         }
 
-        // Refresh UI
         if (typeof window.invalidateStationData === 'function') window.invalidateStationData();
         if (typeof window.electronAPI.invalidateStationCache === 'function') {
           await window.electronAPI.invalidateStationCache();
@@ -977,7 +1170,7 @@
 
         alert(`Successfully imported ${res.added} row(s). Data will be synchronized with existing ${assetName} schema if applicable.`);
         closePanel();
-        
+
       } catch (e) {
         console.error('[assets] import failed', e);
         alert('Unexpected import error. See console.');
@@ -986,6 +1179,9 @@
         setButtonsState();
       }
     });
+
+    // initial empty render
+    renderTable();
   }
 
   // Bootstrapping & Nav bindings

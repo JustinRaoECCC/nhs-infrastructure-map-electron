@@ -1899,3 +1899,36 @@ html.modal-open, body.modal-open { overflow: hidden; }
 .settings-view.nuke-active .settings-footer{
   display: none !important;
 }
+
+/* Make the whole wizard fill the space so inner scrollers can size */
+#addInfraContainer { height: 100%; }
+#addInfraPage.wizard-container { height: 100%; display: flex; flex-direction: column; }
+
+/* Wizard body needs to be a flex column with a shrinkable middle */
+#addInfraPage .wizard-body { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+
+/* Step 4 ("Select data") should also be flex so the table-scroll can grow */
+#stepSelectData { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+
+/* Let the table area be the actual scrolling viewport */
+#stepSelectData .table-scroll { flex: 1 1 420px; min-height: 260px; }
+
+/* The two in-panel flows (Create Assets / Import More) are .panel-form blocks.
+   Make them bounded and give their table areas the viewport too. */
+.panel-form { display: flex; flex-direction: column; max-height: 92vh; min-height: 0; }
+.panel-form .table-scroll { flex: 1 1 420px; min-height: 260px; }
+
+/* Hide/show the scroll region via JS */
+.table-scroll.is-hidden { display: none !important; }
+
+/* Lightweight empty-state note (JS toggles .show) */
+.empty-note {
+  display: none;
+  padding: 12px;
+  color: #64748b;
+  border: 1px dashed #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  font-size: 14px;
+}
+.empty-note.show { display: block; }
