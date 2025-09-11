@@ -338,7 +338,7 @@
     });
   }
 
-  // Manual Instance Wizard (2 steps)
+  // Manual Instance Wizard
   async function openManualInstanceWizard(company, location, assetType) {
     const view = `
       <div class="panel-form" id="manualPanel">
@@ -352,6 +352,7 @@
           </div>
         </div>
 
+        <!-- Step 1: General -->
         <div id="mStep1" class="wizard-step active">
           <h3>General Information</h3>
           <div class="form-row">
@@ -381,19 +382,17 @@
           </div>
         </div>
 
+        <!-- Step 2: Sections editor (ALWAYS editing) -->
         <div id="mStep2" class="wizard-step" style="display:none;">
           <h3>Additional Sections & Fields</h3>
-          <p class="hint" style="margin-top:.25rem;">Add as many as you want. <strong>Section</strong> and <strong>Field</strong> are required. Value can be blank.</p>
-          <div class="table-scroll">
-            <table class="data-table" id="mSfTable">
-              <thead>
-                <tr><th style="width:32%;">Section*</th><th style="width:32%;">Field*</th><th>Value</th><th style="width:1%;"></th></tr>
-              </thead>
-              <tbody></tbody>
-            </table>
-          </div>
-          <div style="margin-top:.5rem;">
-            <button id="mAddRow" class="btn btn-ghost">+ Add row</button>
+          <p class="hint" style="margin-top:.25rem;">
+            Add a <strong>Section</strong>, then add <strong>Fields</strong> inside it. Values are optional.
+          </p>
+
+          <div id="mSectionsEditor"></div>
+
+          <div class="main-actions" style="margin-top:.5rem;">
+            <button id="mAddSection" class="btn">+ Add Section</button>
           </div>
         </div>
 
@@ -408,34 +407,129 @@
     if (!host) return;
 
     const $ = sel => host.querySelector(sel);
-    const tbody = $('#mSfTable tbody');
+    const sectionsHost = $('#mSectionsEditor');
 
-    function addRow(sec = '', fld = '', val = '') {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td><input type="text" class="mSec" placeholder="Section name" value="${sec}"/></td>
-        <td><input type="text" class="mFld" placeholder="Field name" value="${fld}"/></td>
-        <td><input type="text" class="mVal" placeholder="Value (optional)" value="${val}"/></td>
-        <td><button class="btn btn-ghost mDelRow" title="Remove">×</button></td>`;
-      tr.querySelector('.mDelRow').addEventListener('click', () => tr.remove());
-      tbody.appendChild(tr);
+    // ── Helpers (no edit toggle; sections start and remain in editing) ──
+    function createFieldRow(fieldName, value) {
+      const fieldDiv = document.createElement('div');
+      fieldDiv.className = 'field-row';
+      fieldDiv.dataset.fieldName = fieldName || '';
+
+      const labelInput = document.createElement('input');
+      labelInput.type = 'text';
+      labelInput.className = 'field-label-input';
+      labelInput.value = fieldName || '';
+      labelInput.placeholder = 'Field name';
+
+      const valueInput = document.createElement('input');
+      valueInput.type = 'text';
+      valueInput.className = 'field-value-input';
+      valueInput.value = value || '';
+      valueInput.placeholder = 'Enter value…';
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'btn btn-ghost btn-sm btn-danger edit-only';
+      delBtn.textContent = '✕';
+      delBtn.title = 'Delete Field';
+      delBtn.addEventListener('click', async () => {
+        const ok = await appConfirm('Delete this field?');
+        if (!ok) return;
+        fieldDiv.remove();
+      });
+
+      fieldDiv.appendChild(labelInput);
+      fieldDiv.appendChild(valueInput);
+      fieldDiv.appendChild(delBtn);
+      return fieldDiv;
     }
 
-    $('#mAddRow').addEventListener('click', () => addRow());
+    function addFieldToSection(sectionDiv) {
+      const fieldsContainer = sectionDiv.querySelector('.section-fields');
+      const newField = createFieldRow('New Field', '');
+      fieldsContainer.appendChild(newField);
+      const label = newField.querySelector('.field-label-input');
+      label.focus(); label.select();
+    }
 
+    async function deleteSection(sectionDiv) {
+      const title = sectionDiv.querySelector('.section-title-input')?.value?.trim() || 'this section';
+      const ok = await appConfirm(`Delete "${title}"?`);
+      if (!ok) return;
+      sectionDiv.remove();
+    }
+
+    function createSection(sectionName, fieldsObj = {}) {
+      const sectionDiv = document.createElement('div');
+      sectionDiv.className = 'station-section editable-section editing'; // ← ALWAYS editing
+
+      const headerDiv = document.createElement('div');
+      headerDiv.className = 'section-header';
+      headerDiv.style.display = 'flex';
+      headerDiv.style.justifyContent = 'space-between';
+      headerDiv.style.alignItems = 'center';
+
+      const titleInput = document.createElement('input');
+      titleInput.type = 'text';
+      titleInput.className = 'section-title-input';
+      titleInput.value = sectionName || 'New Section';
+      titleInput.placeholder = 'Section name';
+
+      const actionsDiv = document.createElement('div');
+      actionsDiv.className = 'section-actions';
+
+      // No edit toggle button — just show edit-only controls all the time
+      const addFieldBtn = document.createElement('button');
+      addFieldBtn.className = 'btn btn-ghost btn-sm edit-only';
+      addFieldBtn.textContent = '+ Add Field';
+      addFieldBtn.addEventListener('click', () => addFieldToSection(sectionDiv));
+
+      const deleteSectionBtn = document.createElement('button');
+      deleteSectionBtn.className = 'btn btn-danger btn-sm edit-only';
+      deleteSectionBtn.textContent = 'Delete Section';
+      deleteSectionBtn.title = 'Delete Section';
+      deleteSectionBtn.addEventListener('click', () => deleteSection(sectionDiv));
+
+      actionsDiv.appendChild(addFieldBtn);
+      actionsDiv.appendChild(deleteSectionBtn);
+
+      headerDiv.appendChild(titleInput);
+      headerDiv.appendChild(actionsDiv);
+
+      const fieldsDiv = document.createElement('div');
+      fieldsDiv.className = 'section-fields';
+
+      Object.entries(fieldsObj || {}).forEach(([fname, val]) => {
+        fieldsDiv.appendChild(createFieldRow(fname, val));
+      });
+
+      sectionDiv.appendChild(headerDiv);
+      sectionDiv.appendChild(fieldsDiv);
+      return sectionDiv;
+    }
+
+    function addNewSection() {
+      const s = createSection('New Section', {});
+      sectionsHost.appendChild(s);
+      const title = s.querySelector('.section-title-input');
+      title.focus(); title.select();
+    }
+
+    // ── Nav bindings ──
     $('#mCancel').addEventListener('click', () => closePanel());
+
     $('#mNext').addEventListener('click', () => {
       const stationId = ($('#mStationId')?.value || '').trim();
       const siteName  = ($('#mSiteName')?.value || '').trim();
       const lat       = ($('#mLat')?.value || '').trim();
       const lon       = ($('#mLon')?.value || '').trim();
-      const status    = ($('#mStatus')?.value || '').trim() || 'UNKNOWN';
       if (!stationId || !siteName || !lat || !lon) {
         return appAlert('Please fill Station ID, Site Name, Latitude, and Longitude.');
       }
       if (isNaN(Number(lat)) || isNaN(Number(lon))) {
         return appAlert('Latitude and Longitude must be numeric.');
       }
+
+      // switch steps
       $('#mStep1').style.display = 'none';
       $('#mStep1').classList.remove('active');
       $('#mStep2').style.display = '';
@@ -443,8 +537,11 @@
       $('#mBack').disabled = false;
       $('#mNext').style.display = 'none';
       $('#mSave').style.display = '';
-      if (!tbody.children.length) addRow();
+
+      // start with one empty section to guide users
+      if (!sectionsHost.children.length) addNewSection();
     });
+
     $('#mBack').addEventListener('click', () => {
       $('#mStep2').style.display = 'none';
       $('#mStep2').classList.remove('active');
@@ -455,6 +552,9 @@
       $('#mSave').style.display = 'none';
     });
 
+    $('#mAddSection').addEventListener('click', addNewSection);
+
+    // ── Save: same payload shape as before ──
     $('#mSave').addEventListener('click', async () => {
       const payload = {
         company,
@@ -469,23 +569,30 @@
         },
         extras: []
       };
+
       if (!payload.general.stationId || !payload.general.siteName || !payload.general.lat || !payload.general.lon) {
         return appAlert('General Information is incomplete.');
       }
       if (isNaN(Number(payload.general.lat)) || isNaN(Number(payload.general.lon))) {
         return appAlert('Latitude and Longitude must be numeric.');
       }
-      const rows = Array.from(tbody.querySelectorAll('tr'));
-      for (const tr of rows) {
-        const sec = (tr.querySelector('.mSec')?.value || '').trim();
-        const fld = (tr.querySelector('.mFld')?.value || '').trim();
-        const val = (tr.querySelector('.mVal')?.value || '').trim();
-        if (!sec && !fld && !val) continue;
-        if (!sec || !fld) {
-          return appAlert('Each added row requires both Section and Field.');
+
+      // Gather sections/fields
+      const sectionEls = Array.from(sectionsHost.querySelectorAll('.editable-section'));
+      for (const sec of sectionEls) {
+        const sectionTitle = sec.querySelector('.section-title-input')?.value?.trim() || '';
+        const fieldRows = Array.from(sec.querySelectorAll('.field-row'));
+        for (const row of fieldRows) {
+          const fld = row.querySelector('.field-label-input')?.value?.trim() || '';
+          const val = row.querySelector('.field-value-input')?.value?.trim() || '';
+          if (!sectionTitle && !fld && !val) continue;
+          if (!sectionTitle || !fld) {
+            return appAlert('Each field requires both a Section name and a Field name.');
+          }
+          payload.extras.push({ section: sectionTitle, field: fld, value: val });
         }
-        payload.extras.push({ section: sec, field: fld, value: val });
       }
+
       try {
         $('#mSave').disabled = true;
         $('#mSave').textContent = 'Saving…';
