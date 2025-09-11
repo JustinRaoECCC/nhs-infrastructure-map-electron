@@ -20,45 +20,121 @@
 </div>
 
 <!-- Add Inspection Modal -->
-<div id="ihModal" class="modal" style="display:none;">
-  <div class="modal-content" style="max-width:720px;width:92%;">
-    <h3 style="margin-top:0;">Add Inspection</h3>
-
-    <div class="form-grid" style="display:grid;grid-template-columns:1fr;gap:10px;">
-      <div class="form-row">
-        <label for="ihYear">Year (YYYY) *</label>
-        <input id="ihYear" type="number" min="1000" max="9999" placeholder="2025" />
-      </div>
-
-      <div class="form-row">
-        <label for="ihName">Name (must include “inspection”) *</label>
-        <input id="ihName" type="text" placeholder="Cableway Engineering Inspection" />
-      </div>
-
-      <div class="form-row">
-        <label for="ihInspector">Inspector</label>
-        <input id="ihInspector" type="text" placeholder="E.g. Matthias Gasser" />
-      </div>
-
-      <div class="form-row">
-        <label for="ihComment">Comment</label>
-        <textarea id="ihComment" rows="4" placeholder="Any notes..."></textarea>
-      </div>
-
-      <div class="form-row" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-        <button id="ihPickPhotos" class="btn">+ Add Photos…</button>
-        <span id="ihPhotosSummary" class="badge">0 selected</span>
-      </div>
-
-      <div class="form-row" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-        <button id="ihPickReport" class="btn">+ Add Inspection Report (PDF)…</button>
-        <span id="ihReportSummary" class="badge">None</span>
-      </div>
-
-      <div id="ihError" style="display:none;color:#b91c1c;font-weight:600;"></div>
+<div id="ihModal" class="modal ih-modal" style="display:none;">
+  <div class="modal-content ih-modal__content" role="dialog" aria-labelledby="ihModalTitle" aria-modal="true">
+    <div class="ih-modal__header">
+      <h3 id="ihModalTitle">Add Inspection</h3>
+      <p class="ih-subtitle">Create a new inspection entry, attach files, and optionally log repairs.</p>
     </div>
 
-    <div class="modal-actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+    <div class="ih-modal__body">
+      <!-- Details -->
+      <section class="ih-section">
+        <h4 class="ih-section__title">Details</h4>
+        <div class="ih-grid">
+          <div class="form-row required">
+            <label for="ihYear">Year (YYYY)</label>
+            <input id="ihYear" type="number" min="1000" max="9999" placeholder="2025" />
+            <small class="ih-help">Four digits, e.g., 2025</small>
+          </div>
+
+          <div class="form-row required">
+            <label for="ihName">Name (must include “inspection”)</label>
+            <input id="ihName" type="text" placeholder="Cableway Engineering Inspection" />
+            <small class="ih-help">Include the word “inspection” so it’s searchable.</small>
+          </div>
+
+          <div class="form-row">
+            <label for="ihInspector">Inspector</label>
+            <input id="ihInspector" type="text" placeholder="E.g. Matthias Gasser" />
+          </div>
+
+          <div class="form-row" style="grid-column: 1 / -1;">
+            <label for="ihComment">Comment</label>
+            <textarea id="ihComment" rows="4" placeholder="Any notes..."></textarea>
+          </div>
+        </div>
+      </section>
+
+      <!-- Files -->
+      <section class="ih-section">
+        <h4 class="ih-section__title">Files</h4>
+
+        <div class="ih-file-row">
+          <div class="ih-file-col">
+            <button id="ihPickPhotos" class="btn">+ Add Photos…</button>
+            <span id="ihPhotosSummary" class="ih-badge">0 selected</span>
+          </div>
+          <div class="ih-file-col">
+            <button id="ihPickReport" class="btn">+ Add Inspection Report (PDF)…</button>
+            <span id="ihReportSummary" class="ih-badge">None</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Repairs -->
+      <section class="ih-section">
+        <div class="ih-section__title-row">
+          <h4 class="ih-section__title">Repairs (optional)</h4>
+          <span class="ih-note">Add any repair items discovered during this inspection.</span>
+        </div>
+
+        <!-- Add-row -->
+        <div class="ih-repairs-addGrid">
+          <div class="form-row">
+            <label for="ihRepName">Repair Name *</label>
+            <input id="ihRepName" type="text" placeholder="Replace anchor bolts, regrout pedestal, etc." />
+          </div>
+          <div class="form-row">
+            <label for="ihRepSeverity">Severity</label>
+            <input id="ihRepSeverity" type="text" placeholder="Low / Medium / High" />
+          </div>
+          <div class="form-row">
+            <label for="ihRepPriority">Priority</label>
+            <input id="ihRepPriority" type="text" placeholder="P1 / P2 / P3 or text" />
+          </div>
+          <div class="form-row">
+            <label for="ihRepCost">Cost</label>
+            <input id="ihRepCost" type="text" placeholder="e.g. 15000" />
+          </div>
+          <div class="form-row">
+            <label for="ihRepCategory">Category</label>
+            <select id="ihRepCategory">
+              <option value="Capital">Capital</option>
+              <option value="O&M">O&amp;M</option>
+            </select>
+          </div>
+          <div class="form-row form-row--button">
+            <button id="ihAddRepairBtn" class="btn">+ Add Repair</button>
+          </div>
+        </div>
+
+        <!-- List of pending repairs -->
+        <div class="table-scroll ih-table-scroll">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width:40%;">Repair Name</th>
+                <th>Severity</th>
+                <th>Priority</th>
+                <th>Cost</th>
+                <th>Category</th>
+                <th style="width:54px;">&nbsp;</th>
+              </tr>
+            </thead>
+            <tbody id="ihRepairsTbody">
+              <tr class="ih-repairs-empty">
+                <td colspan="6" style="text-align:center;color:#6b7280;">No repairs added</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <div id="ihError" class="ih-error" style="display:none;"></div>
+    </div>
+
+    <div class="ih-modal__footer">
       <button id="ihCreateBtn" class="btn btn-primary">Create</button>
       <button id="ihCancelBtn" class="btn btn-ghost">Cancel</button>
     </div>

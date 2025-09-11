@@ -37,7 +37,7 @@
     if (!btn) return;
 
     btn.addEventListener('click', async () => {
-      const ok = window.confirm(
+      const ok = await appConfirm(
         'WARNING: This will permanently delete ALL .xlsx files under the data folder (including subfolders) and the .lookups_cache.json file, then restart the app.\n\nDo you want to continue?'
       );
       if (!ok) return;

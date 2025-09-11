@@ -374,19 +374,19 @@ function addFieldToSection(sectionDiv) {
   markUnsavedChanges();
 }
 
-function deleteField(fieldDiv) {
-  if (confirm('Are you sure you want to delete this field?')) {
-    fieldDiv.remove();
-    markUnsavedChanges();
-  }
+async function deleteField(fieldDiv) {
+  const ok = await appConfirm('Are you sure you want to delete this field?');
+  if (!ok) return;
+  fieldDiv.remove();
+  markUnsavedChanges();
 }
 
-function deleteSection(sectionDiv) {
+async function deleteSection(sectionDiv) {
   const sectionName = sectionDiv.dataset.sectionName;
-  if (confirm(`Are you sure you want to delete the "${sectionName}" section?`)) {
-    sectionDiv.remove();
-    markUnsavedChanges();
-  }
+  const ok = await appConfirm(`Are you sure you want to delete the "${sectionName}" section?`);
+  if (!ok) return;
+  sectionDiv.remove();
+  markUnsavedChanges();
 }
 
 function addNewSection() {
@@ -658,11 +658,10 @@ async function saveStationChanges(assetType) {
 function setupBackButton(container) {
   const backBtn = container.querySelector('#backButton');
   if (backBtn) {
-    backBtn.addEventListener('click', () => {
+    backBtn.addEventListener('click', async () => {
       if (hasUnsavedChanges) {
-        if (!confirm('You have unsaved changes. Are you sure you want to leave?')) {
-          return;
-        }
+        const ok = await appConfirm('You have unsaved changes. Are you sure you want to leave?');
+        if (!ok) return;
       }
 
       container.style.display = 'none';

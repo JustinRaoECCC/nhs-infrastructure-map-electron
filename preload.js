@@ -221,3 +221,119 @@ try {
   window.appAlert = appAlert;
 }
 // --- END: appAlert ---
+
+
+// --- BEGIN: appConfirm (styled, Promise<boolean>, no options required) ---
+let _confirmNodes = null;
+
+function ensureConfirmDOM() {
+  if (_confirmNodes) return _confirmNodes;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'app-confirm-overlay';
+  overlay.setAttribute('role', 'presentation');
+
+  const modal = document.createElement('div');
+  modal.className = 'app-confirm-modal';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+
+  const titleEl = document.createElement('h2');
+  titleEl.className = 'app-confirm-title';
+  titleEl.id = 'app-confirm-title';
+  titleEl.textContent = 'Confirm';
+  modal.setAttribute('aria-labelledby', titleEl.id);
+
+  const msgEl = document.createElement('div');
+  msgEl.className = 'app-confirm-message';
+
+  const actions = document.createElement('div');
+  actions.className = 'app-confirm-actions';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'app-confirm-btn app-confirm-cancel';
+  cancelBtn.textContent = 'Cancel';
+
+  const okBtn = document.createElement('button');
+  okBtn.type = 'button';
+  okBtn.className = 'app-confirm-btn app-confirm-ok';
+  okBtn.textContent = 'OK';
+
+  actions.appendChild(cancelBtn);
+  actions.appendChild(okBtn);
+  modal.appendChild(titleEl);
+  modal.appendChild(msgEl);
+  modal.appendChild(actions);
+  overlay.appendChild(modal);
+
+  const append = () => document.body.appendChild(overlay);
+  if (document.body) append();
+  else window.addEventListener('DOMContentLoaded', append, { once: true });
+
+  _confirmNodes = { overlay, modal, titleEl, msgEl, okBtn, cancelBtn };
+  return _confirmNodes;
+}
+
+/**
+ * appConfirm(message: string) -> Promise<boolean>
+ * Looks like your custom alert; Enter = OK, Esc/Backdrop = Cancel.
+ * Heuristic: if message looks destructive (delete/nuke/etc), apply "danger" style.
+ */
+function appConfirm(message) {
+  const text = String(message ?? '');
+  const { overlay, modal, titleEl, msgEl, okBtn, cancelBtn } = ensureConfirmDOM();
+
+  // Style tweak for destructive operations
+  const isDanger = /(delete|warning|permanent|nuke)/i.test(text);
+  modal.classList.toggle('app-confirm--danger', isDanger);
+
+  titleEl.textContent = 'Confirm';
+  msgEl.textContent = text;
+
+  return new Promise((resolve) => {
+    const prevOverflow = document.body ? document.body.style.overflow : '';
+    const active = document.activeElement;
+
+    const cleanup = (result) => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      overlay.removeEventListener('click', onBackdrop, true);
+      okBtn.removeEventListener('click', onOK, true);
+      cancelBtn.removeEventListener('click', onCancel, true);
+      overlay.classList.remove('show');
+      if (document.body) document.body.style.overflow = prevOverflow;
+      try { active && active.focus && active.focus(); } catch(_) {}
+      resolve(result);
+    };
+
+    const onOK = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    const onBackdrop = (e) => { if (e.target === overlay) cleanup(false); };
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); cleanup(false); }
+      else if (e.key === 'Enter') { e.preventDefault(); cleanup(true); }
+    };
+
+    okBtn.addEventListener('click', onOK, true);
+    cancelBtn.addEventListener('click', onCancel, true);
+    overlay.addEventListener('click', onBackdrop, true);
+    document.addEventListener('keydown', onKeyDown, true);
+
+    overlay.classList.add('show');
+    if (document.body) document.body.style.overflow = 'hidden';
+    // Focus default button (OK) after paint, to match native confirm semantics
+    setTimeout(() => { try { okBtn.focus(); } catch(_) {} }, 0);
+  });
+}
+
+// Expose globally (and alias)
+try {
+  contextBridge.exposeInMainWorld('appConfirm', appConfirm);
+  contextBridge.exposeInMainWorld('showConfirm', appConfirm);
+} catch {
+  // eslint-disable-next-line no-undef
+  window.appConfirm = appConfirm;
+  // eslint-disable-next-line no-undef
+  window.showConfirm = appConfirm;
+}
+// --- END: appConfirm ---

@@ -137,7 +137,7 @@
     delBtn.textContent = 'Delete Inspection';
     delBtn.title = 'Delete this inspection folder';
     delBtn.addEventListener('click', async () => {
-      const ok = confirm(`Delete the "${item.folderName}" inspection (this deletes the folder and its files)?`);
+      const ok = await appConfirm(`Delete the "${item.folderName}" inspection (this deletes the folder and its files)?`);
       if (!ok) return;
       try {
         const res = await window.electronAPI.deleteInspection(stn.name, stn.station_id, item.folderName);
@@ -278,7 +278,15 @@
     const addBtn = host.querySelector('#ihAddBtn');
     const modal  = document.querySelector('#ihModal');
     const closeModal = () => { if (modal) modal.style.display = 'none'; };
-    const openModal  = () => { if (modal) { modal.style.display = 'flex'; setTimeout(()=>yearEl?.focus(),50); } };
+    const openModal  = () => {
+      if (modal) {
+        modal.style.display = 'flex';
+        // Autofill year with the current year if empty or invalid, but keep it editable
+        primeYearField();
+        primeNameField();
+        setTimeout(()=>yearEl?.focus(),50);
+      }
+    };
 
     const yearEl      = document.querySelector('#ihYear');
     const nameEl      = document.querySelector('#ihName');
@@ -291,9 +299,37 @@
     const photosSum   = document.querySelector('#ihPhotosSummary');
     const pickReport  = document.querySelector('#ihPickReport');
     const reportSum   = document.querySelector('#ihReportSummary');
+    const ihRepName     = document.querySelector('#ihRepName');
+    const ihRepSeverity = document.querySelector('#ihRepSeverity');
+    const ihRepPriority = document.querySelector('#ihRepPriority');
+    const ihRepCost     = document.querySelector('#ihRepCost');
+    const ihRepCategory = document.querySelector('#ihRepCategory');
+    const ihAddRepairBtn= document.querySelector('#ihAddRepairBtn');
+    const ihRepairsTbody= document.querySelector('#ihRepairsTbody');
+
 
     let selectedPhotos = [];
     let selectedReport = null;
+    let pendingRepairs = []; // {name,severity,priority,cost,category}
+
+    // ---- helpers ----
+    function primeYearField() {
+      if (!yearEl) return;
+      const raw = String(yearEl.value || '').trim();
+      const n = Number(raw);
+      if (raw === '' || !Number.isInteger(n) || n < 1000 || n > 9999) {
+        yearEl.value = String(new Date().getFullYear());
+      }
+    }
+
+    function primeNameField() {
+      if (!nameEl) return;
+      const raw = String(nameEl.value || '').trim();
+      if (raw === '') {
+        nameEl.value = 'Cableway Engineering Inspection';
+      }
+    }
+
 
     function setError(msg) {
       if (!errEl) return;
@@ -313,14 +349,83 @@
       return null;
     }
 
+    function fmtCostCell(v) {
+      if (typeof v === 'number' && Number.isFinite(v)) {
+        try { return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v); }
+        catch { return `$${Math.round(v).toLocaleString()}`; }
+      }
+      const s = String(v ?? '').trim();
+      return s || '—';
+    }
+
+    function readRepairForm() {
+      const name = String(ihRepName?.value || '').trim();
+      const severity = String(ihRepSeverity?.value || '').trim();
+      const priority = String(ihRepPriority?.value || '').trim();
+      const rawCost = String(ihRepCost?.value || '').trim();
+      const category = (ihRepCategory?.value || 'Capital');
+      let cost = rawCost ? Number(rawCost.replace(/[, ]/g, '')) : '';
+      if (!Number.isFinite(cost)) cost = rawCost;
+      return { name, severity, priority, cost, category };
+    }
+    function validateRepair(it) {
+      if (!it.name) return 'Repair Name is required.';
+      if (!/^Capital$|^O&?M$/i.test(it.category)) return 'Select a valid Category.';
+      return null;
+    }
+    function clearRepairForm() {
+      if (ihRepName) ihRepName.value = '';
+      if (ihRepSeverity) ihRepSeverity.value = '';
+      if (ihRepPriority) ihRepPriority.value = '';
+      if (ihRepCost) ihRepCost.value = '';
+      if (ihRepCategory) ihRepCategory.value = 'Capital';
+    }
+    function renderPendingRepairs() {
+      if (!ihRepairsTbody) return;
+      ihRepairsTbody.innerHTML = '';
+      if (!pendingRepairs.length) {
+        const tr = document.createElement('tr');
+        tr.className = 'ih-repairs-empty';
+        const td = document.createElement('td');
+        td.colSpan = 6; td.style.textAlign = 'center'; td.style.color = '#6b7280';
+        td.textContent = 'No repairs added';
+        tr.appendChild(td);
+        ihRepairsTbody.appendChild(tr);
+        return;
+      }
+      pendingRepairs.forEach((it, idx) => {
+        const tr = document.createElement('tr');
+        const c1 = document.createElement('td'); c1.textContent = it.name || '—';
+        const c2 = document.createElement('td'); c2.textContent = it.severity || '—';
+        const c3 = document.createElement('td'); c3.textContent = it.priority || '—';
+        const c4 = document.createElement('td'); c4.textContent = fmtCostCell(it.cost);
+        const c5 = document.createElement('td'); c5.textContent = it.category || '—';
+        const c6 = document.createElement('td');
+        const del = document.createElement('button');
+        del.className = 'btn btn-ghost btn-sm btn-danger';
+        del.textContent = '✕';
+        del.title = 'Remove';
+        del.addEventListener('click', () => {
+          pendingRepairs.splice(idx, 1);
+          renderPendingRepairs();
+        });
+        c6.appendChild(del);
+        tr.appendChild(c1); tr.appendChild(c2); tr.appendChild(c3); tr.appendChild(c4); tr.appendChild(c5); tr.appendChild(c6);
+        ihRepairsTbody.appendChild(tr);
+      });
+    }
+
     addBtn?.removeAttribute('disabled');
     addBtn?.removeAttribute('title');
     addBtn?.addEventListener('click', () => {
       setError('');
       selectedPhotos = [];
       selectedReport = null;
+      pendingRepairs = [];
       if (photosSum) photosSum.textContent = '0 selected';
       if (reportSum) reportSum.textContent = 'None';
+      clearRepairForm();
+      renderPendingRepairs();
       openModal();
     });
 
@@ -345,6 +450,20 @@
       } catch (_) {}
     });
 
+    ihAddRepairBtn?.addEventListener('click', (e) => {
+      e.preventDefault();
+      const it = readRepairForm();
+      const err = validateRepair(it);
+      if (err) {
+        setError(err);
+        return;
+      }
+      setError('');
+      pendingRepairs.push(it);
+      renderPendingRepairs();
+      clearRepairForm();
+    });
+
     createEl?.addEventListener('click', async () => {
       const err = validate();
       if (err) { setError(err); return; }
@@ -365,6 +484,27 @@
           setError(res?.message || 'Failed to create inspection.');
           return;
         }
+
+        // If repairs were added in the modal, append them to the Repairs sheet now.
+        if (pendingRepairs.length) {
+          try {
+            const current = await window.electronAPI.listRepairs(stn.name, stn.station_id);
+            const merged = Array.isArray(current) ? current.concat(pendingRepairs) : pendingRepairs.slice();
+            const save = await window.electronAPI.saveRepairs(stn.name, stn.station_id, merged);
+            if (!save?.success) {
+              appAlert(save?.message || 'Inspection created, but failed to save repairs.');
+            } else {
+              // Refresh the Repairs tab so changes are visible immediately.
+              if (typeof window.initRepairsTab === 'function') {
+                await window.initRepairsTab(container, stn);
+              }
+            }
+          } catch (repErr) {
+            console.warn('[ih:create -> saveRepairs] failed:', repErr);
+            appAlert('Inspection created, but failed to save repairs.');
+          }
+        }
+
         closeModal();
         await renderList(host, stn); // refresh list (and recompute Next Due)
       } catch (e) {

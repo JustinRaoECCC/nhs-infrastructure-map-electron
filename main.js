@@ -251,3 +251,25 @@ ipcMain.handle('status:get', async () => lookups.getStatusAndRepairSettings());
 ipcMain.handle('status:setColor', async (_evt, key, color) => lookups.setStatusColor(key, color));
 ipcMain.handle('status:setApply', async (_evt, flag) => lookups.setApplyStatusColors(!!flag));
 ipcMain.handle('repair:setApply', async (_evt, flag) => lookups.setApplyRepairColors(!!flag));
+
+// ─── IPC: UI Confirm (sync) ───────────────────────────────────────────────
+ipcMain.on('ui:confirm:sync', (event, opts = {}) => {
+  const { message = 'Are you sure?', title = 'Confirm' } = opts || {};
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const response = dialog.showMessageBoxSync(win, {
+    type: 'question',
+    title,
+    message,
+    buttons: ['Cancel', 'OK'], // index 0 = Cancel, 1 = OK
+    defaultId: 1,
+    cancelId: 0,
+    noLink: true,
+    normalizeAccessKeys: true,
+  });
+  // Nudge focus back to our window (rarely needed, but harmless)
+  try {
+    const w = win || BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()?.[0];
+    setTimeout(() => w?.focus(), 0);
+  } catch (_) {}
+  event.returnValue = (response === 1);
+});
