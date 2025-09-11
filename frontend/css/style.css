@@ -812,16 +812,21 @@ a { color: inherit; text-decoration: none; }
 
 /* Sticky footer with subtle backdrop */
 .settings-footer{
-  position:sticky;
-  bottom:0;
-  display:flex;
-  align-items:center;
-  gap:8px;
-  padding:12px 0;
-  background:linear-gradient(to top, rgba(255,255,255,0.95), rgba(255,255,255,0.6));
-  backdrop-filter: blur(4px);
-  border-top:1px solid #e5e7eb;
+  position: static;                 /* ← static in normal document flow */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0;
+  background: transparent;          /* optional: keep transparent since it won’t float */
+  border-top: 1px solid #e5e7eb;
 }
+
+/* In Settings, let the page (right panel) handle the scroll, not the table pane */
+.settings-view .table-scroll{
+  overflow: visible;                /* ← remove inner scroll layer */
+  flex: 0 0 auto;                   /* ← don’t try to “fill” the column height */
+}
+
 
 /* Dark mode polish */
 @media (prefers-color-scheme: dark){
@@ -1908,12 +1913,6 @@ html.modal-open, body.modal-open { overflow: hidden; }
     color: #cbd5e1;              /* slate-300 */
   }
 }
-
-/* Hide footer (Save/Cancel) on Nuke tab */
-.settings-view.nuke-active .settings-footer{
-  display: none !important;
-}
-
 /* Make the whole wizard fill the space so inner scrollers can size */
 #addInfraContainer { height: 100%; }
 #addInfraPage.wizard-container { height: 100%; display: flex; flex-direction: column; }
@@ -1950,3 +1949,18 @@ html.modal-open, body.modal-open { overflow: hidden; }
 /* Edit-mode visibility for per-section controls */
 .station-section .edit-only { display: none; }
 .station-section.editing .edit-only { display: inline-flex; } /* or inline-block */
+
+/* frontend/css/alert-modal.css */
+.app-alert-overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45);z-index:2147483646}
+.app-alert-overlay.show{display:flex}
+.app-alert-modal{max-width:520px;width:calc(100% - 32px);background:#fff;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:20px;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.4}
+.app-alert-title{margin:0 0 8px;font-size:18px;font-weight:600}
+.app-alert-message{margin:0 0 16px;white-space:pre-wrap;word-wrap:break-word}
+.app-alert-actions{display:flex;justify-content:flex-end;gap:8px}
+.app-alert-btn{appearance:none;border:0;border-radius:10px;padding:10px 14px;font-weight:600;cursor:pointer}
+.app-alert-btn:focus{outline:2px solid #4c9ffe;outline-offset:2px}
+.app-alert-ok{background:#111;color:#fff}
+@media (prefers-color-scheme: dark){
+  .app-alert-modal{background:#1d1f23;color:#e6e6e6}
+  .app-alert-ok{background:#e6e6e6;color:#111}
+}

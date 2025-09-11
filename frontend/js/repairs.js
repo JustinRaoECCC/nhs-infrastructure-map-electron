@@ -192,7 +192,7 @@
         saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
         const res = await window.electronAPI.saveRepairs(stn.name, stn.station_id, toKeep);
         if (!res?.success) {
-          alert(res?.message || 'Failed to save repairs.');
+          appAlert(res?.message || 'Failed to save repairs.');
           return;
         }
         // reload from disk to be sure
@@ -201,7 +201,7 @@
         setTimeout(() => saveBtn.classList.remove('btn-success'), 900);
       } catch (e) {
         console.error('[repairs:save] failed', e);
-        alert('Failed to save repairs.');
+        appAlert('Failed to save repairs.');
       } finally {
         saveBtn.disabled = false; saveBtn.textContent = 'Save Changes';
       }
@@ -209,7 +209,7 @@
 
     // --- Export (placeholder)
     exportBtn?.addEventListener('click', () => {
-      alert('Export Repairs to Dashboard — not implemented yet.');
+      appAlert('Export Repairs to Dashboard — not implemented yet.');
     });
   }
 

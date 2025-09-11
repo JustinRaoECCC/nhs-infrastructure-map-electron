@@ -144,11 +144,11 @@
         if (res && res.success) {
           wrap.remove();
         } else {
-          alert('Failed to delete inspection folder.' + (res?.message ? `\n\n${res.message}` : ''));
+          appAlert('Failed to delete inspection folder.' + (res?.message ? `\n\n${res.message}` : ''));
         }
       } catch (e) {
         console.error('[deleteInspection] failed', e);
-        alert('Failed to delete inspection folder.');
+        appAlert('Failed to delete inspection folder.');
       }
     });
 

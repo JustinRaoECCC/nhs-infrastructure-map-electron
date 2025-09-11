@@ -200,15 +200,19 @@
   // Tabs
   function bindTabs(root) {
     const btns = root.querySelectorAll('.tab-btn');
-    btns.forEach(btn => {
-      btn.addEventListener('click', () => {
-        const target = btn.dataset.tab;
-        btns.forEach(b => b.classList.toggle('active', b === btn));
-        root.querySelectorAll('.tab-panel').forEach(p => {
-          p.style.display = (p.dataset.tab === target) ? 'block' : 'none';
-        });
+    const footer = root.querySelector('.settings-footer');
+    const showTab = (target) => {
+      btns.forEach(b => b.classList.toggle('active', b.dataset.tab === target));
+      root.querySelectorAll('.tab-panel').forEach(p => {
+        p.style.display = (p.dataset.tab === target) ? 'block' : 'none';
       });
-    });
+    // Hide footer only on Nuke (no CSS class; do it directly)
+    if (footer) footer.style.display = (target === 'nuke') ? 'none' : '';
+    };
+    btns.forEach(btn => btn.addEventListener('click', () => showTab(btn.dataset.tab)));
+    // Initialize the correct state on first paint
+    const initial = [...btns].find(b => b.classList.contains('active'))?.dataset.tab || 'mapPin';
+    showTab(initial);
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -322,6 +326,10 @@
     root.dataset.bound = '1';
 
     bindTabs(root);
+    // Ensure footer is visible at start (belt & suspenders)
+    const footer = root.querySelector('.settings-footer');
+    if (footer) footer.style.display = '';
+
 
     const saveBtn = root.querySelector('#settingsSaveBtn');
     if (saveBtn) saveBtn.addEventListener('click', () => handleSave(root));

@@ -1,6 +1,8 @@
 // preload.js
 // Expose a minimal, explicit API surface to the renderer.
-// (keeps the filter drawer non-persistent for now — no lookup READs)
+
+'use strict';
+
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -16,19 +18,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Lookups / colors
   getColorMaps:       () => ipcRenderer.invoke('getColorMaps'),
   setAssetTypeColor:  (assetType, color) => ipcRenderer.invoke('setAssetTypeColor', assetType, color),
-  setAssetTypeColorForLocation: (assetType, location, color) => ipcRenderer.invoke('setAssetTypeColorForLocation', assetType, location, color),
+  setAssetTypeColorForLocation: (assetType, location, color) =>
+    ipcRenderer.invoke('setAssetTypeColorForLocation', assetType, location, color),
   setAssetTypeColorForCompanyLocation: (assetType, company, location, color) =>
     ipcRenderer.invoke('setAssetTypeColorForCompanyLocation', assetType, company, location, color),
-  getLookupTree:          ()      => ipcRenderer.invoke('lookups:getTree'),
+  getLookupTree:      () => ipcRenderer.invoke('lookups:getTree'),
 
   // ─── Lookups (writes only — used by Add Infrastructure wizard) ──────────
-  upsertCompany:  (name, active = true)       => ipcRenderer.invoke('lookups:upsertCompany', name, !!active),
-  upsertLocation: (location, company)         => ipcRenderer.invoke('lookups:upsertLocation', location, company),
-  upsertAssetType:(assetType, location)       => ipcRenderer.invoke('lookups:upsertAssetType', assetType, location),
+  upsertCompany:   (name, active = true) => ipcRenderer.invoke('lookups:upsertCompany', name, !!active),
+  upsertLocation:  (location, company)   => ipcRenderer.invoke('lookups:upsertLocation', location, company),
+  upsertAssetType: (assetType, location) => ipcRenderer.invoke('lookups:upsertAssetType', assetType, location),
 
   // ─── Excel helper for Step 3 sheet picker ───────────────────────────────
-  excelListSheets: (b64)                      => ipcRenderer.invoke('excel:listSheets', b64),
-  excelParseRowsFromSheet: (b64, sheetName)   => ipcRenderer.invoke('excel:parseRowsFromSheet', b64, sheetName),
+  excelListSheets:            (b64)                 => ipcRenderer.invoke('excel:listSheets', b64),
+  excelParseRowsFromSheet:    (b64, sheetName)      => ipcRenderer.invoke('excel:parseRowsFromSheet', b64, sheetName),
 
   // ─── Boot progress from the worker (UI progress bar) ────────────────────
   onExcelProgress: (handler) => {
@@ -47,31 +50,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ─── Station Updates ─────────────────────────────────────────────────────
   updateStationData: (stationData) => ipcRenderer.invoke('stations:update', stationData),
 
-  // Schema synchronization
-  syncAssetTypeSchema: (assetType, schema, excludeStationId) => 
+  // ─── Schema synchronization ──────────────────────────────────────────────
+  syncAssetTypeSchema: (assetType, schema, excludeStationId) =>
     ipcRenderer.invoke('schema:sync', assetType, schema, excludeStationId),
-    
-  getExistingSchema: (assetType) => 
+
+  getExistingSchema: (assetType) =>
     ipcRenderer.invoke('schema:getExisting', assetType),
 
-  // Excel worker extensions
+  // ─── Excel worker extensions ────────────────────────────────────────────
   readLocationWorkbook: (locationName) =>
     ipcRenderer.invoke('excel:readLocationWorkbook', locationName),
-    
+
   readSheetData: (locationName, sheetName) =>
     ipcRenderer.invoke('excel:readSheetData', locationName, sheetName),
-    
+
   updateAssetTypeSchema: (assetType, schema, excludeStationId) =>
     ipcRenderer.invoke('excel:updateAssetTypeSchema', assetType, schema, excludeStationId),
 
   // ─── Inspections ─────────────────────────────────────────────────────────
-  listInspections: (siteName, stationId) =>
-    ipcRenderer.invoke('inspections:list', siteName, stationId),
-
-  deleteInspection: (siteName, stationId, folderName) =>
-    ipcRenderer.invoke('inspections:delete', siteName, stationId, folderName),
-
-  // ─── Inspections (extended) ─────────────────────────────────────────────
   listInspections: (siteName, stationId) =>
     ipcRenderer.invoke('inspections:list', siteName, stationId),
 
@@ -87,18 +83,141 @@ contextBridge.exposeInMainWorld('electronAPI', {
   createInspection: (siteName, stationId, payload) =>
     ipcRenderer.invoke('inspections:create', siteName, stationId, payload),
 
-  // Repairs
+  // ─── Repairs ─────────────────────────────────────────────────────────────
   listRepairs: (siteName, stationId) =>
     ipcRenderer.invoke('repairs:list', siteName, stationId),
+
   saveRepairs: (siteName, stationId, items) =>
-    ipcRenderer.invoke('repairs:save', siteName, stationId, items),  
+    ipcRenderer.invoke('repairs:save', siteName, stationId, items),
+
   // Status / Repair settings
   getStatusRepairSettings: () => ipcRenderer.invoke('status:get'),
-  setStatusColor: (statusKey, color) => ipcRenderer.invoke('status:setColor', statusKey, color),
-  setApplyStatusColors: (flag) => ipcRenderer.invoke('status:setApply', !!flag),
-  setApplyRepairColors: (flag) => ipcRenderer.invoke('repair:setApply', !!flag),
+  setStatusColor:          (statusKey, color) => ipcRenderer.invoke('status:setColor', statusKey, color),
+  setApplyStatusColors:    (flag) => ipcRenderer.invoke('status:setApply', !!flag),
+  setApplyRepairColors:    (flag) => ipcRenderer.invoke('repair:setApply', !!flag),
 
-  // Nuke
-  nukeProgram: () =>
-    ipcRenderer.invoke('nuke:run'),
+  // ─── Nuke ────────────────────────────────────────────────────────────────
+  nukeProgram: () => ipcRenderer.invoke('nuke:run'),
 });
+
+// --- BEGIN: appAlert (custom modal replacement for window.alert) ---
+// Non-blocking modal to avoid Windows focus issues caused by alert().
+const ALERT_CSS = `
+.app-alert-overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45);z-index:2147483646}
+.app-alert-overlay.show{display:flex}
+.app-alert-modal{max-width:520px;width:calc(100% - 32px);background:#fff;border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.25);padding:20px;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.4}
+.app-alert-title{margin:0 0 8px;font-size:18px;font-weight:600}
+.app-alert-message{margin:0 0 16px;white-space:pre-wrap;word-wrap:break-word}
+.app-alert-actions{display:flex;justify-content:flex-end;gap:8px}
+.app-alert-btn{appearance:none;border:0;border-radius:10px;padding:10px 14px;font-weight:600;cursor:pointer}
+.app-alert-btn:focus{outline:2px solid #4c9ffe;outline-offset:2px}
+.app-alert-ok{background:#111;color:#fff}
+@media (prefers-color-scheme: dark){
+  .app-alert-modal{background:#1d1f23;color:#e6e6e6}
+  .app-alert-ok{background:#e6e6e6;color:#111}
+}
+`;
+
+function ensureAlertStyles() {
+  if (document.getElementById('app-alert-styles')) return;
+  const inject = () => {
+    if (document.getElementById('app-alert-styles')) return;
+    const s = document.createElement('style');
+    s.id = 'app-alert-styles';
+    s.textContent = ALERT_CSS;
+    document.head.appendChild(s);
+  };
+  if (document.head) inject();
+  else window.addEventListener('DOMContentLoaded', inject, { once: true });
+}
+
+let alertNodes = null; // cached DOM nodes
+function ensureAlertDOM() {
+  if (alertNodes) return alertNodes;
+  ensureAlertStyles();
+
+  // Build nodes immediately; append now or when DOM is ready.
+  const overlay = document.createElement('div');
+  overlay.className = 'app-alert-overlay';
+  overlay.setAttribute('role', 'presentation');
+
+  const modal = document.createElement('div');
+  modal.className = 'app-alert-modal';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+
+  const title = document.createElement('h2');
+  title.className = 'app-alert-title';
+  title.id = 'app-alert-title';
+  modal.setAttribute('aria-labelledby', title.id);
+
+  const msg = document.createElement('div');
+  msg.className = 'app-alert-message';
+
+  const actions = document.createElement('div');
+  actions.className = 'app-alert-actions';
+
+  const ok = document.createElement('button');
+  ok.type = 'button';
+  ok.className = 'app-alert-btn app-alert-ok';
+  ok.textContent = 'OK';
+  actions.appendChild(ok);
+
+  modal.appendChild(title);
+  modal.appendChild(msg);
+  modal.appendChild(actions);
+  overlay.appendChild(modal);
+
+  const appendNow = () => document.body.appendChild(overlay);
+  if (document.body) appendNow();
+  else window.addEventListener('DOMContentLoaded', appendNow, { once: true });
+
+  alertNodes = { overlay, modal, title, msg, ok };
+  return alertNodes;
+}
+
+function appAlert(message, opts = {}) {
+  const { title = 'Notice', okText = 'OK', closeOnBackdrop = true, timeout = null } = opts || {};
+  const { overlay, title: titleEl, msg, ok } = ensureAlertDOM();
+  titleEl.textContent = String(title);
+  msg.textContent = message == null ? '' : String(message);
+  ok.textContent = okText;
+
+  return new Promise((resolve) => {
+    let onKeyDown;
+    const cleanup = () => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      overlay.classList.remove('show');
+      document.body && (document.body.style.overflow = '');
+      resolve();
+    };
+    onKeyDown = (e) => {
+      if (e.key === 'Escape' || e.key === 'Enter') {
+        e.preventDefault();
+        cleanup();
+      }
+    };
+    ok.onclick = cleanup;
+    overlay.onclick = (e) => {
+      if (closeOnBackdrop && e.target === overlay) cleanup();
+    };
+
+    overlay.classList.add('show');
+    if (document.body) document.body.style.overflow = 'hidden';
+    // focus after paint
+    setTimeout(() => { try { ok.focus(); } catch (_) {} }, 0);
+    if (timeout && Number.isFinite(timeout)) setTimeout(cleanup, timeout);
+
+    document.addEventListener('keydown', onKeyDown, true);
+  });
+}
+
+// Expose globally so all renderers can call it directly: appAlert('hello')
+try {
+  contextBridge.exposeInMainWorld('appAlert', appAlert);
+} catch {
+  // Fallback (if contextIsolation is off)
+  // eslint-disable-next-line no-undef
+  window.appAlert = appAlert;
+}
+// --- END: appAlert ---

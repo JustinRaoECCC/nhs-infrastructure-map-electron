@@ -289,14 +289,14 @@
     $('#btnCancel')?.addEventListener('click', () => closePanel());
     $('#btnSave')?.addEventListener('click', async () => {
       const name = ($('#coName')?.value || '').trim();
-      if (!name) return alert('Please enter a company name.');
+      if (!name) return appAlert('Please enter a company name.');
       try {
         const res = await window.electronAPI.upsertCompany(name, true);
-        if (!res || res.success === false) return alert('Failed to create company.');
+        if (!res || res.success === false) return appAlert('Failed to create company.');
         await window.refreshFilters?.();
         closePanel();
       } catch (e) {
-        console.error('[CreateCompany] failed', e); alert('Unexpected error.');
+        console.error('[CreateCompany] failed', e); appAlert('Unexpected error.');
       }
     });
   }
@@ -326,14 +326,14 @@
     $('#btnCancel')?.addEventListener('click', () => closePanel());
     $('#btnSave')?.addEventListener('click', async () => {
       const loc = ($('#locName')?.value || '').trim();
-      if (!loc) return alert('Please enter a location.');
+      if (!loc) return appAlert('Please enter a location.');
       try {
         const res = await window.electronAPI.upsertLocation(loc, company);
-        if (!res || res.success === false) return alert('Failed to create location.');
+        if (!res || res.success === false) return appAlert('Failed to create location.');
         await window.refreshFilters?.();
         closePanel();
       } catch (e) {
-        console.error('[CreateLocation] failed', e); alert('Unexpected error.');
+        console.error('[CreateLocation] failed', e); appAlert('Unexpected error.');
       }
     });
   }
@@ -431,10 +431,10 @@
       const lon       = ($('#mLon')?.value || '').trim();
       const status    = ($('#mStatus')?.value || '').trim() || 'UNKNOWN';
       if (!stationId || !siteName || !lat || !lon) {
-        return alert('Please fill Station ID, Site Name, Latitude, and Longitude.');
+        return appAlert('Please fill Station ID, Site Name, Latitude, and Longitude.');
       }
       if (isNaN(Number(lat)) || isNaN(Number(lon))) {
-        return alert('Latitude and Longitude must be numeric.');
+        return appAlert('Latitude and Longitude must be numeric.');
       }
       $('#mStep1').style.display = 'none';
       $('#mStep1').classList.remove('active');
@@ -470,10 +470,10 @@
         extras: []
       };
       if (!payload.general.stationId || !payload.general.siteName || !payload.general.lat || !payload.general.lon) {
-        return alert('General Information is incomplete.');
+        return appAlert('General Information is incomplete.');
       }
       if (isNaN(Number(payload.general.lat)) || isNaN(Number(payload.general.lon))) {
-        return alert('Latitude and Longitude must be numeric.');
+        return appAlert('Latitude and Longitude must be numeric.');
       }
       const rows = Array.from(tbody.querySelectorAll('tr'));
       for (const tr of rows) {
@@ -482,7 +482,7 @@
         const val = (tr.querySelector('.mVal')?.value || '').trim();
         if (!sec && !fld && !val) continue;
         if (!sec || !fld) {
-          return alert('Each added row requires both Section and Field.');
+          return appAlert('Each added row requires both Section and Field.');
         }
         payload.extras.push({ section: sec, field: fld, value: val });
       }
@@ -491,7 +491,7 @@
         $('#mSave').textContent = 'Saving…';
         const res = await window.electronAPI.manualCreateInstance(payload);
         if (!res || res.success === false) {
-          alert(res?.message || 'Failed to create instance.');
+          appAlert(res?.message || 'Failed to create instance.');
           return;
         }
         if (typeof window.electronAPI.invalidateStationCache === 'function') {
@@ -500,11 +500,11 @@
         await window.refreshFilters?.();
         await window.refreshMarkers?.();
         await window.renderList?.();
-        alert('Asset created.');
+        appAlert('Asset created.');
         closePanel();
       } catch (e) {
         console.error('[manualCreate] failed', e);
-        alert('Unexpected error while creating the asset.');
+        appAlert('Unexpected error while creating the asset.');
       } finally {
         $('#mSave').disabled = false;
         $('#mSave').textContent = 'Save';
@@ -801,7 +801,7 @@
 
     $('#imImport').addEventListener('click', async () => {
       const idxs = Array.from(state.selectedIdx.values()).sort((a, b) => a - b);
-      if (!idxs.length) return alert('Please select at least one row.');
+      if (!idxs.length) return appAlert('Please select at least one row.');
       try {
         $('#imImport').textContent = 'Importing…';
         $('#imImport').disabled = true;
@@ -816,18 +816,18 @@
           assetType
         };
         const res = await window.electronAPI.importSelection(payload);
-        if (!res || res.success === false) return alert(res?.message || 'Import failed.');
+        if (!res || res.success === false) return appAlert(res?.message || 'Import failed.');
         if (typeof window.electronAPI.invalidateStationCache === 'function') {
           await window.electronAPI.invalidateStationCache();
         }
         await window.refreshFilters?.();
         await window.refreshMarkers?.();
         await window.renderList?.();
-        alert(`Successfully imported ${res.added} row(s) into “${assetType}”.`);
+        appAlert(`Successfully imported ${res.added} row(s) into “${assetType}”.`);
         closePanel();
       } catch (e) {
         console.error('[importMore] import failed', e);
-        alert('Unexpected import error. See console.');
+        appAlert('Unexpected import error. See console.');
       } finally {
         $('#imImport').textContent = 'Import Selected';
         setButtons();
@@ -1075,7 +1075,7 @@
 
     $('#btnManual2')?.addEventListener('click', () => {
       const assetName = ($('#assetName2')?.value || '').trim();
-      if (!assetName) return alert('Please enter an asset name first.');
+      if (!assetName) return appAlert('Please enter an asset name first.');
       openManualInstanceWizard(company, location, assetName);
     });
 
@@ -1130,17 +1130,17 @@
 
     $('#btnImport2')?.addEventListener('click', async () => {
       const assetName = ($('#assetName2')?.value || '').trim();
-      if (!assetName) return alert('Please enter an asset name.');
-      if (!state.rows.length) return alert('No rows to import (select a sheet).');
+      if (!assetName) return appAlert('Please enter an asset name.');
+      if (!state.rows.length) return appAlert('No rows to import (select a sheet).');
       const idxs = Array.from(state.selectedIdx.values()).sort((a,b) => a-b);
-      if (!idxs.length) return alert('Please select at least one row.');
+      if (!idxs.length) return appAlert('Please select at least one row.');
 
       try {
         $('#btnImport2').textContent = 'Importing...';
         $('#btnImport2').disabled = true;
 
         const up = await window.electronAPI.upsertAssetType(assetName, location);
-        if (!up || up.success === false) return alert('Failed to create asset type.');
+        if (!up || up.success === false) return appAlert('Failed to create asset type.');
 
         const selectedRows = idxs.map(i => state.rows[i]).filter(Boolean);
 
@@ -1156,7 +1156,7 @@
 
         const res = await window.electronAPI.importSelection(payload);
         if (!res || res.success === false) {
-          alert('Import failed.');
+          appAlert('Import failed.');
           return;
         }
 
@@ -1168,12 +1168,12 @@
         await window.refreshMarkers?.();
         await window.renderList?.();
 
-        alert(`Successfully imported ${res.added} row(s). Data will be synchronized with existing ${assetName} schema if applicable.`);
+        appAlert(`Successfully imported ${res.added} row(s). Data will be synchronized with existing ${assetName} schema if applicable.`);
         closePanel();
 
       } catch (e) {
         console.error('[assets] import failed', e);
-        alert('Unexpected import error. See console.');
+        appAlert('Unexpected import error. See console.');
       } finally {
         $('#btnImport2').textContent = 'Import Selected';
         setButtonsState();

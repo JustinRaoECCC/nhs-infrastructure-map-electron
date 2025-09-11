@@ -7,7 +7,7 @@ async function loadStationPage(stationId, origin = 'map') {
   // Fetch station data
   const all = await window.electronAPI.getStationData();
   const stn = (all || []).find(s => String(s.station_id) === String(stationId));
-  if (!stn) return alert('Station not found: ' + stationId);
+  if (!stn) return appAlert('Station not found: ' + stationId);
 
   currentStationData = { ...stn }; // Store copy for editing
 
@@ -20,7 +20,7 @@ async function loadStationPage(stationId, origin = 'map') {
 
   const resp = await fetch('station_specific.html');
   if (!resp.ok) {
-    alert('Failed to load station detail view.');
+    appAlert('Failed to load station detail view.');
    return;
   }
   const html = await resp.text();
@@ -482,7 +482,7 @@ function setupPasswordModal(container) {
         hidePasswordModal(container);
         passwordInput.value = '';
       } else {
-        alert('Incorrect password. Please try again.');
+        appAlert('Incorrect password. Please try again.');
         passwordInput.focus();
       }
     });
@@ -643,7 +643,7 @@ async function saveStationChanges(assetType) {
 
   } catch (error) {
     console.error('Save failed:', error);
-    alert('Failed to save changes: ' + error.message);
+    appAlert('Failed to save changes: ' + error.message);
   } finally {
     const saveBtn = container.querySelector('#saveChangesBtn');
     if (saveBtn) {
