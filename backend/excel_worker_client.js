@@ -72,4 +72,10 @@ module.exports = {
     call('updateAssetTypeSchema', assetType, schema, excludeStationId),
   setStatusColor: (statusKey, color) => call('setStatusColor', statusKey, color),
   setSettingBoolean: (key, flag) => call('setSettingBoolean', key, !!flag),
+  setLocationLink: (company, location, link) =>
+    call('setLocationLink', company, location, link),
+  setAssetTypeLink: (assetType, company, location, link) =>
+    call('setAssetTypeLink', assetType, company, location, link),
+
+
 };

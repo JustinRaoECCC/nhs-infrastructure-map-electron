@@ -273,3 +273,10 @@ ipcMain.on('ui:confirm:sync', (event, opts = {}) => {
   } catch (_) {}
   event.returnValue = (response === 1);
 });
+
+ipcMain.handle('lookups:setLocationLink', async (_evt, company, location, link) =>
+  lookups.setLocationLink(company, location, link)
+);
+ipcMain.handle('lookups:setAssetTypeLink', async (_evt, assetType, company, location, link) =>
+  lookups.setAssetTypeLink(assetType, company, location, link)
+);

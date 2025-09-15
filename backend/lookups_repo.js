@@ -48,6 +48,9 @@ let _cache = {
   applyStatusColorsOnMap: false,
   repairColors: new Map(),         // reserved for future
   applyRepairColorsOnMap: false,
+  // NEW: links
+  locationLinks: new Map(),        // Map<company, Map<location, link>>
+  assetTypeLinks: new Map(),       // Map<company, Map<location, Map<assetType, link>>>
 };
 
 function _invalidateAllCaches() { _cache.mtimeMs = -1; try { fs.unlinkSync(CACHE_PATH); } catch(_) {} }
@@ -83,6 +86,22 @@ function _loadJsonCache(mtimeMs) {
       applyStatusColorsOnMap: !!raw.applyStatusColorsOnMap,
       repairColors: new Map(Object.entries(raw.repairColors || {})),
       applyRepairColorsOnMap: !!raw.applyRepairColorsOnMap,
+      // NEW: links
+      locationLinks: new Map(
+        Object.entries(raw.locationLinks || {}).map(
+          ([co, locObj]) => [co, new Map(Object.entries(locObj))]
+        )
+      ),
+      assetTypeLinks: new Map(
+        Object.entries(raw.assetTypeLinks || {}).map(
+          ([co, locObj]) => [
+            co,
+            new Map(Object.entries(locObj).map(
+              ([loc, atObj]) => [loc, new Map(Object.entries(atObj))]
+            ))
+          ]
+        )
+      ),
     };
     return true;
   } catch(_) { return false; }
@@ -118,6 +137,24 @@ function _saveJsonCache() {
       applyStatusColorsOnMap: _cache.applyStatusColorsOnMap,
       repairColors: Object.fromEntries(_cache.repairColors),
       applyRepairColorsOnMap: _cache.applyRepairColorsOnMap,
+      // NEW: links
+      locationLinks: Object.fromEntries(
+        Array.from(_cache.locationLinks.entries()).map(
+          ([co, m]) => [co, Object.fromEntries(m)]
+        )
+      ),
+      assetTypeLinks: Object.fromEntries(
+        Array.from(_cache.assetTypeLinks.entries()).map(
+          ([co, locMap]) => [
+            co,
+            Object.fromEntries(
+              Array.from(locMap.entries()).map(
+                ([loc, atMap]) => [loc, Object.fromEntries(atMap)]
+              )
+            )
+          ]
+        )
+      ),
     };
     fs.writeFileSync(CACHE_PATH, JSON.stringify(json));
   } catch(_) {}
@@ -152,6 +189,23 @@ async function _primeAllCaches() {
   const applyStatusColorsOnMap = !!snap.applyStatusColorsOnMap;
   const applyRepairColorsOnMap = !!snap.applyRepairColorsOnMap;
 
+  // NEW: hydrate link maps from snapshot
+  const locLinks = new Map(
+    Object.entries(snap.locationLinks || {}).map(
+      ([co, obj]) => [co, new Map(Object.entries(obj))]
+    )
+  );
+  const atLinks = new Map(
+    Object.entries(snap.assetTypeLinks || {}).map(
+      ([co, locObj]) => [
+        co,
+        new Map(Object.entries(locObj).map(
+          ([loc, atObj]) => [loc, new Map(Object.entries(atObj))]
+        ))
+      ]
+    )
+  );
+
   _cache = {
     mtimeMs,
     colorsGlobal: global,
@@ -165,6 +219,9 @@ async function _primeAllCaches() {
     applyStatusColorsOnMap,
     repairColors: new Map(), // future
     applyRepairColorsOnMap,
+    // NEW: links
+    locationLinks: locLinks,
+    assetTypeLinks: atLinks,
   };
   _saveJsonCache()
 }
@@ -265,6 +322,45 @@ async function upsertAssetType(assetType, location) {
   return res;
 }
 
+// ─── Links / Photos Base Resolver ─────────────────────────────────────────
+async function getPhotosBase({ company, location, assetType } = {}) {
+  await _primeAllCaches();
+  const co  = normStr(company);
+  const loc = normStr(location);
+  const at  = normStr(assetType);
+
+  // 1) AssetTypes.link (company+location+assetType)
+  if (co && loc && at) {
+    const locMap = _cache.assetTypeLinks.get(co);
+    const atMap = locMap && locMap.get(loc);
+    const link = atMap && atMap.get(at);
+    if (link) return link;
+  }
+
+  // 2) Locations.link (company+location)
+  if (co && loc) {
+    const locMap = _cache.locationLinks.get(co);
+    const link = locMap && locMap.get(loc);
+    if (link) return link;
+  }
+
+  // 3) nothing
+  return null;
+}
+
+// ─── Link Writers ─────────────────────────────────────────────────────────
+async function setLocationLink(company, location, link) {
+  const res = await excel.setLocationLink(company, location, link || '');
+  _invalidateAllCaches();
+  return res;
+}
+
+async function setAssetTypeLink(assetType, company, location, link) {
+  const res = await excel.setAssetTypeLink(assetType, company, location, link || '');
+  _invalidateAllCaches();
+  return res;
+}
+
 // ─── NEW: Status/Repair settings APIs ──────────────────────────────────────
 async function getStatusAndRepairSettings() {
   await _primeAllCaches();
@@ -315,6 +411,10 @@ module.exports = {
   getAssetTypeColor,
   getAssetTypeColorForLocation,
   getAssetTypeColorForCompanyLocation,
+  // NEW: links
+  getPhotosBase,
+  setLocationLink,
+  setAssetTypeLink,
   // writes
   upsertCompany,
   upsertLocation,

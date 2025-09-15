@@ -55,8 +55,9 @@ async function ensureLookupsReady() {
     let changed = false;
 
     if (need('Companies'))          { wb.addWorksheet('Companies').addRow(['company','active']); changed = true; }
-    if (need('Locations'))          { wb.addWorksheet('Locations').addRow(['location','company']); changed = true; }
-    if (need('AssetTypes'))         { wb.addWorksheet('AssetTypes').addRow(['asset_type','location','company','color']); changed = true; }
+    if (need('Locations'))          { wb.addWorksheet('Locations').addRow(['location','company','link']); changed = true; }
+    if (need('AssetTypes'))         { wb.addWorksheet('AssetTypes').addRow(['asset_type','location','company','color','link']); changed = true; }
+
     if (need('Custom Weights'))     { wb.addWorksheet('Custom Weights').addRow(['weight','active']); changed = true; }
     if (need('Workplan Constants')) { wb.addWorksheet('Workplan Constants').addRow(['Field','Value']); changed = true; }
     if (need('Algorithm Parameters')) {
@@ -90,8 +91,8 @@ async function ensureLookupsReady() {
   } else {
     progress('ensure', 55, 'Creating workbook…');
     wb.addWorksheet('Companies').addRow(['company','active']);
-    wb.addWorksheet('Locations').addRow(['location','company']);
-    wb.addWorksheet('AssetTypes').addRow(['asset_type','location','company','color']);
+    wb.addWorksheet('Locations').addRow(['location','company','link']);
+    wb.addWorksheet('AssetTypes').addRow(['asset_type','location','company','color','link']);
     wb.addWorksheet('Custom Weights').addRow(['weight','active']);
     wb.addWorksheet('Workplan Constants').addRow(['Field','Value']);
     wb.addWorksheet('Algorithm Parameters').addRow(['Applies To','Parameter','Condition','MaxWeight','Option','Weight','Selected']);
@@ -130,6 +131,10 @@ async function readLookupsSnapshot() {
   const wsA = getSheet(wb, 'AssetTypes');
   const wsC = getSheet(wb, 'Companies');
   const wsL = getSheet(wb, 'Locations');
+
+  // NEW: link caches
+  const locationLinks = {};        // { company: { location: link } }
+  const assetTypeLinks = {};       // { company: { location: { asset_type: link } } }
 
   const colorsGlobal = {};               // { assetType: color }
   const colorsByLoc  = {};               // { location: { assetType: color } }
@@ -172,8 +177,12 @@ async function readLookupsSnapshot() {
       if (i === 1) return;
       const loc = normStr(row.getCell(1)?.text);
       const comp= normStr(row.getCell(2)?.text);
+      const link= normStr(row.getCell(3)?.text);
       if (!loc || !comp) return;
       (locsByCompany[comp] ||= new Set()).add(loc);
+      if (link) {
+        ((locationLinks[comp] ||= {}))[loc] = link;
+      }
     });
   }
   if (wsA) {
@@ -181,8 +190,13 @@ async function readLookupsSnapshot() {
       if (i === 1) return;
       const at  = normStr(row.getCell(1)?.text);
       const loc = normStr(row.getCell(2)?.text);
+      const co  = normStr(row.getCell(3)?.text);
+      const link = normStr(row.getCell(5)?.text); // 5th column = link
       if (!at || !loc) return;
       (assetsByLocation[loc] ||= new Set()).add(at);
+      if (at && loc && co && link) {
+        (((assetTypeLinks[co] ||= {})[loc] ||= {}))[at] = link;
+      }
     });
   }
   // NEW: Status Colors + Settings
@@ -218,7 +232,10 @@ async function readLookupsSnapshot() {
     companies: uniqSorted(companies), locsByCompany, assetsByLocation,
     statusColors,
     applyStatusColorsOnMap,
-    applyRepairColorsOnMap
+    applyRepairColorsOnMap,
+    // NEW:
+    locationLinks,
+    assetTypeLinks,
   };
   progress('done', 100, 'Excel ready');
   return payload;
@@ -232,6 +249,59 @@ async function setAssetTypeColor(assetType, color) {
   // Global colors are deliberately disabled in the strict model.
   // Kept for backward calls: no-op with explicit response.
   return { success: false, disabled: true, message: 'Global colors are disabled; use setAssetTypeColorForCompanyLocation' };
+}
+
+// NEW: write location link
+async function setLocationLink(company, location, link) {
+  await ensureLookupsReady();
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(LOOKUPS_PATH);
+  const ws = getSheet(wb, 'Locations') || wb.addWorksheet('Locations');
+  if (ws.rowCount === 0) ws.addRow(['location','company','link']);
+  const tgtLoc = lc(location), tgtComp = lc(company);
+  let found = false;
+  ws.eachRow({ includeEmpty:false }, (row, idx) => {
+    if (idx === 1) return;
+    const loc = lc(row.getCell(1)?.text);
+    const comp= lc(row.getCell(2)?.text);
+    if (loc === tgtLoc && comp === tgtComp) {
+      row.getCell(3).value = normStr(link || '');
+      found = true;
+    }
+  });
+  if (!found) ws.addRow([normStr(location), normStr(company), normStr(link || '')]);
+  await wb.xlsx.writeFile(LOOKUPS_PATH);
+  return { success:true };
+}
+
+// NEW: write asset type link
+async function setAssetTypeLink(assetType, company, location, link) {
+  await ensureLookupsReady();
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(LOOKUPS_PATH);
+  const ws = getSheet(wb, 'AssetTypes') || wb.addWorksheet('AssetTypes');
+  if (ws.rowCount === 0) ws.addRow(['asset_type','location','company','color','link']);
+  const tgtAt = lc(assetType), tgtLoc = lc(location), tgtComp = lc(company);
+  let found = false;
+  ws.eachRow({ includeEmpty:false }, (row, idx) => {
+    if (idx === 1) return;
+    const at  = lc(row.getCell(1)?.text);
+    const loc = lc(row.getCell(2)?.text);
+    const co  = lc(row.getCell(3)?.text);
+    if (at === tgtAt && loc === tgtLoc && co === tgtComp) {
+      // keep color if present
+      if (!normStr(row.getCell(4)?.text)) row.getCell(4).value = randHexColor();
+      row.getCell(5).value = normStr(link || '');
+      found = true;
+    }
+  });
+  if (!found) {
+    ws.addRow([normStr(assetType), normStr(location), normStr(company), randHexColor(), normStr(link || '')]);
+  }
+  await wb.xlsx.writeFile(LOOKUPS_PATH);
+  return { success:true };
 }
 
 async function setStatusColor(statusKey, color) {
@@ -326,7 +396,7 @@ async function upsertLocation(location, company) {
     if (idx === 1) return;
     if (lc(row.getCell(1)?.text) === tgtLoc && lc(row.getCell(2)?.text) === tgtComp) exists = true;
   });
-  if (!exists) ws.addRow([normStr(location), normStr(company)]);
+  if (!exists) ws.addRow([normStr(location), normStr(company)]); // link column (3) optional on insert
   await wb.xlsx.writeFile(LOOKUPS_PATH);
   // create the location workbook if missing
   ensureDir(LOCATIONS_DIR);
@@ -1263,6 +1333,8 @@ const handlers = {
   updateAssetTypeSchema,
   setStatusColor,
   setSettingBoolean,
+  setLocationLink,
+  setAssetTypeLink,
 };
 
 parentPort.on('message', async (msg) => {

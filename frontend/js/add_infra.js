@@ -314,6 +314,13 @@
           <label>Location*</label>
           <input type="text" id="locName" placeholder="Location name..." />
         </div>
+        <div class="form-row">
+          <label>Base folder link (optional)</label>
+          <input type="text" id="locLink" placeholder="\\\\\\server\\share\\Stations  or  C:\\\\Users\\\\name\\\\Stations" />
+          <div class="hint" style="opacity:.75;margin-top:.25rem;">
+            Use the same format as your current base (UNC path or absolute Windows path).
+          </div>
+        </div>
         <div class="wizard-footer" style="justify-content:flex-end;">
           <button id="btnCancel" class="btn btn-ghost">Cancel</button>
           <button id="btnSave" class="btn btn-primary">Save</button>
@@ -329,7 +336,17 @@
       if (!loc) return appAlert('Please enter a location.');
       try {
         const res = await window.electronAPI.upsertLocation(loc, company);
+        // Only proceed if upsert succeeded
         if (!res || res.success === false) return appAlert('Failed to create location.');
+        // Save optional link (if any) after upsert succeeds
+        const link = ($('#locLink')?.value || '').trim();
+        if (link) {
+          try {
+            await window.electronAPI.setLocationLink(company, loc, link);
+          } catch (_) {
+            /* non-fatal */
+          }
+        }
         await window.refreshFilters?.();
         closePanel();
       } catch (e) {
@@ -965,6 +982,14 @@
         </div>
 
         <div class="form-row">
+          <label>Base folder link (optional)</label>
+          <input type="text" id="assetLink2" placeholder="\\\\\\server\\share\\Stations  or  C:\\\\Users\\\\name\\\\Stations" />
+          <div class="hint" style="opacity:.75;margin-top:.25rem;">
+            If provided, this link will be used for this asset type at this location (overrides the location link).
+          </div>
+        </div>
+
+        <div class="form-row">
           <label>Excel File</label>
           <div class="filepicker">
             <input type="file" id="excelFile2" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
@@ -1021,6 +1046,14 @@
 
     let vt2 = null;
     let bound = false;
+
+    // Save per-asset-type link if the user provided one
+    async function saveAssetTypeLinkIfAny(assetName) {
+      const link = (host.querySelector('#assetLink2')?.value || '').trim();
+      if (!link || !assetName) return;
+      try { await window.electronAPI.setAssetTypeLink(assetName, company, location, link); }
+      catch (_) {}
+    }
 
     function updateBadge() { $('#rowCount2').textContent = `${state.selectedIdx.size} selected`; }
     function setButtonsState() {
@@ -1180,9 +1213,11 @@
 
     host.querySelector('#assetName2')?.addEventListener('input', setButtonsState);
 
-    $('#btnManual2')?.addEventListener('click', () => {
+    $('#btnManual2')?.addEventListener('click', async () => {
       const assetName = ($('#assetName2')?.value || '').trim();
       if (!assetName) return appAlert('Please enter an asset name first.');
+      // Save optional per-asset-type link before opening manual wizard
+      await saveAssetTypeLinkIfAny(assetName);
       openManualInstanceWizard(company, location, assetName);
     });
 
@@ -1245,6 +1280,9 @@
       try {
         $('#btnImport2').textContent = 'Importing...';
         $('#btnImport2').disabled = true;
+
+        // Persist optional per-asset-type link before creating/upserting type
+        await saveAssetTypeLinkIfAny(assetName);
 
         const up = await window.electronAPI.upsertAssetType(assetName, location);
         if (!up || up.success === false) return appAlert('Failed to create asset type.');

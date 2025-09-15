@@ -2,10 +2,13 @@
 const fs = require('fs');
 const fsp = fs.promises;
 const { pathToFileURL } = require('url');
-const { PHOTOS_BASE, IMAGE_EXTS } = require('./config');
 const path = require('path');
+
+const config = require('./config'); // <— changed
 const lookupsRepo = require('./lookups_repo');
 const excel = require('./excel_worker_client');
+
+const IMAGE_EXTS = config.IMAGE_EXTS;
 
 
 // Normalize location consistently and strip ".xlsx"
@@ -427,7 +430,37 @@ function folderNameFor(siteName, stationId) {
 
 async function getRecentPhotos(siteName, stationId, limit = 5) {
   try {
+    // Find the station to infer {assetType, location, company}
+    let assetType = '';
+    let location = '';
+    let company = '';
+
+    try {
+      const all = await getStationData({ skipColors: true });
+      const st = all.find(s => String(s.station_id).trim().toLowerCase() === String(stationId).trim().toLowerCase());
+      if (st) {
+        assetType = String(st.asset_type || '').trim();
+        location  = String(st.location_file || st.province || '').trim();
+      }
+    } catch (_) {}
+
+    // Find company from location
+    try {
+      if (location && !company) {
+        const tree = await lookupsRepo.getLookupTree();
+        const L = String(location).toLowerCase();
+        for (const [co, locs] of Object.entries(tree?.locationsByCompany || {})) {
+          if ((locs || []).some(x => String(x).trim().toLowerCase() === L)) {
+            company = co;
+            break;
+          }
+        }
+      }
+    } catch (_) {}
+
+    const PHOTOS_BASE = await config.getPhotosBase({ company, location, assetType });
     if (!PHOTOS_BASE) return [];
+
     const targetFolder = folderNameFor(siteName, stationId);
     const exactDir = path.join(PHOTOS_BASE, targetFolder);
 
@@ -443,7 +476,6 @@ async function getRecentPhotos(siteName, stationId, limit = 5) {
       for (const ent of entries) {
         const full = path.join(dir, ent.name);
         if (ent.isDirectory()) {
-          // a light recursive walk: some stations put images in 1–2 nested folders
           await collect(full);
         } else {
           const ext = path.extname(ent.name).toLowerCase();
@@ -457,10 +489,8 @@ async function getRecentPhotos(siteName, stationId, limit = 5) {
       }
     }
 
-    // 1) Try exact folder
     await collect(exactDir);
 
-    // 2) Fallback: find any folder ending with _STATIONID (avoids scanning "TON" of files)
     if (files.length === 0) {
       const idUpper = String(stationId ?? '').toUpperCase();
       try {
@@ -474,7 +504,7 @@ async function getRecentPhotos(siteName, stationId, limit = 5) {
 
     files.sort((a, b) => b.mtimeMs - a.mtimeMs);
     return files.slice(0, limit).map(f => ({
-      url: pathToFileURL(f.path).href, // safe file:// URL (handles UNC)
+      url: pathToFileURL(f.path).href,
       name: f.name,
       mtimeMs: f.mtimeMs,
       path: f.path,

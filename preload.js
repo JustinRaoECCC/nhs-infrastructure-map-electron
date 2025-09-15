@@ -29,6 +29,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   upsertLocation:  (location, company)   => ipcRenderer.invoke('lookups:upsertLocation', location, company),
   upsertAssetType: (assetType, location) => ipcRenderer.invoke('lookups:upsertAssetType', assetType, location),
 
+  setLocationLink:  (company, location, link) =>
+    ipcRenderer.invoke('lookups:setLocationLink', company, location, link),
+  setAssetTypeLink: (assetType, company, location, link) =>
+    ipcRenderer.invoke('lookups:setAssetTypeLink', assetType, company, location, link),
+
   // ─── Excel helper for Step 3 sheet picker ───────────────────────────────
   excelListSheets:            (b64)                 => ipcRenderer.invoke('excel:listSheets', b64),
   excelParseRowsFromSheet:    (b64, sheetName)      => ipcRenderer.invoke('excel:parseRowsFromSheet', b64, sheetName),
