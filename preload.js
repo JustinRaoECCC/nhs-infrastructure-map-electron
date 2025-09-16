@@ -104,6 +104,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ─── Nuke ────────────────────────────────────────────────────────────────
   nukeProgram: () => ipcRenderer.invoke('nuke:run'),
+
+  getPhotosBase: (ctx) => ipcRenderer.invoke('getPhotosBase', ctx),
+
+  browseForFolder: () => ipcRenderer.invoke('browseForFolder'),
 });
 
 // --- BEGIN: appAlert (custom modal replacement for window.alert) ---

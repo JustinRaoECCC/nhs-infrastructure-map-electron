@@ -263,8 +263,14 @@
       root.querySelectorAll('.tab-panel').forEach(p => {
         p.style.display = (p.dataset.tab === target) ? 'block' : 'none';
       });
-    // Hide footer only on Nuke (no CSS class; do it directly)
-    if (footer) footer.style.display = (target === 'nuke') ? 'none' : '';
+      // Hide footer only on Nuke
+      if (footer) footer.style.display = (target === 'nuke') ? 'none' : '';
+      
+      // Initialize Photo Links tab when first shown
+      if (target === 'photoLinks' && window.linkSettings && !window.linkSettings.initialized) {
+        window.linkSettings.init();
+        window.linkSettings.initialized = true;
+      }
     };
     btns.forEach(btn => btn.addEventListener('click', () => showTab(btn.dataset.tab)));
     // Initialize the correct state on first paint
@@ -281,10 +287,13 @@
     if (!saveBtn) return;
 
     const entries = Array.from(state.changes.values());
-    const statusChanged = Array.from(state.statusChanged.values()); // legacy marker; we’ll compute diffs below
-    const deleted = Array.from(state.deletedStatusKeys.values());   // lowercased keys to delete
+    const statusChanged = Array.from(state.statusChanged.values());
+    const deleted = Array.from(state.deletedStatusKeys.values());
 
-    if (!entries.length && !statusChanged.length && state.togglesChanged.size === 0) {
+    // Check if Photo Links tab has changes
+    const linkHasChanges = window.linkSettings && window.linkSettings.hasChanges();
+
+    if (!entries.length && !statusChanged.length && state.togglesChanged.size === 0 && !linkHasChanges) {
       if (status) status.textContent = 'No changes.';
       return;
     }
@@ -302,7 +311,6 @@
     }
 
     // 2) Status colors (add/update + deletes)
-    // Build a normalized final map of label->color from rows
     const finalMap = {};
     state.statusRows.forEach(r => {
       const key = String(r.label || '').trim();
@@ -310,18 +318,16 @@
       finalMap[key] = normalizeHex(r.color || '#999999');
     });
 
-    // Upserts for all rows
     for (const [label, hex] of Object.entries(finalMap)) {
       try {
-        const res = await setStatusColor(label, hex); // upsert
+        const res = await setStatusColor(label, hex);
         res && res.success ? ok++ : fail++;
       } catch (e) { fail++; }
     }
-    // Deletes for removed originals
+
     if (typeof window.electronAPI?.deleteStatus === 'function') {
       for (const k of deleted) {
         try {
-          // Only delete if that old key no longer exists in final set (case-insensitive)
           const stillExists = Object.keys(finalMap)
             .some(lbl => lbl.toLowerCase() === k);
           if (!stillExists) {
@@ -340,6 +346,16 @@
     if (state.togglesChanged.has('applyRepair')) {
       const res = await setApplyRepairColors(!!state.applyRepairColorsOnMap);
       res && res.success ? ok++ : fail++;
+    }
+
+    // 4) Photo Links changes
+    if (linkHasChanges && window.linkSettings) {
+      const linkResult = await window.linkSettings.save();
+      if (linkResult.success) {
+        ok++;
+      } else {
+        fail++;
+      }
     }
 
     // Refresh caches/UI after save
@@ -434,7 +450,16 @@
     if (saveBtn) saveBtn.addEventListener('click', () => handleSave(root));
 
     const cancelBtn = root.querySelector('#settingsCancelBtn');
-    if (cancelBtn) cancelBtn.addEventListener('click', () => loadAndRender(root));
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', () => {
+        // Cancel Photo Links changes if any
+        if (window.linkSettings) {
+          window.linkSettings.cancel();
+        }
+        // Reload other settings
+        loadAndRender(root);
+      });
+    }
 
     loadAndRender(root);
     window.addEventListener('lookups:changed', () => loadAndRender(root));

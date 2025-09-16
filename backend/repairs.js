@@ -8,11 +8,21 @@ const lookupsRepo = require('./lookups_repo');
 const backendApp = require('./app'); // to fetch stations (getStationData)
 const { ensureDir } = require('./utils/fs_utils');
 
-// ----- Table spec (NEW single-sheet model) -----
+// ----- Table spec (single-sheet model) -----
 // One workbook per company/location: data/repairs/<Company>/<Location>.xlsx
-// One sheet per workbook, named "Repairs". First column is Station ID for grouping.
-const HEADERS = ['Station ID', 'Repair Name', 'Severity', 'Priority', 'Cost', 'Category'];
-const COL_WIDTHS = [18, 40, 16, 16, 14, 14];
+// One sheet per workbook, named "Repairs".
+// Columns: Date (leftmost), Station ID (for grouping), …, Type (rightmost).
+const HEADERS = [
+  'Date',       // <-- new leftmost
+  'Station ID',
+  'Repair Name',
+  'Severity',
+  'Priority',
+  'Cost',
+  'Category',
+  'Type'        // <-- new rightmost (Repair | Monitoring)
+];
+const COL_WIDTHS = [14, 18, 40, 16, 16, 14, 14, 14];
 
 // ----- Helpers -----
 function sanitizeFolder(s) {
@@ -25,6 +35,7 @@ function sanitizeFolder(s) {
 
 function normalizeItem(raw) {
   const item = raw || {};
+
   // Cost: numeric if possible; else keep as string
   let cost = item.cost;
   if (typeof cost !== 'number') {
@@ -36,12 +47,21 @@ function normalizeItem(raw) {
     : /^o&?m$/i.test(item.category) ? 'O&M'
     : 'Capital';
 
+  const type =
+    /^monitor/i.test(item.type) ? 'Monitoring'
+    : 'Repair';
+
+  // date as yyyy-mm-dd string if present; else empty
+  const d = String(item.date ?? '').trim();
+
   return {
+    date: d,
     name: String(item.name ?? '').trim(),
     severity: String(item.severity ?? '').trim(),
     priority: String(item.priority ?? '').trim(),
     cost,
     category,
+    type,
   };
 }
 
@@ -70,7 +90,7 @@ async function resolveRepairsFileForStation(stationId) {
   const location  = String(st.location_file || st.province || 'Unknown').trim() || 'Unknown';
   const company   = await companyForLocation(location);
 
-  // NEW pathing: data/repairs/<Company>/<Location>.xlsx (single "Repairs" sheet)
+  // Path: data/repairs/<Company>/<Location>.xlsx (single "Repairs" sheet)
   const baseDir = path.join(__dirname, '..', 'data', 'repairs', sanitizeFolder(company));
   const file = path.join(baseDir, `${sanitizeFolder(location)}.xlsx`);
   const sheetName = 'Repairs';
@@ -135,12 +155,14 @@ async function listRepairs(siteName, stationId) {
       const key = String(hrow.getCell(c)?.value ?? '').trim().toLowerCase();
       if (key) hmap.set(key, c);
     }
+    const colDate  = hmap.get('date');
     const colSID   = hmap.get('station id') || 1;
     const colName  = hmap.get('repair name') || 2;
     const colSev   = hmap.get('severity') || 3;
     const colPrio  = hmap.get('priority') || 4;
     const colCost  = hmap.get('cost') || 5;
     const colCat   = hmap.get('category') || 6;
+    const colType  = hmap.get('type');
 
     const out = [];
     const last = ws.rowCount;
@@ -149,18 +171,23 @@ async function listRepairs(siteName, stationId) {
       if (rowIsEmpty(row)) continue;
       const sid = String(row.getCell(colSID).value ?? '').trim();
       if (!sid || String(sid).toLowerCase() !== String(stationId).toLowerCase()) continue;
+
+      const date     = colDate ? row.getCell(colDate).value : '';
       const name     = row.getCell(colName).value;
       const severity = row.getCell(colSev).value;
       const priority = row.getCell(colPrio).value;
       const cost     = row.getCell(colCost).value;
       const category = row.getCell(colCat).value;
-      // Normalize output to the structure the UI expects
+      const type     = colType ? row.getCell(colType).value : 'Repair';
+
       out.push(normalizeItem({
+        date,
         name,
         severity,
         priority,
         cost: (typeof cost === 'object' && cost?.result != null) ? cost.result : cost,
         category,
+        type,
       }));
     }
     return out;
@@ -172,13 +199,12 @@ async function listRepairs(siteName, stationId) {
 
 async function saveRepairs(siteName, stationId, items) {
   try {
-    // Correct behavior: REPLACE this station's group instead of appending duplicates.
-    // 1) Open workbook/sheet
+    // Replace this station's group instead of appending duplicates.
     const { file, sheetName } = await resolveRepairsFileForStation(stationId);
     const wb = await loadWorkbook(file);
     const ws = ensureSheet(wb, sheetName);
 
-    // 2) Build header map (case-insensitive)
+    // Build header map (case-insensitive)
     const hrow = ws.getRow(1);
     const hmax = ws.actualColumnCount || hrow.cellCount || HEADERS.length;
     const hmap = new Map(); // lowercased header -> 1-based col idx
@@ -186,14 +212,16 @@ async function saveRepairs(siteName, stationId, items) {
       const key = String(hrow.getCell(c)?.value ?? '').trim().toLowerCase();
       if (key) hmap.set(key, c);
     }
-    const colSID   = hmap.get('station id') || 1;
-    const colName  = hmap.get('repair name') || 2;
-    const colSev   = hmap.get('severity')    || 3;
-    const colPrio  = hmap.get('priority')    || 4;
-    const colCost  = hmap.get('cost')        || 5;
-    const colCat   = hmap.get('category')    || 6;
+    const colDate  = hmap.get('date')        || 1;
+    const colSID   = hmap.get('station id')  || 2;
+    const colName  = hmap.get('repair name') || 3;
+    const colSev   = hmap.get('severity')    || 4;
+    const colPrio  = hmap.get('priority')    || 5;
+    const colCost  = hmap.get('cost')        || 6;
+    const colCat   = hmap.get('category')    || 7;
+    const colType  = hmap.get('type')        || 8;
 
-    // 3) Find ALL rows for this Station ID (anywhere in sheet), remove them (bottom-up to avoid index shifts)
+    // Find ALL rows for this Station ID (anywhere in sheet), remove them (bottom-up)
     const toDelete = [];
     const last = ws.rowCount;
     for (let r = 2; r <= last; r++) {
@@ -202,31 +230,30 @@ async function saveRepairs(siteName, stationId, items) {
         toDelete.push(r);
       }
     }
-    // Remember insertion anchor: first occurrence if any; else append at end
     const insertAt = toDelete.length ? Math.min(...toDelete) : (ws.rowCount + 1);
-    // Delete from bottom to top
-   for (let i = toDelete.length - 1; i >= 0; i--) {
+    for (let i = toDelete.length - 1; i >= 0; i--) {
       ws.spliceRows(toDelete[i], 1);
     }
 
-    // 4) Insert the new block for this Station ID at the anchor
+    // Insert new block
     const rows = Array.isArray(items) ? items.map(normalizeItem) : [];
     const payloadRows = rows.map(it => {
       const arr = new Array(Math.max(hmax, HEADERS.length)).fill('');
-      arr[colSID   - 1] = stationId;
-      arr[colName  - 1] = it.name;
-      arr[colSev   - 1] = it.severity;
-      arr[colPrio  - 1] = it.priority;
-      arr[colCost  - 1] = it.cost;
-      arr[colCat   - 1] = it.category;
+      arr[colDate - 1] = it.date || new Date().toISOString().slice(0, 10);
+      arr[colSID  - 1] = stationId;
+      arr[colName - 1] = it.name;
+      arr[colSev  - 1] = it.severity;
+      arr[colPrio - 1] = it.priority;
+      arr[colCost - 1] = it.cost;
+      arr[colCat  - 1] = it.category;
+      arr[colType - 1] = it.type || 'Repair';
       return arr;
     });
     if (payloadRows.length) {
-      // ExcelJS spliceRows(start, deleteCount, ...rowsToInsert)
       ws.spliceRows(insertAt, 0, ...payloadRows);
     }
 
-    // 5) Save
+    // Save
     await wb.xlsx.writeFile(file);
     return { success: true, count: rows.length, file, sheet: sheetName };
   } catch (e) {

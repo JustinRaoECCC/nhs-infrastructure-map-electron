@@ -281,3 +281,17 @@ ipcMain.handle('lookups:setLocationLink', async (_evt, company, location, link) 
 ipcMain.handle('lookups:setAssetTypeLink', async (_evt, assetType, company, location, link) =>
   lookups.setAssetTypeLink(assetType, company, location, link)
 );
+
+ipcMain.handle('getPhotosBase', async (_evt, ctx) => 
+  lookups.getPhotosBase(ctx)
+);
+
+ipcMain.handle('browseForFolder', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openDirectory']
+  });
+  if (!result.canceled && result.filePaths.length > 0) {
+    return { path: result.filePaths[0] };
+  }
+  return null;
+});

@@ -706,9 +706,16 @@ function prepareStationRowForExcel(station) {
 async function appendRepair(payload = {}) {
   const company  = String(payload.company || 'NHS').trim();
   const location = String(payload.location || '').trim();
-  const repair   = payload.repair || {};
+  const repair   = { ...(payload.repair || {}) };
   if (!location) {
     return { success:false, message:'location is required' };
+  }
+  // Defaults (worker also enforces these, but this helps callers immediately)
+  if (repair.Date === undefined && repair.date === undefined) {
+    repair.Date = new Date().toISOString().slice(0,10);
+  }
+  if (repair.Type === undefined && repair.type === undefined) {
+    repair.Type = 'Repair';
   }
   return await excel.appendRepair(company, location, repair);
 }

@@ -31,6 +31,16 @@ const uniqSorted = (arr) => Array.from(new Set(arr.map(normStr).filter(Boolean))
   .sort((a,b) => a.toLowerCase().localeCompare(b.toLowerCase()));
 const getSheet = (wb, name) => wb.getWorksheet(name) || wb.worksheets.find(ws => lc(ws.name) === lc(name));
 const REPAIRS_SHEET = 'Repairs';
+const REPAIRS_HEADERS = [
+  'Date',        // leftmost
+  'Station ID',
+  'Repair Name',
+  'Severity',
+  'Priority',
+  'Cost',
+  'Category',
+  'Type'         // rightmost
+];
 
 // ─── Ensure workbook exists with canonical sheets ─────────────────────────
 async function ensureLookupsReady() {
@@ -406,7 +416,13 @@ async function _ensureRepairsWorkbook(company, location) {
 
   // Ensure header row exists (one-row header model)
   if (!ws.rowCount || ws.getRow(1).cellCount === 0) {
-    ws.addRow(['Station ID']); // minimal header; columns get unioned dynamically
+    ws.addRow(REPAIRS_HEADERS);
+  } else {
+    // Normalize to canonical header order if different
+    const r1 = ws.getRow(1);
+    const existing = (r1.values || []).slice(1).map(v => String(v ?? '').trim());
+    const same = REPAIRS_HEADERS.every((h, i) => (existing[i] || '').toLowerCase() === h.toLowerCase());
+    if (!same) r1.values = [, ...REPAIRS_HEADERS];
   }
   return { wb, ws, filePath };
 }
@@ -436,38 +452,30 @@ async function appendRepair(company, location, repair = {}) {
     return { success: false, message: 'Station ID is required in the repair payload.' };
   }
 
-  // Build/union headers (keep existing order; ensure "Station ID" column exists and is first if present)
+  // Canonicalize header to: Date … Type
   const headerRow = ws.getRow(1);
-  const existingHeaders = [];
   const maxCol = ws.actualColumnCount || headerRow.cellCount || 0;
-  for (let c = 1; c <= maxCol; c++) {
-    existingHeaders.push(takeText(headerRow.getCell(c)));
-  }
+  const cur = [];
+  for (let c = 1; c <= maxCol; c++) cur.push(takeText(headerRow.getCell(c)));
 
-  // Start from existing headers; add any new fields from the payload
-  const have = new Set(existingHeaders.map(h => h.toLowerCase()));
-  for (const key of Object.keys(repair)) {
-    const k = String(key || '').trim();
-    if (!k) continue;
-    if (!have.has(k.toLowerCase())) {
-      existingHeaders.push(k);
-      have.add(k.toLowerCase());
-    }
+  // Union payload keys (case-insensitive) then enforce canonical order
+  const haveCI = new Set(cur.map(h => h.toLowerCase()));
+  for (const k of Object.keys(repair || {})) {
+    const key = String(k || '').trim();
+    if (!key) continue;
+    if (!haveCI.has(key.toLowerCase())) { cur.push(key); haveCI.add(key.toLowerCase()); }
   }
+  // Make sure Date, Station ID, and Type exist
+  if (!haveCI.has('date')) cur.unshift('Date');
+  if (!haveCI.has('station id')) cur.splice(1, 0, 'Station ID'); // directly after Date
+  if (!haveCI.has('type')) cur.push('Type');                      // rightmost
 
-  // Ensure a canonical "Station ID" header is present and comes first
-  let headers = existingHeaders.slice();
-  const idxStation = headers.findIndex(h => h && h.toLowerCase() === 'station id');
-  if (idxStation === -1) {
-    // Try alternate labels and normalize to "Station ID"
-    const altIdx = headers.findIndex(h => ['stationid','id'].includes((h || '').toLowerCase()));
-    if (altIdx !== -1) headers[altIdx] = 'Station ID';
-    else headers.unshift('Station ID');
-  } else if (idxStation > 0) {
-    // Move it to the front
-    const [h] = headers.splice(idxStation, 1);
-    headers.unshift(h);
-  }
+  // Reorder to canonical template: Date first, Type last, everything else in between
+  const others = cur.filter(h => {
+    const l = (h || '').toLowerCase();
+    return l !== 'date' && l !== 'station id' && l !== 'type';
+  });
+  const headers = ['Date', 'Station ID', ...others, 'Type'];
   ws.getRow(1).values = [, ...headers];
 
   // Locate Station ID column index (1-based)
@@ -485,19 +493,21 @@ async function appendRepair(company, location, repair = {}) {
   }
 
   // Build row values aligned to headers
-  const newValues = headers.map(h => {
-    if (!h) return '';
-    // Honor exact header, then common fallbacks for Station ID
-    if (h.toLowerCase() === 'station id') return stationId;
-    // Fill from payload under exact key or common variants (case-insensitive)
-    const direct = repair[h];
-    if (direct !== undefined) return direct;
-    // Case-insensitive lookup
-    const want = h.toLowerCase();
-    for (const [k, v] of Object.entries(repair)) {
+  const today = new Date().toISOString().slice(0,10);
+  const getCI = (key) => {
+    const want = String(key || '').toLowerCase();
+    for (const [k, v] of Object.entries(repair || {})) {
       if (String(k).toLowerCase() === want) return v;
     }
-    return '';
+    return undefined;
+  };
+  const newValues = headers.map(h => {
+    const l = (h || '').toLowerCase();
+    if (l === 'date')        return getCI('Date') || today;
+    if (l === 'station id')  return stationId;
+    if (l === 'type')        return getCI('Type') || 'Repair';
+    const v = repair[h] !== undefined ? repair[h] : getCI(h);
+    return v !== undefined ? v : '';
   });
 
   // Insert at proper position

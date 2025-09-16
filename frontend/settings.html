@@ -6,6 +6,7 @@
   <div class="settings-body">
     <div class="settings-tabs">
       <button class="tab-btn active" data-tab="mapPin">Map Pin</button>
+      <button class="tab-btn" data-tab="photoLinks">Photo Links</button>
       <button class="tab-btn" data-tab="nuke">Nuke</button>
       <button class="tab-btn" data-tab="comingSoon" disabled>Coming Soon</button>
     </div>
@@ -94,6 +95,20 @@
         </div>
       </div>
 
+    </div>
+
+    <!-- Photo Links Tab Panel -->
+    <div class="tab-panel" id="tab-photoLinks" data-tab="photoLinks" style="display:none;">
+      <p class="hint" style="opacity:.8;margin:.25rem 0 .5rem;">
+        Set photo folder locations for <strong>Locations</strong> and <strong>Asset Types</strong>. 
+        Asset Type links override Location links. Use UNC paths like: <code>\\server\share\folder</code>
+      </p>
+
+      <div class="link-settings-container">
+        <div class="link-tree" id="linkTree">
+          <!-- Dynamically populated by JS -->
+        </div>
+      </div>
     </div>
 
     <div class="tab-panel" id="tab-nuke" data-tab="nuke" style="display:none;">

@@ -1969,9 +1969,7 @@ html.modal-open, body.modal-open { overflow: hidden; }
 .tab-content { display: none; }
 .tab-content.active { display: block; }
 
-/* Repairs: resolve mode selection */
-.resolve-selectable { cursor: pointer; }
-.resolve-selected td { background: #fee2e2 !important; } /* red-200 tint */
+
 
 /* ───────────────── Reusable table styles (work anywhere) ──────────────── */
 .table-scroll{
@@ -2272,10 +2270,16 @@ html.modal-open, body.modal-open { overflow: hidden; }
   border: 1px solid #e0e7ff; font-size: 12px;
 }
 
+
+/* Repairs: resolve mode selection */
+.resolve-selectable { cursor: pointer; }
+.resolve-selected td { background: #fee2e2 !important; } /* red-200 tint */
+
 /* Repairs add-row grid */
 .ih-repairs-addGrid{
   display: grid;
-  grid-template-columns: 1.4fr 0.9fr 0.9fr 0.9fr 0.8fr auto;
+  /* Updated to include the new "Type" select before the button column */
+  grid-template-columns: 1.4fr 0.9fr 0.9fr 0.9fr 0.8fr 0.8fr auto;
   gap: 10px;
   align-items: end;
   margin-bottom: 10px;
@@ -2312,6 +2316,42 @@ html.modal-open, body.modal-open { overflow: hidden; }
 .ih-repairs-addGrid {
   overflow-x: auto;
   padding-bottom: 4px;        /* keeps the scrollbar off the content */
+}
+
+/* --- Small additions for the new UI --- */
+
+/* Optional helper if you prefer classes over inline styles in your header/actions */
+.ih-repairs-toolbar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:8px;
+}
+.ih-repairs-actions{
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+
+/* Default hidden; JS toggles display to flex when Edit is active */
+#repActionsBlock{ display:none; gap:8px; }
+
+/* Keep Date column compact in both tables */
+.data-table th:first-child,
+.data-table td:first-child{
+  white-space:nowrap;
+}
+
+/* Generic table scroll (your markup already uses .table-scroll) */
+.table-scroll{
+  overflow:auto;
+  border-radius:10px;
+}
+
+/* Subsection title (Monitoring Items heading) */
+.ih-subtitle{
+  margin:14px 0 6px;
 }
 
 /* just to be explicit for the modal body too */
@@ -2356,3 +2396,114 @@ html.modal-open, body.modal-open { overflow: hidden; }
   .app-confirm--danger .app-confirm-ok{background:#f87171;color:#111;border-color:#f87171}
 }
 
+.link-tree {
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  max-height: 500px;
+  overflow-y: auto;
+  background: white;
+}
+
+.link-company {
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.link-company:last-child {
+  border-bottom: none;
+}
+
+.link-company-header {
+  padding: .75rem 1rem;
+  background: #f9fafb;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  user-select: none;
+}
+
+.link-company-header:hover {
+  background: #f3f4f6;
+}
+
+.link-company-header .chevron {
+  transition: transform 0.2s;
+  color: #9ca3af;
+}
+
+.link-company.expanded .chevron {
+  transform: rotate(90deg);
+}
+
+.link-company-content {
+  display: none;
+  padding: .5rem 0;
+}
+
+.link-company.expanded .link-company-content {
+  display: block;
+}
+
+.link-location {
+  margin: 0 1rem .5rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  background: #fefefe;
+}
+
+.link-location-header {
+  padding: .5rem .75rem;
+  background: #f9fafb;
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+}
+
+.link-location-name {
+  font-weight: 500;
+  min-width: 100px;
+}
+
+.link-path-input {
+  flex: 1;
+  font-family: monospace;
+  font-size: .85rem;
+  padding: .25rem .5rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 3px;
+  background: white;
+}
+
+.link-path-input:focus {
+  outline: 2px solid #3b82f6;
+  outline-offset: -1px;
+  border-color: #3b82f6;
+}
+
+.link-path-input::placeholder {
+  color: #9ca3af;
+  font-style: italic;
+}
+
+.link-asset-types {
+  border-top: 1px solid #e5e7eb;
+  padding: .5rem 0;
+}
+
+.link-asset-type {
+  padding: .25rem .75rem;
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+}
+
+.link-asset-type:hover {
+  background: #f9fafb;
+}
+
+.link-asset-type-name {
+  min-width: 120px;
+  padding-left: 1rem;
+  color: #4b5563;
+}
