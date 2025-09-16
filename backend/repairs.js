@@ -8,9 +8,11 @@ const lookupsRepo = require('./lookups_repo');
 const backendApp = require('./app'); // to fetch stations (getStationData)
 const { ensureDir } = require('./utils/fs_utils');
 
-// ----- Table spec -----
-const HEADERS = ['Repair Name', 'Severity', 'Priority', 'Cost', 'Category'];
-const COL_WIDTHS = [40, 16, 16, 14, 14];
+// ----- Table spec (NEW single-sheet model) -----
+// One workbook per company/location: data/repairs/<Company>/<Location>.xlsx
+// One sheet per workbook, named "Repairs". First column is Station ID for grouping.
+const HEADERS = ['Station ID', 'Repair Name', 'Severity', 'Priority', 'Cost', 'Category'];
+const COL_WIDTHS = [18, 40, 16, 16, 14, 14];
 
 // ----- Helpers -----
 function sanitizeFolder(s) {
@@ -65,19 +67,16 @@ async function resolveRepairsFileForStation(stationId) {
   const st = (all || []).find(s => String(s.station_id) === String(stationId));
   if (!st) throw new Error(`Station not found for ID ${stationId}`);
 
-  const assetType = String(st.asset_type || 'Unknown').trim() || 'Unknown';
   const location  = String(st.location_file || st.province || 'Unknown').trim() || 'Unknown';
   const company   = await companyForLocation(location);
 
-  const baseDir = path.join(__dirname, '..', 'data', 'repairs',
-    sanitizeFolder(company),
-    sanitizeFolder(location)
-  );
-  const file = path.join(baseDir, `${sanitizeFolder(assetType)}_Repairs.xlsx`);
-  const sheetName = String(st.station_id);
+  // NEW pathing: data/repairs/<Company>/<Location>.xlsx (single "Repairs" sheet)
+  const baseDir = path.join(__dirname, '..', 'data', 'repairs', sanitizeFolder(company));
+  const file = path.join(baseDir, `${sanitizeFolder(location)}.xlsx`);
+  const sheetName = 'Repairs';
 
   await ensureDir(baseDir);
-  return { file, sheetName };
+  return { file, sheetName, company, location };
 }
 
 async function loadWorkbook(file) {
@@ -90,25 +89,28 @@ async function loadWorkbook(file) {
   return wb;
 }
 
-function ensureSheet(wb, sheetName) {
-  let ws = wb.getWorksheet(sheetName);
+function ensureSheet(wb, sheetName = 'Repairs') {
+  // Keep a single canonical sheet named "Repairs"
+  let ws = wb.getWorksheet('Repairs') || (sheetName && wb.getWorksheet(sheetName));
   if (!ws) {
-    ws = wb.addWorksheet(sheetName);
-    ws.addRow(HEADERS);
-    ws.getRow(1).font = { bold: true };
-    COL_WIDTHS.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
-  } else {
-    // Make sure header row exists/matches
-    const r1 = ws.getRow(1);
-    const vals = (r1.values || []).slice(1).map(v => String(v ?? '').trim());
-    const same = HEADERS.every((h, i) => (vals[i] || '').toLowerCase() === h.toLowerCase());
-    if (!same) {
-      r1.values = [ , ...HEADERS ];
-      r1.font = { bold: true };
-    }
-    // Apply widths (idempotent)
-    COL_WIDTHS.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+    ws = wb.addWorksheet('Repairs');
   }
+  // Drop any extra sheets to enforce the single-sheet model
+  for (const s of [...wb.worksheets]) {
+    if (s.name !== 'Repairs') wb.removeWorksheet(s.id);
+  }
+  // Ensure header exists and matches our spec
+  const r1 = ws.getRow(1);
+  const vals = (r1.values || []).slice(1).map(v => String(v ?? '').trim());
+  const same = HEADERS.every((h, i) => (vals[i] || '').toLowerCase() === h.toLowerCase());
+  if (!same) {
+    r1.values = [ , ...HEADERS ];
+    r1.font = { bold: true };
+  } else {
+    r1.font = { bold: true };
+  }
+  // Apply widths (idempotent)
+  COL_WIDTHS.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
   return ws;
 }
 
@@ -125,15 +127,33 @@ async function listRepairs(siteName, stationId) {
     const ws = wb.getWorksheet(sheetName);
     if (!ws) return []; // nothing yet
 
+    // Map header names to column indices
+    const hrow = ws.getRow(1);
+    const hmax = ws.actualColumnCount || hrow.cellCount || HEADERS.length;
+    const hmap = new Map(); // lowercased header -> 1-based column index
+    for (let c = 1; c <= hmax; c++) {
+      const key = String(hrow.getCell(c)?.value ?? '').trim().toLowerCase();
+      if (key) hmap.set(key, c);
+    }
+    const colSID   = hmap.get('station id') || 1;
+    const colName  = hmap.get('repair name') || 2;
+    const colSev   = hmap.get('severity') || 3;
+    const colPrio  = hmap.get('priority') || 4;
+    const colCost  = hmap.get('cost') || 5;
+    const colCat   = hmap.get('category') || 6;
+
     const out = [];
     const last = ws.rowCount;
     for (let r = 2; r <= last; r++) {
       const row = ws.getRow(r);
       if (rowIsEmpty(row)) continue;
-      const [name, severity, priority, cost, category] = [
-        row.getCell(1).value, row.getCell(2).value, row.getCell(3).value,
-        row.getCell(4).value, row.getCell(5).value
-      ];
+      const sid = String(row.getCell(colSID).value ?? '').trim();
+      if (!sid || String(sid).toLowerCase() !== String(stationId).toLowerCase()) continue;
+      const name     = row.getCell(colName).value;
+      const severity = row.getCell(colSev).value;
+      const priority = row.getCell(colPrio).value;
+      const cost     = row.getCell(colCost).value;
+      const category = row.getCell(colCat).value;
       // Normalize output to the structure the UI expects
       out.push(normalizeItem({
         name,
@@ -152,20 +172,61 @@ async function listRepairs(siteName, stationId) {
 
 async function saveRepairs(siteName, stationId, items) {
   try {
+    // Correct behavior: REPLACE this station's group instead of appending duplicates.
+    // 1) Open workbook/sheet
     const { file, sheetName } = await resolveRepairsFileForStation(stationId);
     const wb = await loadWorkbook(file);
     const ws = ensureSheet(wb, sheetName);
 
-    // Clear existing data rows (keep header at row 1)
-    if (ws.rowCount > 1) {
-      ws.spliceRows(2, ws.rowCount - 1);
+    // 2) Build header map (case-insensitive)
+    const hrow = ws.getRow(1);
+    const hmax = ws.actualColumnCount || hrow.cellCount || HEADERS.length;
+    const hmap = new Map(); // lowercased header -> 1-based col idx
+    for (let c = 1; c <= hmax; c++) {
+      const key = String(hrow.getCell(c)?.value ?? '').trim().toLowerCase();
+      if (key) hmap.set(key, c);
+    }
+    const colSID   = hmap.get('station id') || 1;
+    const colName  = hmap.get('repair name') || 2;
+    const colSev   = hmap.get('severity')    || 3;
+    const colPrio  = hmap.get('priority')    || 4;
+    const colCost  = hmap.get('cost')        || 5;
+    const colCat   = hmap.get('category')    || 6;
+
+    // 3) Find ALL rows for this Station ID (anywhere in sheet), remove them (bottom-up to avoid index shifts)
+    const toDelete = [];
+    const last = ws.rowCount;
+    for (let r = 2; r <= last; r++) {
+      const sid = String(ws.getRow(r).getCell(colSID).value ?? '').trim();
+      if (sid && sid.toLowerCase() === String(stationId).toLowerCase()) {
+        toDelete.push(r);
+      }
+    }
+    // Remember insertion anchor: first occurrence if any; else append at end
+    const insertAt = toDelete.length ? Math.min(...toDelete) : (ws.rowCount + 1);
+    // Delete from bottom to top
+   for (let i = toDelete.length - 1; i >= 0; i--) {
+      ws.spliceRows(toDelete[i], 1);
     }
 
+    // 4) Insert the new block for this Station ID at the anchor
     const rows = Array.isArray(items) ? items.map(normalizeItem) : [];
-    for (const it of rows) {
-      ws.addRow([it.name, it.severity, it.priority, it.cost, it.category]);
+    const payloadRows = rows.map(it => {
+      const arr = new Array(Math.max(hmax, HEADERS.length)).fill('');
+      arr[colSID   - 1] = stationId;
+      arr[colName  - 1] = it.name;
+      arr[colSev   - 1] = it.severity;
+      arr[colPrio  - 1] = it.priority;
+      arr[colCost  - 1] = it.cost;
+      arr[colCat   - 1] = it.category;
+      return arr;
+    });
+    if (payloadRows.length) {
+      // ExcelJS spliceRows(start, deleteCount, ...rowsToInsert)
+      ws.spliceRows(insertAt, 0, ...payloadRows);
     }
 
+    // 5) Save
     await wb.xlsx.writeFile(file);
     return { success: true, count: rows.length, file, sheet: sheetName };
   } catch (e) {

@@ -77,6 +77,7 @@ module.exports = {
     call('setLocationLink', company, location, link),
   setAssetTypeLink: (assetType, company, location, link) =>
     call('setAssetTypeLink', assetType, company, location, link),
-
-
+  // Repairs (new single-sheet model)
+  appendRepair: (company, location, repair) =>
+    call('appendRepair', company, location, repair),
 };

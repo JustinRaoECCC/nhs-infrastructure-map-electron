@@ -29,7 +29,10 @@ function randHexColor() {
 // ─── FS-only, synchronous folder bootstrap (no ExcelJS) ───────────────────
 function ensureDataFoldersSync() {
   try {
-    ensureDir(DATA_DIR); ensureDir(LOCATIONS_DIR); ensureDir(REPAIRS_DIR);
+    // Only create the new repairs root (no legacy per-station directories).
+    ensureDir(DATA_DIR);
+    ensureDir(LOCATIONS_DIR);
+    ensureDir(REPAIRS_DIR);
   } catch (e) { /* swallow — better to not crash on first run */ }
 }
 

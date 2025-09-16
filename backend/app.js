@@ -695,6 +695,24 @@ function prepareStationRowForExcel(station) {
   return rowData;
 }
 
+/**
+ * Append a repair entry using the new storage model:
+ *   data/repairs/<company>/<location>.xlsx  (single "Repairs" sheet)
+ * If the Station ID already exists in the sheet, the new row is inserted
+ * right after the last existing row for that station.
+ *
+ * @param {Object} payload { company?: string, location: string, repair: Object }
+ */
+async function appendRepair(payload = {}) {
+  const company  = String(payload.company || 'NHS').trim();
+  const location = String(payload.location || '').trim();
+  const repair   = payload.repair || {};
+  if (!location) {
+    return { success:false, message:'location is required' };
+  }
+  return await excel.appendRepair(company, location, repair);
+}
+
 module.exports = {
   getStationData,
   getActiveCompanies,
@@ -722,4 +740,6 @@ module.exports = {
   getRecentPhotos,
   resolvePhotosBaseAndStationDir,
   updateStationData,
+  // repairs
+  appendRepair,
 };

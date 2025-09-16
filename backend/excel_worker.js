@@ -30,6 +30,7 @@ const toBool = (v) => ['true','1','yes','y','t'].includes(lc(v));
 const uniqSorted = (arr) => Array.from(new Set(arr.map(normStr).filter(Boolean)))
   .sort((a,b) => a.toLowerCase().localeCompare(b.toLowerCase()));
 const getSheet = (wb, name) => wb.getWorksheet(name) || wb.worksheets.find(ws => lc(ws.name) === lc(name));
+const REPAIRS_SHEET = 'Repairs';
 
 // ─── Ensure workbook exists with canonical sheets ─────────────────────────
 async function ensureLookupsReady() {
@@ -369,6 +370,148 @@ async function setSettingBoolean(key, flag) {
   if (!found) ws.addRow([key, flag ? 'TRUE' : 'FALSE']);
   await wb.xlsx.writeFile(LOOKUPS_PATH);
   return { success:true };
+}
+
+// ─── Repairs I/O (NEW single-sheet model) ─────────────────────────────────
+/**
+ * Ensure the repairs workbook exists at data/repairs/<company>/<location>.xlsx
+ * and return { wb, ws, filePath } with exactly one sheet named "Repairs".
+ */
+async function _ensureRepairsWorkbook(company, location) {
+  const _ExcelJS = getExcel();
+  ensureDir(REPAIRS_DIR);
+  const companyDir = path.join(REPAIRS_DIR, normStr(company || '').trim() || 'NHS');
+  ensureDir(companyDir);
+  const filePath = path.join(companyDir, `${normStr(location)}.xlsx`);
+
+  const wb = new _ExcelJS.Workbook();
+  if (fs.existsSync(filePath)) {
+    await wb.xlsx.readFile(filePath);
+  }
+
+  // Guarantee a single sheet named "Repairs"
+  let ws = getSheet(wb, REPAIRS_SHEET);
+  if (!ws) {
+    if (wb.worksheets.length === 1) {
+      // Reuse the lone sheet, rename to "Repairs"
+      ws = wb.worksheets[0];
+      ws.name = REPAIRS_SHEET;
+    } else if (wb.worksheets.length === 0) {
+      ws = wb.addWorksheet(REPAIRS_SHEET);
+    } else {
+      // Multiple legacy/temporary sheets present; add our canonical one.
+      ws = wb.addWorksheet(REPAIRS_SHEET);
+    }
+  }
+
+  // Ensure header row exists (one-row header model)
+  if (!ws.rowCount || ws.getRow(1).cellCount === 0) {
+    ws.addRow(['Station ID']); // minimal header; columns get unioned dynamically
+  }
+  return { wb, ws, filePath };
+}
+
+/**
+ * Append a repair row for a location workbook:
+ * - Workbook path: data/repairs/<company>/<location>.xlsx
+ * - Single sheet: "Repairs"
+ * - If Station ID already exists, insert immediately after the last row for that ID.
+ * - Else, append to the end.
+ *
+ * @param {string} company
+ * @param {string} location  Province/region code (e.g., "BC")
+ * @param {object} repair    Plain object of column->value (must include Station ID/StationID/ID)
+ */
+async function appendRepair(company, location, repair = {}) {
+  await ensureLookupsReady();
+  const { wb, ws, filePath } = await _ensureRepairsWorkbook(company, location);
+
+  // Normalize and require Station ID
+  const stationId =
+    normStr(repair['Station ID']) ||
+    normStr(repair['StationID'])  ||
+    normStr(repair['station_id']) ||
+    normStr(repair['ID']);
+  if (!stationId) {
+    return { success: false, message: 'Station ID is required in the repair payload.' };
+  }
+
+  // Build/union headers (keep existing order; ensure "Station ID" column exists and is first if present)
+  const headerRow = ws.getRow(1);
+  const existingHeaders = [];
+  const maxCol = ws.actualColumnCount || headerRow.cellCount || 0;
+  for (let c = 1; c <= maxCol; c++) {
+    existingHeaders.push(takeText(headerRow.getCell(c)));
+  }
+
+  // Start from existing headers; add any new fields from the payload
+  const have = new Set(existingHeaders.map(h => h.toLowerCase()));
+  for (const key of Object.keys(repair)) {
+    const k = String(key || '').trim();
+    if (!k) continue;
+    if (!have.has(k.toLowerCase())) {
+      existingHeaders.push(k);
+      have.add(k.toLowerCase());
+    }
+  }
+
+  // Ensure a canonical "Station ID" header is present and comes first
+  let headers = existingHeaders.slice();
+  const idxStation = headers.findIndex(h => h && h.toLowerCase() === 'station id');
+  if (idxStation === -1) {
+    // Try alternate labels and normalize to "Station ID"
+    const altIdx = headers.findIndex(h => ['stationid','id'].includes((h || '').toLowerCase()));
+    if (altIdx !== -1) headers[altIdx] = 'Station ID';
+    else headers.unshift('Station ID');
+  } else if (idxStation > 0) {
+    // Move it to the front
+    const [h] = headers.splice(idxStation, 1);
+    headers.unshift(h);
+  }
+  ws.getRow(1).values = [, ...headers];
+
+  // Locate Station ID column index (1-based)
+  const sidCol = headers.findIndex(h => (h || '').toLowerCase() === 'station id') + 1;
+
+  // Find the last row for this Station ID (grouped insertion)
+  const lastRowIdx = ws.actualRowCount || ws.rowCount || 1;
+  let lastForStation = 0;
+  for (let r = 2; r <= lastRowIdx; r++) {
+    const row = ws.getRow(r);
+    const cur = takeText(row.getCell(sidCol));
+    if (cur && cur.toLowerCase() === stationId.toLowerCase()) {
+      lastForStation = r;
+    }
+  }
+
+  // Build row values aligned to headers
+  const newValues = headers.map(h => {
+    if (!h) return '';
+    // Honor exact header, then common fallbacks for Station ID
+    if (h.toLowerCase() === 'station id') return stationId;
+    // Fill from payload under exact key or common variants (case-insensitive)
+    const direct = repair[h];
+    if (direct !== undefined) return direct;
+    // Case-insensitive lookup
+    const want = h.toLowerCase();
+    for (const [k, v] of Object.entries(repair)) {
+      if (String(k).toLowerCase() === want) return v;
+    }
+    return '';
+  });
+
+  // Insert at proper position
+  let insertedAt;
+  if (lastForStation >= 2) {
+    ws.spliceRows(lastForStation + 1, 0, newValues);
+    insertedAt = lastForStation + 1;
+  } else {
+    const newRow = ws.addRow(newValues);
+    insertedAt = newRow.number;
+  }
+
+  await wb.xlsx.writeFile(filePath);
+  return { success: true, file: filePath, sheet: ws.name, insertedAt };
 }
 
 async function setAssetTypeColorForLocation(assetType, location, color) {
@@ -1361,6 +1504,7 @@ const handlers = {
   setSettingBoolean,
   setLocationLink,
   setAssetTypeLink,
+  appendRepair,
 };
 
 parentPort.on('message', async (msg) => {

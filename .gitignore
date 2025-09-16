@@ -1,4 +1,4 @@
 # .gitignore
 node_modules/
-.xlsx
+*.xlsx
 data/.lookups_cache.json
