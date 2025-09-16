@@ -3,19 +3,9 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const { pathToFileURL } = require('url');
-const { PHOTOS_BASE, IMAGE_EXTS } = require('./config');
+const { IMAGE_EXTS } = require('./config');
+const app = require('./app');
 const { ensureDir } = require('./utils/fs_utils');
-
-// Local copy (matches app.js); consider moving to a shared util if you like.
-function folderNameFor(siteName, stationId) {
-  const site = String(siteName ?? '')
-    .normalize('NFKD')
-    .replace(/[^\p{L}\p{N}]+/gu, '_')
-    .replace(/^_+|_+$/g, '')
-    .toUpperCase();
-  const id = String(stationId ?? '').toUpperCase();
-  return `${site}_${id}`;
-}
 
 function sanitizeSegment(s) {
   return String(s || '')
@@ -82,26 +72,6 @@ function titleCase(s) {
 
 function toFileUrl(p) { try { return pathToFileURL(p).href; } catch { return null; } }
 
-async function findStationDir(siteName, stationId) {
-  if (!PHOTOS_BASE) return null;
-  const targetFolder = folderNameFor(siteName, stationId);
-  const exactDir = path.join(PHOTOS_BASE, targetFolder);
-
-  try {
-    const st = await fsp.stat(exactDir);
-    if (st.isDirectory()) return exactDir;
-  } catch (_) {}
-
-  const idUpper = String(stationId ?? '').toUpperCase();
-  try {
-    const entries = await fsp.readdir(PHOTOS_BASE, { withFileTypes: true });
-    const cand = entries.find(d => d.isDirectory() && d.name.toUpperCase().endsWith('_' + idUpper));
-    if (cand) return path.join(PHOTOS_BASE, cand.name);
-  } catch (_) {}
-
-  return null;
-}
-
 async function collectFilesRecursive(dir, accept) {
   const files = [];
   const seen = new Set();
@@ -125,7 +95,7 @@ async function collectFilesRecursive(dir, accept) {
 /** List inspection folders + up to 5 recent photos + report PDF URL */
 async function listInspections(siteName, stationId, perPhotos = 5) {
   try {
-    const stnDir = await findStationDir(siteName, stationId);
+    const { stationDir: stnDir } = await app.resolvePhotosBaseAndStationDir(siteName, stationId);
     if (!stnDir) return [];
 
     let entries = [];
@@ -182,7 +152,7 @@ async function listInspections(siteName, stationId, perPhotos = 5) {
 /** Delete an inspection folder (recursive), confined to the station directory. */
 async function deleteInspectionFolder(siteName, stationId, folderName) {
   try {
-    const stnDir = await findStationDir(siteName, stationId);
+    const { stationDir: stnDir } = await app.resolvePhotosBaseAndStationDir(siteName, stationId);
     if (!stnDir) return { success: false, message: 'Station folder not found' };
 
     const target = path.join(stnDir, folderName);
@@ -216,9 +186,10 @@ async function createInspectionFolder(siteName, stationId, payload) {
       return { success: false, message: 'Name is required and must include the word "inspection".' };
     }
 
-    // Station directory — prefer the canonical exact folder, create if missing.
+    // Station directory — use canonical dir under dynamic base, create if missing.
+    const { PHOTOS_BASE, canonicalDir } = await app.resolvePhotosBaseAndStationDir(siteName, stationId);
     if (!PHOTOS_BASE) return { success: false, message: 'PHOTOS_BASE is not configured.' };
-    const stationDir = path.join(PHOTOS_BASE, folderNameFor(siteName, stationId));
+    const stationDir = canonicalDir;
     ensureDir(stationDir);
 
     // New inspection folder: "YYYY_<Name…>"

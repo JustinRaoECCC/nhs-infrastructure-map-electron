@@ -19,6 +19,7 @@
     // You only mentioned years, so treat any unit as years.
     return Math.round(n); // keep it an integer year count
   }
+  
   function titleCase(s) {
     return String(s || '')
       .replace(/[_\-]+/g, ' ')

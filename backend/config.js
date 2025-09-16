@@ -1,7 +1,14 @@
 // backend/config.js
 // Default UNC/base folder where station photo folders live
-const DEFAULT_PHOTOS_BASE = '\\\\Ecbcv6cwvfsp001.ncr.int.ec.gc.ca\\msc$\\401\\WSCConstruction\\Stations';
-// const DEFAULT_PHOTOS_BASE = 'C:\\Users\\nitsu\\OneDrive\\Documents\\Stations';
+
+// BC - saved to easily copy paste into the application
+// const DEFAULT_PHOTOS_BASE = '\\Ecbcv6cwvfsp001.ncr.int.ec.gc.ca\msc$\401\WSCConstruction\Stations';
+
+// AB - saved to easily copy paste into the application
+// const DEFAULT_PHOTOS_BASE = '\\int.ec.gc.ca\shares\ECCC\PVM\GV1\WSCInfrastructure\Stations_Alberta';
+
+// Justin's PC - exists for debugging (because I am not on Justin's PC so this link fails)
+const DEFAULT_PHOTOS_BASE = 'C:\Users\nitsu\OneDrive\Documents\Stations';
 
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tif', '.tiff'];
 
@@ -13,14 +20,20 @@ const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tif', '.
  */
 async function getPhotosBase(ctx = {}) {
   try {
+    console.log(`[DEBUG config.getPhotosBase] Input ctx:`, ctx);
     const lookups = require('./lookups_repo');
     const fromLookups = await lookups.getPhotosBase({
       company: ctx.company || '',
       location: ctx.location || '',
       assetType: ctx.assetType || '',
     });
-    return fromLookups || DEFAULT_PHOTOS_BASE;
-  } catch {
+    console.log(`[DEBUG config.getPhotosBase] fromLookups result:`, fromLookups);
+    console.log(`[DEBUG config.getPhotosBase] DEFAULT_PHOTOS_BASE:`, DEFAULT_PHOTOS_BASE);
+    const result = fromLookups || DEFAULT_PHOTOS_BASE;
+    console.log(`[DEBUG config.getPhotosBase] Final result:`, result);
+    return result;
+  } catch (e) {
+    console.error(`[DEBUG config.getPhotosBase] Error:`, e);
     return DEFAULT_PHOTOS_BASE;
   }
 }

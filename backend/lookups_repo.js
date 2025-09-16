@@ -87,21 +87,25 @@ function _loadJsonCache(mtimeMs) {
       repairColors: new Map(Object.entries(raw.repairColors || {})),
       applyRepairColorsOnMap: !!raw.applyRepairColorsOnMap,
       // NEW: links
-      locationLinks: new Map(
-        Object.entries(raw.locationLinks || {}).map(
-          ([co, locObj]) => [co, new Map(Object.entries(locObj))]
-        )
-      ),
-      assetTypeLinks: new Map(
-        Object.entries(raw.assetTypeLinks || {}).map(
-          ([co, locObj]) => [
-            co,
-            new Map(Object.entries(locObj).map(
-              ([loc, atObj]) => [loc, new Map(Object.entries(atObj))]
-            ))
-          ]
-        )
-      ),
+     locationLinks: new Map(
+       Object.entries(raw.locationLinks || {}).map(
+         ([co, locObj]) => [lc(co), new Map(Object.entries(locObj).map(
+           ([loc, link]) => [lc(loc), link]
+         ))]
+       )
+     ),
+     assetTypeLinks: new Map(
+       Object.entries(raw.assetTypeLinks || {}).map(
+         ([co, locObj]) => [
+           lc(co),
+           new Map(Object.entries(locObj).map(
+             ([loc, atObj]) => [lc(loc), new Map(Object.entries(atObj).map(
+               ([at, link]) => [lc(at), link]
+             ))]
+           ))
+         ]
+       )
+     ),
     };
     return true;
   } catch(_) { return false; }
@@ -190,21 +194,25 @@ async function _primeAllCaches() {
   const applyRepairColorsOnMap = !!snap.applyRepairColorsOnMap;
 
   // NEW: hydrate link maps from snapshot
-  const locLinks = new Map(
-    Object.entries(snap.locationLinks || {}).map(
-      ([co, obj]) => [co, new Map(Object.entries(obj))]
-    )
-  );
-  const atLinks = new Map(
-    Object.entries(snap.assetTypeLinks || {}).map(
-      ([co, locObj]) => [
-        co,
-        new Map(Object.entries(locObj).map(
-          ([loc, atObj]) => [loc, new Map(Object.entries(atObj))]
-        ))
-      ]
-    )
-  );
+ const locLinks = new Map(
+   Object.entries(snap.locationLinks || {}).map(
+     ([co, obj]) => [lc(co), new Map(Object.entries(obj).map(
+       ([loc, link]) => [lc(loc), link]
+     ))]
+   )
+ );
+ const atLinks = new Map(
+   Object.entries(snap.assetTypeLinks || {}).map(
+     ([co, locObj]) => [
+       lc(co),
+      new Map(Object.entries(locObj).map(
+         ([loc, atObj]) => [lc(loc), new Map(Object.entries(atObj).map(
+           ([at, link]) => [lc(at), link]
+         ))]
+       ))
+     ]
+   )
+ );
 
   _cache = {
     mtimeMs,
@@ -324,27 +332,50 @@ async function upsertAssetType(assetType, location) {
 
 // ─── Links / Photos Base Resolver ─────────────────────────────────────────
 async function getPhotosBase({ company, location, assetType } = {}) {
+  console.log(`[DEBUG getPhotosBase] Input: company="${company}", location="${location}", assetType="${assetType}"`);
+  
   await _primeAllCaches();
-  const co  = normStr(company);
-  const loc = normStr(location);
-  const at  = normStr(assetType);
+ const co  = lc(company);
+ const loc = lc(location);  
+ const at  = lc(assetType);
+
+  console.log(`[DEBUG getPhotosBase] Normalized: co="${co}", loc="${loc}", at="${at}"`);
+  console.log(`[DEBUG getPhotosBase] AssetType cache keys:`, Array.from(_cache.assetTypeLinks.keys()));
+  console.log(`[DEBUG getPhotosBase] Location cache keys:`, Array.from(_cache.locationLinks.keys()));
 
   // 1) AssetTypes.link (company+location+assetType)
   if (co && loc && at) {
     const locMap = _cache.assetTypeLinks.get(co);
+    console.log(`[DEBUG getPhotosBase] AssetTypes locMap for company "${co}":`, locMap ? Array.from(locMap.keys()) : 'null');
+    
     const atMap = locMap && locMap.get(loc);
+    console.log(`[DEBUG getPhotosBase] AssetTypes atMap for location "${loc}":`, atMap ? Array.from(atMap.keys()) : 'null');
+    
     const link = atMap && atMap.get(at);
-    if (link) return link;
+    console.log(`[DEBUG getPhotosBase] AssetTypes link for assetType "${at}":`, link);
+    
+    if (link) {
+      console.log(`[DEBUG getPhotosBase] Found AssetTypes link: ${link}`);
+      return link;
+    }
   }
 
   // 2) Locations.link (company+location)
   if (co && loc) {
     const locMap = _cache.locationLinks.get(co);
+    console.log(`[DEBUG getPhotosBase] Locations locMap for company "${co}":`, locMap ? Array.from(locMap.keys()) : 'null');
+    
     const link = locMap && locMap.get(loc);
-    if (link) return link;
+    console.log(`[DEBUG getPhotosBase] Locations link for location "${loc}":`, link);
+    
+    if (link) {
+      console.log(`[DEBUG getPhotosBase] Found Locations link: ${link}`);
+      return link;
+    }
   }
 
   // 3) nothing
+  console.log(`[DEBUG getPhotosBase] No link found, returning null`);
   return null;
 }
 

@@ -428,41 +428,157 @@ function folderNameFor(siteName, stationId) {
   return `${site}_${id}`;
 }
 
-async function getRecentPhotos(siteName, stationId, limit = 5) {
-  try {
-    // Find the station to infer {assetType, location, company}
-    let assetType = '';
-    let location = '';
-    let company = '';
+/**
+ * Safely join paths, preserving UNC path format
+ */
+function safePathJoin(basePath, ...segments) {
+  // Check if it's a UNC path
+  if (basePath.startsWith('\\\\')) {
+    // For UNC paths, manually concatenate to preserve the \\\\ prefix
+    let result = basePath;
+    
+    for (const segment of segments) {
+      if (segment) {
+        // Ensure there's exactly one backslash separator
+        if (!result.endsWith('\\')) {
+          result += '\\';
+        }
+        // Clean the segment of leading/trailing backslashes
+        const cleanSegment = segment.replace(/^\\+|\\+$/g, '');
+        result += cleanSegment;
+      }
+    }
+    
+    return result;
+  } else {
+    // Regular path.join for non-UNC paths
+    return path.join(basePath, ...segments);
+  }
+}
 
+/**
+ * Resolve PHOTOS_BASE (dynamic) and pick exactly ONE station directory:
+ * 1) Prefer the canonical exact folder: PHOTOS_BASE / SITE_STATIONID
+ * 2) Else, first top-level directory whose name CONTAINS STATIONID (case-insensitive)
+ */
+async function resolvePhotosBaseAndStationDir(siteName, stationId) {
+  try {
+    // Derive {assetType, location} from station rows
+    let assetType = '';
+    let location  = '';
+    let company   = '';
+    
     try {
       const all = await getStationData({ skipColors: true });
-      const st = all.find(s => String(s.station_id).trim().toLowerCase() === String(stationId).trim().toLowerCase());
+      const st = all.find(
+        s => String(s.station_id).trim().toLowerCase() === String(stationId).trim().toLowerCase()
+      );
       if (st) {
         assetType = String(st.asset_type || '').trim();
-        location  = String(st.location_file || st.province || '').trim();
+        const rawLocation = st.location_file || st.location || st.province;
+        location = normLoc(rawLocation);
       }
-    } catch (_) {}
+    } catch (e) {
+      console.error('[resolvePhotosBaseAndStationDir] Error getting station data:', e);
+    }
 
-    // Find company from location
+    // Derive company from lookup tree
     try {
       if (location && !company) {
         const tree = await lookupsRepo.getLookupTree();
-        const L = String(location).toLowerCase();
         for (const [co, locs] of Object.entries(tree?.locationsByCompany || {})) {
-          if ((locs || []).some(x => String(x).trim().toLowerCase() === L)) {
-            company = co;
+          if ((locs || []).some(x => normLoc(x) === location)) {
+            company = co; 
             break;
           }
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      console.error('[resolvePhotosBaseAndStationDir] Error deriving company:', e);
+    }
+
+    console.log(`[DEBUG] resolvePhotosBaseAndStationDir: stationId=${stationId}, company=${company}, location=${location}, assetType=${assetType}`);
 
     const PHOTOS_BASE = await config.getPhotosBase({ company, location, assetType });
-    if (!PHOTOS_BASE) return [];
+    console.log(`[DEBUG] getPhotosBase returned: ${PHOTOS_BASE}`);
+    
+    if (!PHOTOS_BASE) {
+      console.warn(`[resolvePhotosBaseAndStationDir] No PHOTOS_BASE found for company=${company}, location=${location}, assetType=${assetType}`);
+      return { PHOTOS_BASE: null, stationDir: null, canonicalDir: null };
+    }
 
     const targetFolder = folderNameFor(siteName, stationId);
-    const exactDir = path.join(PHOTOS_BASE, targetFolder);
+    
+    // IMPORTANT: Keep UNC paths as-is with backslashes
+    // Node.js on Windows handles UNC paths correctly when they maintain the \\\\ format
+    let exactDir;
+    if (PHOTOS_BASE.startsWith('\\\\')) {
+      // For UNC paths, manually concatenate to preserve the format
+      exactDir = PHOTOS_BASE.endsWith('\\') 
+        ? PHOTOS_BASE + targetFolder
+        : PHOTOS_BASE + '\\' + targetFolder;
+    } else {
+      // For regular paths, use path.join
+      exactDir = path.join(PHOTOS_BASE, targetFolder);
+    }
+
+    console.log(`[DEBUG] Exact directory to check: ${exactDir}`);
+
+    // 1) Exact canonical dir
+    try {
+      const st = await fsp.stat(exactDir);
+      if (st.isDirectory()) {
+        console.log(`[DEBUG] Found exact directory: ${exactDir}`);
+        return { PHOTOS_BASE, stationDir: exactDir, canonicalDir: exactDir };
+      }
+    } catch (e) {
+      console.log(`[DEBUG] Exact directory not found: ${exactDir}`);
+      console.log(`[DEBUG] Error: ${e.message}`);
+    }
+
+    // 2) First dir whose name CONTAINS stationId (case-insensitive)
+    const idUpper = String(stationId ?? '').toUpperCase();
+    try {
+      console.log(`[DEBUG] Attempting readdir on: ${PHOTOS_BASE}`);
+      const entries = await fsp.readdir(PHOTOS_BASE, { withFileTypes: true });
+      console.log(`[DEBUG] Found ${entries.length} entries in ${PHOTOS_BASE}`);
+      
+      for (const d of entries) {
+        if (!d.isDirectory()) continue;
+        if (d.name.toUpperCase().includes(idUpper)) {
+          let full;
+          if (PHOTOS_BASE.startsWith('\\\\')) {
+            // For UNC paths, manually concatenate
+            full = PHOTOS_BASE.endsWith('\\') 
+              ? PHOTOS_BASE + d.name
+              : PHOTOS_BASE + '\\' + d.name;
+          } else {
+            full = path.join(PHOTOS_BASE, d.name);
+          }
+          
+          console.log(`[DEBUG] Found matching directory: ${full}`);
+          return { PHOTOS_BASE, stationDir: full, canonicalDir: exactDir };
+        }
+      }
+    } catch (e) {
+      console.error(`[DEBUG] Error reading PHOTOS_BASE directory: ${e.message}`);
+    }
+
+    // Nothing found
+    console.log(`[DEBUG] No station directory found for ${stationId}`);
+    return { PHOTOS_BASE, stationDir: null, canonicalDir: exactDir };
+  } catch (e) {
+    console.error('[resolvePhotosBaseAndStationDir] failed:', e);
+    return { PHOTOS_BASE: null, stationDir: null, canonicalDir: null };
+  }
+}
+
+async function getRecentPhotos(siteName, stationId, limit = 5) {
+  try {
+    // Resolve base + ONE station dir using shared helper
+    const { stationDir, canonicalDir: exactDir } =
+      await resolvePhotosBaseAndStationDir(siteName, stationId);
+    if (!stationDir) return [];
 
     const files = [];
     const seenDirs = new Set();
@@ -474,7 +590,7 @@ async function getRecentPhotos(siteName, stationId, limit = 5) {
       try { entries = await fsp.readdir(dir, { withFileTypes: true }); }
       catch { return; }
       for (const ent of entries) {
-        const full = path.join(dir, ent.name);
+        const full = safePathJoin(dir, ent.name);
         if (ent.isDirectory()) {
           await collect(full);
         } else {
@@ -489,18 +605,8 @@ async function getRecentPhotos(siteName, stationId, limit = 5) {
       }
     }
 
-    await collect(exactDir);
-
-    if (files.length === 0) {
-      const idUpper = String(stationId ?? '').toUpperCase();
-      try {
-        const entries = await fsp.readdir(PHOTOS_BASE, { withFileTypes: true });
-        const candidates = entries.filter(
-          d => d.isDirectory() && d.name.toUpperCase().endsWith('_' + idUpper)
-        );
-        for (const d of candidates) await collect(path.join(PHOTOS_BASE, d.name));
-      } catch {}
-    }
+    // Only collect from the single selected station directory
+    await collect(stationDir);
 
     files.sort((a, b) => b.mtimeMs - a.mtimeMs);
     return files.slice(0, limit).map(f => ({
@@ -614,6 +720,6 @@ module.exports = {
   invalidateStationCache,
   // photos
   getRecentPhotos,
-
+  resolvePhotosBaseAndStationDir,
   updateStationData,
 };
