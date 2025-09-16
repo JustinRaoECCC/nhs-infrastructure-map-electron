@@ -390,6 +390,12 @@ async function setApplyRepairColors(flag) {
   return res;
 }
 
+async function deleteStatus(statusKey) {
+  const res = await excel.deleteStatusRow(statusKey);
+  _invalidateAllCaches();
+  return res;
+}
+
 module.exports = {
   // ensure/init
   ensureLookupsReady,
@@ -427,6 +433,7 @@ module.exports = {
   setStatusColor,
   setApplyStatusColors,
   setApplyRepairColors,
+  deleteStatus,
   // paths
   LOOKUPS_PATH,
   DATA_DIR, LOCATIONS_DIR, REPAIRS_DIR,

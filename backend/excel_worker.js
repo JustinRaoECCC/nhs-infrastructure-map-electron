@@ -311,6 +311,7 @@ async function setStatusColor(statusKey, color) {
   await wb.xlsx.readFile(LOOKUPS_PATH);
   const ws = getSheet(wb, 'Status Colors') || wb.addWorksheet('Status Colors');
   if (ws.rowCount === 0) ws.addRow(['Status','Color']);
+  
   const tgt = lc(statusKey);
   let found = false;
   ws.eachRow({ includeEmpty:false }, (row, i) => {
@@ -323,6 +324,30 @@ async function setStatusColor(statusKey, color) {
   if (!found) ws.addRow([statusKey, color]);
   await wb.xlsx.writeFile(LOOKUPS_PATH);
   return { success:true };
+}
+
+// NEW: delete a status row by key (case-insensitive on "Status" column)
+async function deleteStatusRow(statusKey) {
+  await ensureLookupsReady();
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(LOOKUPS_PATH);
+  const ws = getSheet(wb, 'Status Colors') || wb.addWorksheet('Status Colors');
+  if (ws.rowCount === 0) ws.addRow(['Status','Color']);
+  const tgt = lc(statusKey);
+  let removed = false;
+  // Find the row index (1-based); header is row 1
+  ws.eachRow({ includeEmpty:false }, (row, i) => {
+    if (i === 1) return;
+    if (lc(row.getCell(1)?.text) === tgt) {
+      ws.spliceRows(i, 1);
+      removed = true;
+    }
+  });
+  if (removed) {
+    await wb.xlsx.writeFile(LOOKUPS_PATH);
+  }
+  return { success:true, removed };
 }
 
 async function setSettingBoolean(key, flag) {
@@ -1332,6 +1357,7 @@ const handlers = {
   readSheetData,
   updateAssetTypeSchema,
   setStatusColor,
+  deleteStatusRow,
   setSettingBoolean,
   setLocationLink,
   setAssetTypeLink,

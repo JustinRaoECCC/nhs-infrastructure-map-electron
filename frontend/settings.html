@@ -32,12 +32,18 @@
 
       <!-- NEW: Status Overrides -->
       <div class="settings-section" style="margin-top:1rem;">
-        <div class="settings-section-header" style="display:flex;align-items:center;gap:.75rem;">
-          <h3 style="margin:.25rem 0;">Status Overrides</h3>
-          <label style="display:flex;align-items:center;gap:.35rem;font-size:.9rem;">
-            <input id="applyStatusColorsChk" type="checkbox" />
-            <span>Apply status color overrides on map</span>
-          </label>
+        <div class="settings-section-header" style="display:flex;align-items:center;gap:.75rem;justify-content:space-between;">
+          <div style="display:flex;align-items:center;gap:.75rem;">
+            <h3 style="margin:.25rem 0;">Status Overrides</h3>
+            <label style="display:flex;align-items:center;gap:.35rem;font-size:.9rem;">
+              <input id="applyStatusColorsChk" type="checkbox" />
+              <span>Apply status color overrides on map</span>
+            </label>
+          </div>
+          <div class="toolbar" style="display:flex;align-items:center;gap:.5rem;">
+            <button id="statusEditBtn" class="btn btn-ghost">Edit</button>
+            <button id="statusAddBtn" class="btn btn-primary" style="display:none;">Add row</button>
+          </div>
         </div>
         <p class="hint" style="opacity:.8;margin:.25rem 0 .5rem;">
           Choose colors for statuses. When enabled, these override the normal station color for matching stations.
@@ -48,31 +54,12 @@
             <thead>
               <tr>
                 <th style="width:50%;">Status</th>
-                <th style="width:50%;">Color</th>
+                <th style="width:40%;">Color</th>
+                <th style="width:10%;text-align:right;">&nbsp;</th>
               </tr>
             </thead>
             <tbody id="statusColorTbody">
-              <tr>
-                <td>Inactive</td>
-                <td>
-                  <input id="statusColor-inactive" type="color" style="width:42px;height:28px;border:0;background:transparent;cursor:pointer;" />
-                  <code class="hex" data-for="inactive" style="margin-left:.5rem;opacity:.8;"></code>
-                </td>
-              </tr>
-              <tr>
-                <td>Mothballed</td>
-                <td>
-                  <input id="statusColor-mothballed" type="color" style="width:42px;height:28px;border:0;background:transparent;cursor:pointer;" />
-                  <code class="hex" data-for="mothballed" style="margin-left:.5rem;opacity:.8;"></code>
-                </td>
-              </tr>
-              <tr>
-                <td>Unknown</td>
-                <td>
-                  <input id="statusColor-unknown" type="color" style="width:42px;height:28px;border:0;background:transparent;cursor:pointer;" />
-                  <code class="hex" data-for="unknown" style="margin-left:.5rem;opacity:.8;"></code>
-                </td>
-              </tr>
+              <!-- rows rendered dynamically -->
             </tbody>
           </table>
         </div>

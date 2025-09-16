@@ -249,6 +249,7 @@ ipcMain.handle('nuke:run', async () => {
 // ─── IPC: Status / Repair settings ─────────────────────────────────────────
 ipcMain.handle('status:get', async () => lookups.getStatusAndRepairSettings());
 ipcMain.handle('status:setColor', async (_evt, key, color) => lookups.setStatusColor(key, color));
+ipcMain.handle('status:delete', async (_evt, key) => lookups.deleteStatus(key));
 ipcMain.handle('status:setApply', async (_evt, flag) => lookups.setApplyStatusColors(!!flag));
 ipcMain.handle('repair:setApply', async (_evt, flag) => lookups.setApplyRepairColors(!!flag));
 

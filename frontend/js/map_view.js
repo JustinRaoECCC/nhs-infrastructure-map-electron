@@ -38,7 +38,7 @@ function setRhsTitle(stnOrText) {
 
   if (stnOrText && typeof stnOrText === 'object') {
     // Station selected → make clickable link-like header
-    const name = stnOrText.name || 'Station Details';
+    const name = `${stnOrText.name || 'Unknown Station'} (${stnOrText.station_id || 'N/A'})`.trim();
     h.textContent = name;
     h.classList.add('clickable');
     h.setAttribute('role', 'link');

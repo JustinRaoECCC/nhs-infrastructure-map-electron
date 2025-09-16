@@ -98,6 +98,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Status / Repair settings
   getStatusRepairSettings: () => ipcRenderer.invoke('status:get'),
   setStatusColor:          (statusKey, color) => ipcRenderer.invoke('status:setColor', statusKey, color),
+  deleteStatus:            (statusKey) => ipcRenderer.invoke('status:delete', statusKey),
   setApplyStatusColors:    (flag) => ipcRenderer.invoke('status:setApply', !!flag),
   setApplyRepairColors:    (flag) => ipcRenderer.invoke('repair:setApply', !!flag),
 

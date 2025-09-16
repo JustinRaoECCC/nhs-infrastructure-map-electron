@@ -98,11 +98,15 @@
   const state = {
     rows: [],              // Map pin rows
     changes: new Map(),    // k=rowKey -> {asset_type, company, location, color}
-    // NEW:
+    // NEW (dynamic status rows):
+    statusRows: [],        // [{label:'Inactive', color:'#8e8e8e', _origKey:'inactive'}]
+    deletedStatusKeys: new Set(), // lowercased labels the user removed
+    isStatusEditMode: false,
+    // Legacy fallback (not used after migration, kept for backward compatibility)
     statusColors: { inactive:'#8e8e8e', mothballed:'#a87ecb', unknown:'#999999' },
     applyStatusColorsOnMap: false,
     applyRepairColorsOnMap: false,
-    statusChanged: new Set(), // keys added here when changed
+    statusChanged: new Set(), // lowercased keys that changed color/label
     togglesChanged: new Set() // 'applyStatus','applyRepair'
   };
 
@@ -142,43 +146,97 @@
   }
 
   // ──────────────────────────────────────────────────────────────────────────
-  // NEW: Status Overrides rendering/binding
-  function renderStatusUI() {
-    const map = state.statusColors || {};
-    const set = (id, key) => {
-      const el = document.getElementById(`statusColor-${key}`);
-      const code = document.querySelector(`code.hex[data-for="${key}"]`);
-      const hex = normalizeHex(map[key]);
-      if (el) el.value = hex;
-      if (code) code.textContent = hex;
-    };
-    set('statusColor-inactive', 'inactive');
-    set('statusColor-mothballed', 'mothballed');
-    set('statusColor-unknown', 'unknown');
-
-    const chkStatus = document.getElementById('applyStatusColorsChk');
-    if (chkStatus) chkStatus.checked = !!state.applyStatusColorsOnMap;
-
-    const chkRepair = document.getElementById('applyRepairColorsChk');
-    if (chkRepair) chkRepair.checked = !!state.applyRepairColorsOnMap;
+  // NEW: Status Overrides (dynamic) rendering/binding
+  function renderStatusTable() {
+    const tbody = document.getElementById('statusColorTbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    const frag = document.createDocumentFragment();
+    state.statusRows.forEach((row, idx) => {
+      const tr = document.createElement('tr');
+      tr.dataset.idx = String(idx);
+      tr.innerHTML = `
+        <td>
+          <div class="status-row">
+            <input class="status-label" type="text" value="${escapeHtml(row.label)}"
+                   placeholder="Status label (e.g., Inactive)" ${state.isStatusEditMode ? '' : 'readonly'}
+                   style="width: 100%;" />
+          </div>
+        </td>
+        <td>
+          <div class="status-color-wrap" style="display:flex;align-items:center;gap:.5rem;">
+            <input class="status-color" type="color" value="${normalizeHex(row.color)}"
+                   ${state.isStatusEditMode ? '' : ''} 
+                   style="width:42px;height:28px;border:0;background:transparent;cursor:pointer;" />
+            <code class="hex">${normalizeHex(row.color)}</code>
+          </div>
+        </td>
+        <td class="status-actions" style="${state.isStatusEditMode ? '' : 'display:none;'};text-align:right;">
+          <button class="btn btn-ghost btn-icon status-remove" title="Remove row" aria-label="Remove row">✕</button>
+        </td>`;
+      frag.appendChild(tr);
+    });
+    tbody.appendChild(frag);
+    // Bind color/label/remove handlers
+    tbody.querySelectorAll('input.status-color').forEach(inp => {
+      inp.addEventListener('input', (e) => {
+        const tr = inp.closest('tr');
+        const idx = Number(tr?.dataset?.idx || -1);
+        if (idx < 0) return;
+        const hex = normalizeHex(e.target.value);
+        tr.querySelector('code.hex').textContent = hex;
+        state.statusRows[idx].color = hex;
+        state.statusChanged.add((state.statusRows[idx]._origKey || state.statusRows[idx].label).toLowerCase());
+      });
+    });
+    tbody.querySelectorAll('input.status-label').forEach(inp => {
+      inp.addEventListener('input', (e) => {
+        const tr = inp.closest('tr');
+        const idx = Number(tr?.dataset?.idx || -1);
+        if (idx < 0) return;
+        state.statusRows[idx].label = String(e.target.value || '').trim();
+        state.statusChanged.add((state.statusRows[idx]._origKey || '').toLowerCase());
+      });
+    });
+    tbody.querySelectorAll('button.status-remove').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tr = btn.closest('tr');
+        const idx = Number(tr?.dataset?.idx || -1);
+        if (idx < 0) return;
+        const row = state.statusRows[idx];
+        if (row && row._origKey) state.deletedStatusKeys.add(row._origKey.toLowerCase());
+        state.statusRows.splice(idx, 1);
+        renderStatusTable();
+     });
+    });
   }
 
-  function bindStatusInputs() {
-    const keys = ['inactive','mothballed','unknown'];
-    keys.forEach(k => {
-      const el = document.getElementById(`statusColor-${k}`);
-      if (!el || el.dataset.bound) return;
-      el.addEventListener('input', (e) => {
-        const hex = normalizeHex(e.target.value);
-        state.statusColors[k] = hex;
-        const code = document.querySelector(`code.hex[data-for="${k}"]`);
-        if (code) code.textContent = hex;
-        state.statusChanged.add(k);
-      });
-      el.dataset.bound = '1';
-    });
-
+  function bindStatusToolbar() {
+    const editBtn = document.getElementById('statusEditBtn');
+    const addBtn  = document.getElementById('statusAddBtn');
     const chkStatus = document.getElementById('applyStatusColorsChk');
+    const chkRepair = document.getElementById('applyRepairColorsChk');
+
+    if (editBtn && !editBtn.dataset.bound) {
+      editBtn.addEventListener('click', () => {
+        state.isStatusEditMode = !state.isStatusEditMode;
+        editBtn.classList.toggle('active', state.isStatusEditMode);
+        editBtn.textContent = state.isStatusEditMode ? 'Done' : 'Edit';
+        if (addBtn) addBtn.style.display = state.isStatusEditMode ? '' : 'none';
+        renderStatusTable();
+      });
+      editBtn.dataset.bound = '1';
+    }
+    if (addBtn && !addBtn.dataset.bound) {
+      addBtn.addEventListener('click', () => {
+        state.statusRows.push({ label: 'New Status', color: '#999999', _origKey: '' });
+        state.isStatusEditMode = true;
+        if (editBtn) { editBtn.classList.add('active'); editBtn.textContent = 'Done'; }
+        addBtn.style.display = '';
+        renderStatusTable();
+      });
+      addBtn.dataset.bound = '1';
+    }
     if (chkStatus && !chkStatus.dataset.bound) {
       chkStatus.addEventListener('change', (e) => {
         state.applyStatusColorsOnMap = !!e.target.checked;
@@ -186,7 +244,6 @@
       });
       chkStatus.dataset.bound = '1';
     }
-    const chkRepair = document.getElementById('applyRepairColorsChk');
     if (chkRepair && !chkRepair.dataset.bound) {
       chkRepair.addEventListener('change', (e) => {
         state.applyRepairColorsOnMap = !!e.target.checked;
@@ -224,7 +281,8 @@
     if (!saveBtn) return;
 
     const entries = Array.from(state.changes.values());
-    const statusChanged = Array.from(state.statusChanged.values());
+    const statusChanged = Array.from(state.statusChanged.values()); // legacy marker; we’ll compute diffs below
+    const deleted = Array.from(state.deletedStatusKeys.values());   // lowercased keys to delete
 
     if (!entries.length && !statusChanged.length && state.togglesChanged.size === 0) {
       if (status) status.textContent = 'No changes.';
@@ -243,10 +301,35 @@
       success ? ok++ : fail++;
     }
 
-    // 2) Status colors
-    for (const key of statusChanged) {
-      const res = await setStatusColor(key, state.statusColors[key]);
-      res && res.success ? ok++ : fail++;
+    // 2) Status colors (add/update + deletes)
+    // Build a normalized final map of label->color from rows
+    const finalMap = {};
+    state.statusRows.forEach(r => {
+      const key = String(r.label || '').trim();
+      if (!key) return;
+      finalMap[key] = normalizeHex(r.color || '#999999');
+    });
+
+    // Upserts for all rows
+    for (const [label, hex] of Object.entries(finalMap)) {
+      try {
+        const res = await setStatusColor(label, hex); // upsert
+        res && res.success ? ok++ : fail++;
+      } catch (e) { fail++; }
+    }
+    // Deletes for removed originals
+    if (typeof window.electronAPI?.deleteStatus === 'function') {
+      for (const k of deleted) {
+        try {
+          // Only delete if that old key no longer exists in final set (case-insensitive)
+          const stillExists = Object.keys(finalMap)
+            .some(lbl => lbl.toLowerCase() === k);
+          if (!stillExists) {
+            const res = await window.electronAPI.deleteStatus(k);
+            res && res.success ? ok++ : fail++;
+          }
+        } catch (e) { fail++; }
+      }
     }
 
     // 3) Toggles
@@ -276,6 +359,7 @@
     if (!fail) {
       state.changes.clear();
       state.statusChanged.clear();
+      state.deletedStatusKeys.clear();
       state.togglesChanged.clear();
     }
   }
@@ -308,16 +392,31 @@
 
     // NEW: Load status/repair settings and render
     const s = await getStatusRepairSettings();
-    state.statusColors = {
-      inactive: normalizeHex(s?.statusColors?.inactive || '#8e8e8e'),
-      mothballed: normalizeHex(s?.statusColors?.mothballed || '#a87ecb'),
-      unknown: normalizeHex(s?.statusColors?.unknown || '#999999')
-    };
+    // Convert map → rows, preserving original keys for delete-diff
+    const rows2 = [];
+    const sc = s?.statusColors || {};
+    const entries = Object.entries(sc);
+    if (entries.length === 0) {
+      rows2.push({ label:'Inactive',   color:'#8e8e8e', _origKey:'inactive' });
+      rows2.push({ label:'Mothballed', color:'#a87ecb', _origKey:'mothballed' });
+      rows2.push({ label:'Unknown',    color:'#999999', _origKey:'unknown' });
+    } else {
+      for (const [k, v] of entries) {
+        const label = k && k.trim() ? k : 'Unnamed';
+        rows2.push({ label, color: normalizeHex(v), _origKey: k.toLowerCase() });
+      }
+    }
+    state.statusRows = rows2;
     state.applyStatusColorsOnMap = !!s.applyStatusColorsOnMap;
     state.applyRepairColorsOnMap = !!s.applyRepairColorsOnMap;
 
-    renderStatusUI();
-    bindStatusInputs();
+    // Render dynamic table + bind toolbar/toggles
+    renderStatusTable();
+    const chkStatus = document.getElementById('applyStatusColorsChk');
+    if (chkStatus) chkStatus.checked = !!state.applyStatusColorsOnMap;
+    const chkRepair = document.getElementById('applyRepairColorsChk');
+    if (chkRepair) chkRepair.checked = !!state.applyRepairColorsOnMap;
+    bindStatusToolbar();
   }
 
   function initSettingsView() {
@@ -346,3 +445,10 @@
     if (document.getElementById('settingsPage')) initSettingsView();
   });
 })();
+
+// Small helper kept local to this module for escaping label values
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = String(str ?? '');
+  return div.innerHTML;
+}

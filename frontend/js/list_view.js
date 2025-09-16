@@ -5,6 +5,7 @@
 // - Hovering a row updates the RHS details via window.showStationDetails.
 // - Click a column header to sort (toggles asc/desc).
 // - Respects the filter drawer readiness flag to avoid clearing on boot.
+// - UPDATED: Search now requires button click or Enter key, always searches full database
 
 (function () {
   'use strict';
@@ -108,8 +109,9 @@
   let currentRows = [];
   let sortState = { key: 'station_id', dir: 'asc' }; // default sort
 
-  // Optional quick text filter (uses top search box if present)
-  let liveQuery = '';
+  // NEW: Search state - separated pending input from active search
+  let activeSearchQuery = '';    // Currently applied search (used in filtering)
+  let pendingSearchQuery = '';   // What's typed in the input box but not yet searched
 
   // ────────────────────────────────────────────────────────────────────────────
   // Data → filtered rows (mirrors map_view filter semantics)
@@ -159,8 +161,9 @@
     });
   }
 
+  // UPDATED: Now uses activeSearchQuery instead of live input
   function applySearch(rows) {
-    const q = norm(liveQuery);
+    const q = norm(activeSearchQuery);
     if (!q) return rows;
     return rows.filter(stn => {
       return [
@@ -192,6 +195,35 @@
       if (sa > sb) return  1 * dirMul;
       return 0;
     });
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // NEW: Search Actions
+  // ────────────────────────────────────────────────────────────────────────────
+  function performSearch() {
+    // Apply the pending search query
+    activeSearchQuery = pendingSearchQuery;
+    
+    // Trigger full re-render (fetches fresh data from database)
+    renderList(false);
+    
+    console.log('[list] Search performed:', activeSearchQuery);
+  }
+
+  function clearSearch() {
+    const searchInput = document.querySelector('input[placeholder*="Search stations"]');
+    if (searchInput) {
+      searchInput.value = '';
+    }
+    
+    // Clear both pending and active search
+    pendingSearchQuery = '';
+    activeSearchQuery = '';
+    
+    // Re-render to show all results
+    renderList(false);
+    
+    console.log('[list] Search cleared');
   }
 
   // ────────────────────────────────────────────────────────────────────────────
@@ -295,6 +327,7 @@
     tbodyEl.dataset.clickBound = '1';
   }
 
+  // UPDATED: Show search indicator in count badge
   function updateCountBadge(n) {
     const badge = document.getElementById('listCount');
     if (!badge) return;
@@ -304,7 +337,10 @@
       return;
     }
     badge.style.display = 'inline-block';
-    badge.textContent = `${n} row${n === 1 ? '' : 's'}`;
+    
+    // Show search indicator if there's an active search
+    const searchIndicator = activeSearchQuery ? ' (filtered)' : '';
+    badge.textContent = `${n} row${n === 1 ? '' : 's'}${searchIndicator}`;
   }
 
   function renderIntoTable(rows, opts = {}) {
@@ -357,7 +393,7 @@
     }
 
     let rows = applyFilters(data);
-    rows = applySearch(rows);
+    rows = applySearch(rows);  // Now uses activeSearchQuery
     rows = sortRows(rows);
     return rows;
   }
@@ -378,9 +414,9 @@
   const renderListDebounced = debounce(() => renderList(false), 150);
 
   function renderRowsOnly() {
-    // Re-render rows using existing currentRows + current sort/search
+    // Re-render rows using existing currentRows + current sort (search unchanged)
     try {
-      currentRows = sortRows(applySearch(currentRows));
+      currentRows = sortRows(currentRows);
       renderIntoTable(currentRows);
     } catch (e) {
       console.error('[list] renderRowsOnly error:', e);
@@ -412,14 +448,44 @@
         }
       }
 
-      // Hook search box if present
-      const search = document.getElementById('searchAssets');
-      if (search && !search.dataset.bound) {
-        search.addEventListener('input', () => {
-          liveQuery = search.value || '';
-          renderRowsOnly(); // no refetch needed
+      // UPDATED: Target the "Search stations" input specifically
+      const searchInput = document.querySelector('input[placeholder*="Search stations"]');
+      const searchButton = document.getElementById('searchStationsButton');
+      const clearButton = document.getElementById('clearStationsButton');
+      
+      if (searchInput && !searchInput.dataset.bound) {
+        // Track what user types (but don't search yet)
+        searchInput.addEventListener('input', (e) => {
+          pendingSearchQuery = e.target.value || '';
         });
-        search.dataset.bound = '1';
+        
+        // Search on Enter key
+        searchInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            performSearch();
+          }
+        });
+        
+        searchInput.dataset.bound = '1';
+      }
+      
+      // Search button click
+      if (searchButton && !searchButton.dataset.bound) {
+        searchButton.addEventListener('click', (e) => {
+          e.preventDefault();
+          performSearch();
+        });
+        searchButton.dataset.bound = '1';
+      }
+      
+      // Clear button click
+      if (clearButton && !clearButton.dataset.bound) {
+        clearButton.addEventListener('click', (e) => {
+          e.preventDefault();
+          clearSearch();
+        });
+        clearButton.dataset.bound = '1';
       }
 
       page.dataset.bound = '1';

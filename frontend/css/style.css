@@ -54,11 +54,197 @@ body{
   position:relative; display:flex; align-items:center;
   background:#f1f5f9; border:1px solid var(--border); border-radius:999px; padding:0 12px;
 }
-.search input{
-  height:36px; width:42vw; max-width:560px;
-  border:0; outline:0; background:transparent; color:var(--text);
-  font-size:14px;
+
+/* Search stations controls - flexible and responsive */
+.search-stations-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  max-width: 600px;
+  min-width: 200px;
+  margin: 0 20px;
 }
+
+.search-stations {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: #f1f5f9;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 12px;
+  overflow: hidden;
+  width: 100%;
+  min-width: 200px;
+}
+
+.search-stations input {
+  height: 36px;
+  width: 100%;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  padding-right: 8px;
+  min-width: 0; /* Important for flex shrinking */
+}
+
+.search-stations input::placeholder {
+  color: #64748b;
+  opacity: 1;
+}
+
+/* Search and clear buttons */
+.search-btn,
+.clear-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+
+.search-btn:hover {
+  background: #e2e8f0;
+  color: #3b82f6;
+  transform: scale(1.05);
+}
+
+.clear-btn:hover {
+  background: #fee2e2;
+  color: #dc2626;
+  transform: scale(1.05);
+}
+
+.search-btn:active,
+.clear-btn:active {
+  transform: scale(0.95);
+}
+
+/* Focus states */
+.search-stations input:focus {
+  outline: none;
+}
+
+.search-stations:focus-within {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* Button icon styling */
+.search-btn svg,
+.clear-btn svg {
+  stroke-width: 2.5;
+}
+
+/* Responsive adjustments for different screen sizes */
+@media (max-width: 1200px) {
+  .search-stations-controls {
+    max-width: 500px;
+    margin: 0 15px;
+  }
+}
+
+@media (max-width: 900px) {
+  .search-stations-controls {
+    max-width: 400px;
+    margin: 0 10px;
+  }
+  
+  .search-stations input {
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 768px) {
+  .search-stations-controls {
+    max-width: 300px;
+    margin: 0 8px;
+    min-width: 150px;
+  }
+  
+  .search-stations input {
+    font-size: 12px;
+  }
+  
+  .search-btn,
+  .clear-btn {
+    width: 28px;
+    height: 28px;
+  }
+  
+  .search-btn svg,
+  .clear-btn svg {
+    width: 14px;
+    height: 14px;
+  }
+}
+
+@media (max-width: 600px) {
+  .search-stations-controls {
+    max-width: 250px;
+    margin: 0 5px;
+    min-width: 120px;
+  }
+  
+  .search-stations {
+    min-width: 120px;
+  }
+  
+  .search-stations input {
+    font-size: 11px;
+  }
+  
+  .search-btn,
+  .clear-btn {
+    width: 24px;
+    height: 24px;
+    margin-left: 2px;
+  }
+  
+  .search-btn svg,
+  .clear-btn svg {
+    width: 12px;
+    height: 12px;
+  }
+}
+
+/* Ensure the toolbar layout is flexible */
+.list-toolbar {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 10px;
+  flex-wrap: nowrap;
+  margin-bottom: 0.5rem !important;
+}
+
+/* Make sure the badge doesn't take up too much space */
+.badge {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Remove any conflicting search assets styles */
+.search {
+  display: none !important; /* Hide old search assets */
+}
+
+.controls-row {
+  display: none !important; /* Hide old controls row */
+}
+
 .btn, .dropbtn{
   height:36px; padding:0 12px; border-radius:8px;
   border:1px solid var(--border); background:#fff; color:var(--text);
@@ -2169,3 +2355,4 @@ html.modal-open, body.modal-open { overflow: hidden; }
   .app-confirm-ok{background:#e6e6e6;color:#111;border-color:#e6e6e6}
   .app-confirm--danger .app-confirm-ok{background:#f87171;color:#111;border-color:#f87171}
 }
+
