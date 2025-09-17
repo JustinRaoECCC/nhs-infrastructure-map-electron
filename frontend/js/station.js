@@ -1,4 +1,4 @@
-// frontend/js/station.js - Updated with schema synchronization
+// frontend/js/station.js - Updated with schema synchronization and edit button fixes
 let currentStationData = null;
 let hasUnsavedChanges = false;
 let generalInfoUnlocked = false;
@@ -287,23 +287,47 @@ function createEditableSection(sectionName, fields) {
   const actionsDiv = document.createElement('div');
   actionsDiv.className = 'section-actions';
 
-  // NEW: per-section edit toggle (visible always)
+  // IMPROVED: Ensure button is properly configured
   const editToggleBtn = document.createElement('button');
   editToggleBtn.className = 'btn btn-outline btn-sm js-section-edit';
   editToggleBtn.textContent = 'Edit section';
-  editToggleBtn.setAttribute('type', 'button');
+  editToggleBtn.type = 'button'; // Explicitly set type to prevent form submission
   editToggleBtn.setAttribute('aria-pressed', 'false');
+  editToggleBtn.style.pointerEvents = 'auto'; // Ensure clickable
+  editToggleBtn.style.zIndex = '10'; // Ensure above other elements
+  
+  // Add a direct click handler as backup (in addition to delegated handler)
+  editToggleBtn.addEventListener('click', function(e) {
+    // This is a backup in case delegation fails
+    if (!e.defaultPrevented) {
+      console.log('[Edit Section] Direct handler triggered for:', sectionName);
+      e.preventDefault();
+      e.stopPropagation();
+      const section = this.closest('.station-section');
+      if (section) {
+        setSectionEditing(section, !isSectionEditing(section));
+      }
+    }
+  });
 
   const addFieldBtn = document.createElement('button');
   addFieldBtn.className = 'btn btn-ghost btn-sm edit-only'; // HIDDEN until editing
   addFieldBtn.textContent = '+ Add Field';
-  addFieldBtn.addEventListener('click', () => addFieldToSection(sectionDiv));
+  addFieldBtn.type = 'button'; // Explicitly set type
+  addFieldBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    addFieldToSection(sectionDiv);
+  });
 
   const deleteSectionBtn = document.createElement('button');
   deleteSectionBtn.className = 'btn btn-danger btn-sm edit-only'; // HIDDEN until editing
   deleteSectionBtn.textContent = 'Delete Section';
   deleteSectionBtn.title = 'Delete Section';
-  deleteSectionBtn.addEventListener('click', () => deleteSection(sectionDiv));
+  deleteSectionBtn.type = 'button'; // Explicitly set type
+  deleteSectionBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    deleteSection(sectionDiv);
+  });
 
   // order: [Edit/Exit][Add Field][Delete Section]
   actionsDiv.appendChild(editToggleBtn);
@@ -432,6 +456,11 @@ function setupTabs(container) {
 }
 
 function setupEventHandlers(container, stn) {
+  // Remove any existing delegated listeners to prevent duplicates
+  if (container.dataset.handlersAttached) {
+    return; // Already attached, don't duplicate
+  }
+  
   const addSectionBtn = container.querySelector('#addSectionBtn');
   if (addSectionBtn) {
     addSectionBtn.addEventListener('click', addNewSection);
@@ -456,17 +485,31 @@ function setupEventHandlers(container, stn) {
     });
   });
 
-  // Per-section edit toggle
-  container.addEventListener('click', (e) => {
+  // IMPROVED: More robust event delegation for edit toggle
+  // Use capturing phase to ensure we get the event first
+  container.addEventListener('click', function editSectionHandler(e) {
     const toggle = e.target.closest('.js-section-edit');
     if (!toggle) return;
+    
+    // Prevent default to ensure button doesn't submit forms
+    e.preventDefault();
+    e.stopPropagation();
+    
     const section = toggle.closest('.station-section');
-    if (!section) return;
-    setSectionEditing(section, !isSectionEditing(section));
-  });
+    if (!section) {
+      console.warn('[Edit Section] Could not find parent section for button:', toggle);
+      return;
+    }
+    
+    // Toggle the editing state
+    const isEditing = isSectionEditing(section);
+    console.log('[Edit Section] Toggling section:', section.dataset.sectionName, 'from', isEditing, 'to', !isEditing);
+    setSectionEditing(section, !isEditing);
+  }, true); // Use capturing phase
+  
+  // Mark that handlers are attached to prevent duplicates
+  container.dataset.handlersAttached = 'true';
 }
-
-
 
 function setupPasswordModal(container) {
   const modal = container.querySelector('#passwordModal');
@@ -655,6 +698,20 @@ async function saveStationChanges(assetType) {
   }
 }
 
+// Clean up function to reset state when navigating away
+function cleanupStationPage() {
+  const container = document.getElementById('stationContentContainer');
+  if (container) {
+    // Remove the handlers attached flag so they can be re-attached next time
+    delete container.dataset.handlersAttached;
+  }
+  
+  // Reset state variables
+  currentStationData = null;
+  hasUnsavedChanges = false;
+  generalInfoUnlocked = false;
+}
+
 function setupBackButton(container) {
   const backBtn = container.querySelector('#backButton');
   if (backBtn) {
@@ -663,6 +720,9 @@ function setupBackButton(container) {
         const ok = await appConfirm('You have unsaved changes. Are you sure you want to leave?');
         if (!ok) return;
       }
+
+      // Clean up before leaving
+      cleanupStationPage();
 
       container.style.display = 'none';
       const from = container.dataset.origin || 'map';
@@ -681,11 +741,53 @@ function setupBackButton(container) {
       if (rightPanel) rightPanel.style.display = '';
       disableFullWidthMode();
 
-      hasUnsavedChanges = false;
-      generalInfoUnlocked = false;
+      // Ensure RHS panel is properly restored
+      if (typeof window.restoreRHSPanel === 'function') {
+        window.restoreRHSPanel();
+      }
     });
   }
 }
 
+// Add debugging helper to check button state
+function debugEditButtons() {
+  const buttons = document.querySelectorAll('.js-section-edit');
+  console.log('[Debug] Found', buttons.length, 'edit section buttons');
+  buttons.forEach((btn, i) => {
+    const section = btn.closest('.station-section');
+    const sectionName = section?.dataset.sectionName || 'unknown';
+    const isEditing = section ? isSectionEditing(section) : false;
+    console.log(`[Debug] Button ${i}: Section "${sectionName}", Editing: ${isEditing}, Enabled: ${!btn.disabled}`);
+  });
+}
+
+// Expose for debugging
+window.debugEditButtons = debugEditButtons;
+
 // expose
 window.loadStationPage = loadStationPage;
+
+// Add visibility change listener to detect when returning to the page
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    const stationContainer = document.getElementById('stationContentContainer');
+    const rightPanel = document.getElementById('rightPanel');
+    
+    // If we're not in station view, ensure RHS is visible
+    if (stationContainer && (stationContainer.style.display === 'none' || !stationContainer.style.display)) {
+      if (rightPanel) rightPanel.style.display = '';
+    }
+  }
+});
+
+// Also check on window focus
+window.addEventListener('focus', () => {
+  setTimeout(() => {
+    const stationContainer = document.getElementById('stationContentContainer');
+    const rightPanel = document.getElementById('rightPanel');
+    
+    if (stationContainer && (stationContainer.style.display === 'none' || !stationContainer.style.display)) {
+      if (rightPanel) rightPanel.style.display = '';
+    }
+  }, 100);
+});

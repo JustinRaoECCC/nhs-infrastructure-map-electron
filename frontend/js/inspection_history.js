@@ -28,6 +28,38 @@
       .replace(/\b([a-z])/g, (m, c) => c.toUpperCase());
   }
 
+  function updateNextDueAfterDomChange(listEl, stn) {
+    try {
+      // Find the root .inspection-history container, then its "Next Inspection Due" span
+      const root = listEl.closest('.inspection-history') || document;
+      const nextSpan = root.querySelector('.ih-next span');
+      if (!nextSpan) return;
+
+      // Scan remaining cards inside THIS list
+      const cards = listEl.querySelectorAll('.inspection-item[data-date-ms]');
+      let newestMs = -Infinity;
+      cards.forEach(card => {
+        const raw = card.getAttribute('data-date-ms');
+        const ms = Number(raw);
+        if (Number.isFinite(ms) && ms !== -Infinity && ms > newestMs) newestMs = ms;
+      });
+
+      if (!Number.isFinite(newestMs) || newestMs === -Infinity) {
+        nextSpan.textContent = 'DATE';
+        return;
+      }
+
+      // Reuse your existing parser from earlier in the file
+      const freqYears = parseFrequencyYearsFromStation(stn);
+      if (!freqYears) { nextSpan.textContent = 'DATE'; return; }
+
+      const d = new Date(newestMs);
+      nextSpan.textContent = String(d.getUTCFullYear() + freqYears);
+    } catch (e) {
+      console.warn('[ih:updateNextDueAfterDomChange] failed:', e);
+    }
+  }
+
   function parseDateFromFolder(name, fallbackMs) {
     // Accept: 2020, 2020-05, 2020_05, 2020-05-17, 2020_Cableway_...
     const canon = String(name || '').trim();
@@ -107,6 +139,7 @@
     wrap.style.borderRadius = '10px';
     wrap.style.padding = '10px 12px';
     wrap.style.background = '#fff';
+    wrap.setAttribute('data-date-ms', String(item.dateMs ?? ''));
 
     const header = document.createElement('div');
     header.style.display = 'flex';
@@ -117,7 +150,9 @@
     const title = document.createElement('div');
     title.style.fontWeight = '700';
     title.style.fontSize = '14px';
-    title.textContent = `${item.displayName} - ${item.dateHuman}`;
+    const byInspector = item.inspector ? ` by ${item.inspector}` : '';
+    const datePart    = item.dateHuman ? ` - ${item.dateHuman}` : '';
+    title.textContent = `${item.displayName}${byInspector}${datePart}`;
     header.appendChild(title);
 
     const actions = document.createElement('div');
@@ -140,22 +175,43 @@
     delBtn.addEventListener('click', async () => {
       const ok = await appConfirm(`Delete the "${item.folderName}" inspection (this deletes the folder and its files)?`);
       if (!ok) return;
+
+      delBtn.disabled = true; delBtn.textContent = 'Deleting…';
       try {
         const res = await window.electronAPI.deleteInspection(stn.name, stn.station_id, item.folderName);
         if (res && res.success) {
+          // Remove the card immediately
           wrap.remove();
+          // Recompute the next-due using the remaining cards in THIS list
+          updateNextDueAfterDomChange(host, stn);
         } else {
           appAlert('Failed to delete inspection folder.' + (res?.message ? `\n\n${res.message}` : ''));
+          delBtn.disabled = false; delBtn.textContent = 'Delete Inspection';
         }
       } catch (e) {
         console.error('[deleteInspection] failed', e);
         appAlert('Failed to delete inspection folder.');
+        delBtn.disabled = false; delBtn.textContent = 'Delete Inspection';
       }
     });
 
     actions.appendChild(reportBtn);
     actions.appendChild(delBtn);
     header.appendChild(actions);
+
+    wrap.appendChild(header);
+
+    if (item.commentText && item.commentText.trim()) {
+      const commentBox = document.createElement('div');
+      commentBox.className = 'ih-comment';
+      commentBox.style.marginTop = '8px';
+      commentBox.style.padding = '8px 10px';
+      commentBox.style.borderLeft = '3px solid #d1d5db';
+      commentBox.style.background = '#f9fafb';
+      commentBox.style.whiteSpace = 'pre-wrap';
+      commentBox.textContent = item.commentText.trim();
+      wrap.appendChild(commentBox);
+    }
 
     const photosRow = document.createElement('div');
     photosRow.className = 'photo-row';
@@ -195,7 +251,6 @@
       photosRow.appendChild(empty);
     }
 
-    wrap.appendChild(header);
     wrap.appendChild(photosRow);
     host.appendChild(wrap);
   }
@@ -204,7 +259,8 @@
     const list = host.querySelector('#ihList');
     if (!list) return;
     list.innerHTML = '';
-    // skeletons
+
+    // skeletons...
     for (let i = 0; i < 2; i++) {
       const s = document.createElement('div');
       s.className = 'inspection-skel';
@@ -219,6 +275,7 @@
 
     let items = [];
     try {
+      // Backend pulls the global keywords from lookups.xlsx.
       items = await window.electronAPI.listInspections(stn.name, stn.station_id);
     } catch (e) {
       console.warn('[listInspections] failed', e);
@@ -230,32 +287,68 @@
       empty.className = 'photo-empty';
       empty.textContent = 'No inspections found for this station';
       list.appendChild(empty);
+      // Also reset next-due since nothing matches
+      const nextSpan = host.querySelector('.ih-next span');
+      if (nextSpan) nextSpan.textContent = 'DATE';
       return;
     }
 
     // sort newest first by folder-name date (backend provides dateMs)
     items.sort((a, b) => (b.dateMs || 0) - (a.dateMs || 0));
-
     for (const it of items) renderItem(list, stn, it);
 
+    // Recompute Next Due (existing logic)
     try {
       const freqYears = parseFrequencyYearsFromStation(stn);
       const nextSpan = host.querySelector('.ih-next span');
       if (freqYears && nextSpan && items[0]?.dateMs) {
-        const d = new Date(items[0].dateMs); // most recent folder-name date
+        const d = new Date(items[0].dateMs);
         const nextYear = d.getUTCFullYear() + freqYears;
         nextSpan.textContent = String(nextYear);
-      } // else leave as "DATE"
+      } else if (nextSpan) {
+        nextSpan.textContent = 'DATE';
+      }
     } catch (e) {
       console.warn('[ih next-due compute] failed:', e);
     }
-
   }
 
   async function initInspectionHistoryTab(container, stn) {
     const tabBtn = container.querySelector('.tab[data-target="inspection-history"]');
     const host = await fetchTemplateInto(container);
     if (!host) return;
+
+      // ---- Load global keywords from lookups.xlsx (shared by all stations) ----
+      let ihKeywords = ['inspection'];
+      try {
+        const ks = await window.electronAPI.getInspectionKeywords();
+        if (Array.isArray(ks)) ihKeywords = ks;
+      } catch (_) {}
+
+      // Insert a small "Settings" button in the header
+      const header = host.querySelector('.ih-header');
+      if (header && !header.querySelector('#ihSettingsBtn')) {
+        const settingsBtn = document.createElement('button');
+        settingsBtn.id = 'ihSettingsBtn';
+        settingsBtn.className = 'btn btn-ghost';
+        // Use a gear emoji and push it to the far right
+        settingsBtn.textContent = '⚙️';
+        settingsBtn.setAttribute('aria-label', 'Inspection folder keywords');
+        settingsBtn.title = 'Inspection folder keywords';
+        // Visually pin to the right edge of the header row
+        settingsBtn.style.marginLeft = 'auto';
+        // Make it a compact icon button
+        settingsBtn.style.width = '36px';
+        settingsBtn.style.height = '36px';
+        settingsBtn.style.display = 'inline-flex';
+        settingsBtn.style.alignItems = 'center';
+        settingsBtn.style.justifyContent = 'center';
+        settingsBtn.style.fontSize = '18px';
+        settingsBtn.style.padding = '0';
+        header.appendChild(settingsBtn);
+
+        settingsBtn.addEventListener('click', () => openIhSettingsModal());
+      }
 
     // Lightbox close wiring
     const lbClose = document.querySelector('#lightboxClose');
@@ -515,7 +608,119 @@
         createEl.disabled = false; createEl.textContent = 'Create';
       }
     });
+
+    // --- NEW: build settings modal once ---
+      let ihSettingsModal = null;
+
+      function openIhSettingsModal() {
+        if (!ihSettingsModal) {
+          ihSettingsModal = document.createElement('div');
+          ihSettingsModal.className = 'modal';
+          ihSettingsModal.style.display = 'none';
+          ihSettingsModal.innerHTML = `
+            <div class="modal-content" style="max-width:520px;width:92%;display:flex;flex-direction:column;gap:12px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <h3 style="margin:0;">Inspection Folder Keywords</h3>
+                <button id="ihSetClose" class="btn btn-ghost">Close</button>
+              </div>
+
+              <p class="ih-note">Folders whose names contain any of these words are treated as inspections.</p>
+
+              <div>
+                <div id="ihSetChips" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+                <div style="display:flex;gap:8px;margin-top:8px;">
+                  <input id="ihSetInput" type="text" placeholder="Add a word (e.g., assessment)" style="flex:1;"/>
+                  <button id="ihSetAdd" class="btn">Add</button>
+                </div>
+                <small class="ih-help">Tip: words are matched case-insensitively and can be partial (e.g., "inspect").</small>
+              </div>
+
+              <div style="display:flex;justify-content:flex-end;gap:8px;">
+                <button id="ihSetReset" class="btn btn-ghost" title="Reset to default for this session">Reset</button>
+                <button id="ihSetSave" class="btn btn-primary">Save</button>
+              </div>
+            </div>`;
+          document.body.appendChild(ihSettingsModal);
+
+          const closeBtn = ihSettingsModal.querySelector('#ihSetClose');
+          const addBtn   = ihSettingsModal.querySelector('#ihSetAdd');
+          const saveBtn  = ihSettingsModal.querySelector('#ihSetSave');
+          const resetBtn = ihSettingsModal.querySelector('#ihSetReset');
+          const inputEl  = ihSettingsModal.querySelector('#ihSetInput');
+          const chipsEl  = ihSettingsModal.querySelector('#ihSetChips');
+
+          function renderChips() {
+            chipsEl.innerHTML = '';
+            if (!ihKeywords.length) {
+              const ghost = document.createElement('span');
+              ghost.style.color = '#6b7280';
+              ghost.textContent = '(no words — nothing will show)';
+              chipsEl.appendChild(ghost);
+              return;
+            }
+            ihKeywords.forEach((w, idx) => {
+              const chip = document.createElement('span');
+              chip.className = 'badge';
+              chip.style.display = 'inline-flex';
+              chip.style.alignItems = 'center';
+              chip.style.gap = '6px';
+              chip.style.padding = '4px 8px';
+              chip.style.border = '1px solid var(--border)';
+              chip.style.borderRadius = '999px';
+              chip.style.background = '#f3f4f6';
+              chip.textContent = w;
+              const x = document.createElement('button');
+              x.className = 'btn btn-ghost btn-sm';
+              x.textContent = '✕';
+              x.title = `Remove "${w}"`;
+              x.addEventListener('click', () => {
+                ihKeywords.splice(idx, 1);
+                renderChips();
+              });
+              chip.appendChild(x);
+              chipsEl.appendChild(chip);
+            });
+          }
+
+          function addWordFromInput() {
+            const raw = String(inputEl.value || '').trim();
+            if (!raw) return;
+            const norm = raw.toLowerCase();
+            if (!ihKeywords.includes(norm)) ihKeywords.push(norm);
+            inputEl.value = '';
+            renderChips();
+          }
+
+          addBtn.addEventListener('click', addWordFromInput);
+          inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') addWordFromInput(); });
+          closeBtn.addEventListener('click', () => ihSettingsModal.style.display = 'none');
+          ihSettingsModal.addEventListener('click', (e) => { if (e.target === ihSettingsModal) ihSettingsModal.style.display = 'none'; });
+
+          resetBtn.addEventListener('click', () => { ihKeywords = ['inspection']; renderChips(); });
+
+        saveBtn.addEventListener('click', async () => {
+          try {
+            await window.electronAPI.setInspectionKeywords(ihKeywords.slice());
+          } catch (_) {}
+          ihSettingsModal.style.display = 'none';
+          // Refresh the list using the saved global keywords
+          await renderList(host, stn);
+        });
+
+
+          // First render
+          renderChips();
+        }
+
+        // Ensure the input reflects current state then open
+        ihSettingsModal.style.display = 'flex';
+        const inputEl = ihSettingsModal.querySelector('#ihSetInput');
+        setTimeout(() => inputEl?.focus(), 30);
+      }
+
   }
+
+
 
 
   // expose

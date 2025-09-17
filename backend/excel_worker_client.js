@@ -80,4 +80,7 @@ module.exports = {
   // Repairs (new single-sheet model)
   appendRepair: (company, location, repair) =>
     call('appendRepair', company, location, repair),
+  // NEW: Inspection keywords (global list stored in lookups.xlsx)
+  setInspectionKeywords: (keywords) =>
+    call('setInspectionKeywords', Array.isArray(keywords) ? keywords : []),
 };

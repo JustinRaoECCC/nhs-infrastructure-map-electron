@@ -107,6 +107,31 @@
     };
   }
 
+  // ===== RHS Panel Restoration Functions =====
+  function restoreRHSPanel() {
+    const rightPanel = document.getElementById('rightPanel');
+    const stationContentContainer = document.getElementById('stationContentContainer');
+    
+    // If station view is hidden/not active and RHS panel exists
+    if (rightPanel && stationContentContainer && 
+        (stationContentContainer.style.display === 'none' || !stationContentContainer.style.display)) {
+      
+      // Show the RHS panel
+      rightPanel.style.display = '';
+      
+      // Reset the RHS title to default state
+      if (typeof setRhsTitle === 'function') {
+        setRhsTitle('Station Details');
+      }
+      
+      // Clear any stale content
+      const container = document.getElementById('station-details');
+      if (container) {
+        container.innerHTML = '<p><em>Click a pin to see details</em></p>';
+      }
+    }
+  }
+
   function safeEnableFullWidthMode() {
     try {
       if (typeof window.enableFullWidthMode === 'function') return window.enableFullWidthMode();
@@ -150,6 +175,10 @@
     setActiveNav('navMap');
     showViews({ map: true, list: false, docs: false, wizard: false, settings: false });
     safeDisableFullWidthMode();
+
+    // Restore RHS panel when returning to map view
+    restoreRHSPanel();
+
     if (window.map && typeof window.map.invalidateSize === 'function') {
       setTimeout(() => { try { window.map.invalidateSize(); } catch(_) {} }, 50);
     }
@@ -160,6 +189,9 @@
     setActiveNav('navList');
     showViews({ map: false, list: true, docs: false, wizard: false, settings: false });
     safeDisableFullWidthMode();
+
+    // Restore RHS panel when returning to list view
+    restoreRHSPanel();
 
     const listEl = document.getElementById('listContainer');
     if (!listEl) return;
@@ -983,7 +1015,7 @@
 
         <div class="form-row">
           <label>Base folder link (optional)</label>
-          <input type="text" id="assetLink2" placeholder="\\\\\\server\\share\\Stations  or  C:\\\\Users\\\\name\\\\Stations" />
+          <input type="text" id="assetLink2" placeholder="\\\\server\\share\\folder" />
           <div class="hint" style="opacity:.75;margin-top:.25rem;">
             If provided, this link will be used for this asset type at this location (overrides the location link).
           </div>
@@ -1331,6 +1363,30 @@
 
   // Bootstrapping & Nav bindings
   document.addEventListener('DOMContentLoaded', () => {
+    // Monitor station container visibility changes
+    const stationContainerObserver = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.type === 'attributes' && mutation.attributeName === 'style') {
+          const container = mutation.target;
+          // If station container was just hidden, restore RHS panel
+          if (container.style.display === 'none' || !container.style.display) {
+            restoreRHSPanel();
+          }
+        }
+      });
+    });
+    
+    const stationContainer = document.getElementById('stationContentContainer');
+    if (stationContainer) {
+      stationContainerObserver.observe(stationContainer, {
+        attributes: true,
+        attributeFilter: ['style']
+      });
+    }
+    
+    // Initial restoration check
+    restoreRHSPanel();
+
     const navNewCompany = document.getElementById('navNewCompany');
     if (navNewCompany && !navNewCompany.dataset.boundNew) {
       navNewCompany.addEventListener('click', (e) => {

@@ -54,6 +54,7 @@ let _cache = {
   // NEW: links
   locationLinks: new Map(),        // Map<company, Map<location, link>>
   assetTypeLinks: new Map(),       // Map<company, Map<location, Map<assetType, link>>>
+  inspectionKeywords: [],
 };
 
 function _invalidateAllCaches() { _cache.mtimeMs = -1; try { fs.unlinkSync(CACHE_PATH); } catch(_) {} }
@@ -90,25 +91,26 @@ function _loadJsonCache(mtimeMs) {
       repairColors: new Map(Object.entries(raw.repairColors || {})),
       applyRepairColorsOnMap: !!raw.applyRepairColorsOnMap,
       // NEW: links
-     locationLinks: new Map(
-       Object.entries(raw.locationLinks || {}).map(
-         ([co, locObj]) => [lc(co), new Map(Object.entries(locObj).map(
-           ([loc, link]) => [lc(loc), link]
-         ))]
-       )
-     ),
-     assetTypeLinks: new Map(
-       Object.entries(raw.assetTypeLinks || {}).map(
-         ([co, locObj]) => [
-           lc(co),
-           new Map(Object.entries(locObj).map(
-             ([loc, atObj]) => [lc(loc), new Map(Object.entries(atObj).map(
-               ([at, link]) => [lc(at), link]
-             ))]
-           ))
-         ]
-       )
-     ),
+      locationLinks: new Map(
+        Object.entries(raw.locationLinks || {}).map(
+          ([co, locObj]) => [lc(co), new Map(Object.entries(locObj).map(
+            ([loc, link]) => [lc(loc), link]
+          ))]
+        )
+      ),
+      assetTypeLinks: new Map(
+        Object.entries(raw.assetTypeLinks || {}).map(
+          ([co, locObj]) => [
+            lc(co),
+            new Map(Object.entries(locObj).map(
+              ([loc, atObj]) => [lc(loc), new Map(Object.entries(atObj).map(
+                ([at, link]) => [lc(at), link]
+              ))]
+            ))
+          ]
+        )
+      ),
+      inspectionKeywords: Array.isArray(raw.inspectionKeywords) ? raw.inspectionKeywords : [],
     };
     return true;
   } catch(_) { return false; }
@@ -162,6 +164,7 @@ function _saveJsonCache() {
           ]
         )
       ),
+      inspectionKeywords: Array.from(_cache.inspectionKeywords || []),
     };
     fs.writeFileSync(CACHE_PATH, JSON.stringify(json));
   } catch(_) {}
@@ -233,6 +236,10 @@ async function _primeAllCaches() {
     // NEW: links
     locationLinks: locLinks,
     assetTypeLinks: atLinks,
+    // NEW: inspection keywords
+    inspectionKeywords: Array.isArray(snap.inspectionKeywords)
+      ? snap.inspectionKeywords
+      : ['inspection'],
   };
   _saveJsonCache()
 }
@@ -250,6 +257,20 @@ async function getColorMaps() {
 // ─── Ensure folders & workbook ─────────────────────────────────────────────
 async function ensureLookupsReady() { return excel.ensureLookupsReady(); }
 
+// ─── Inspection keywords (global) ─────────────────────────────────────────
+async function getInspectionKeywords() {
+  await _primeAllCaches();
+  return Array.from(_cache.inspectionKeywords || []);
+}
+
+async function setInspectionKeywords(keywords = []) {
+  const list = Array.isArray(keywords)
+    ? keywords.map(normStr).filter(Boolean)
+    : [];
+  const res = await excel.setInspectionKeywords(list);
+  _invalidateAllCaches();
+  return res;
+}
 
 // ─── Public read APIs ──────────────────────────────────────────────────────
 async function getActiveCompanies() {
@@ -468,6 +489,9 @@ module.exports = {
   setApplyStatusColors,
   setApplyRepairColors,
   deleteStatus,
+  // NEW: inspection keywords
+  getInspectionKeywords,
+  setInspectionKeywords,
   // paths
   LOOKUPS_PATH,
   DATA_DIR, LOCATIONS_DIR, REPAIRS_DIR,

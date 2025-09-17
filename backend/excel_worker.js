@@ -22,6 +22,9 @@ const LOCATIONS_DIR = path.join(DATA_DIR, 'locations');
 const REPAIRS_DIR   = path.join(DATA_DIR, 'repairs');
 const SEED_PATH     = path.join(__dirname, 'templates', 'lookups.template.xlsx');
 
+
+const IH_KEYWORDS_SHEET = 'Inspection History Keywords';
+
 // ─── Helpers ──────────────────────────────────────────────────────────────
 const ensureDir = (p) => { if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); };
 const normStr = (v) => String(v ?? '').trim();
@@ -92,7 +95,12 @@ async function ensureLookupsReady() {
       ws.addRow(['applyRepairColorsOnMap','FALSE']);
       changed = true;
     }
-
+    if (need(IH_KEYWORDS_SHEET)) {
+      const ws = wb.addWorksheet(IH_KEYWORDS_SHEET);
+      ws.addRow(['Keyword']);
+      ws.addRow(['inspection']); // default on creation
+      changed = true;
+    }
     if (changed) {
       progress('ensure', 75, 'Writing workbook changes…');
       await wb.xlsx.writeFile(LOOKUPS_PATH);
@@ -121,6 +129,11 @@ async function ensureLookupsReady() {
     wsCfg.addRow(['applyStatusColorsOnMap','FALSE']);
     wsCfg.addRow(['applyRepairColorsOnMap','FALSE']);
 
+    // NEW: Inspection History Keywords (global)
+    const wsIH = wb.addWorksheet(IH_KEYWORDS_SHEET);
+    wsIH.addRow(['Keyword']);
+    wsIH.addRow(['inspection']); // default
+
     progress('ensure', 70, 'Saving new workbook…');
     await wb.xlsx.writeFile(LOOKUPS_PATH);
     progress('ensure', 80, 'Workbook ready');
@@ -142,6 +155,7 @@ async function readLookupsSnapshot() {
   const wsA = getSheet(wb, 'AssetTypes');
   const wsC = getSheet(wb, 'Companies');
   const wsL = getSheet(wb, 'Locations');
+  const wsK = getSheet(wb, IH_KEYWORDS_SHEET);
 
   // NEW: link caches
   const locationLinks = {};        // { company: { location: link } }
@@ -247,10 +261,49 @@ async function readLookupsSnapshot() {
     // NEW:
     locationLinks,
     assetTypeLinks,
+    // NEW: inspection keywords
+    inspectionKeywords: (function () {
+      const out = [];
+      if (wsK) {
+        wsK.eachRow({ includeEmpty:false }, (row) => {
+          const v = normStr(row.getCell(1)?.text);
+          if (!v) return;
+          if (v.toLowerCase() === 'keyword') return; // skip header anywhere
+          out.push(v);
+        });
+      }
+      return wsK ? uniqSorted(out) : ['inspection'];
+    })(),
   };
   progress('done', 100, 'Excel ready');
   return payload;
 }
+
+// ─── Writes: Inspection Keywords (global list) ─────────────────────────────
+async function setInspectionKeywords(keywords = []) {
+  await ensureLookupsReady();
+  const list = Array.isArray(keywords)
+    ? uniqSorted(keywords.map(v => normStr(v)).filter(Boolean))
+    : [];
+
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(LOOKUPS_PATH);
+
+  const existing = getSheet(wb, IH_KEYWORDS_SHEET);
+  if (existing) {
+    // safest: remove and recreate to avoid phantom/Formatted rows
+    wb.removeWorksheet(existing.id);
+  }
+  const ws = wb.addWorksheet(IH_KEYWORDS_SHEET);
+
+  ws.addRow(['Keyword']);
+  for (const k of list) ws.addRow([k]);
+
+  await wb.xlsx.writeFile(LOOKUPS_PATH);
+  return { success: true, count: list.length };
+}
+
 
 // ─── Writes ───────────────────────────────────────────────────────────────
 function randHexColor() { return '#' + Math.floor(Math.random() * 0xFFFFFF).toString(16).padStart(6, '0'); }
@@ -1515,6 +1568,7 @@ const handlers = {
   setLocationLink,
   setAssetTypeLink,
   appendRepair,
+  setInspectionKeywords
 };
 
 parentPort.on('message', async (msg) => {

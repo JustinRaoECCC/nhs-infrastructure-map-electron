@@ -183,9 +183,19 @@ ipcMain.handle('excel:updateAssetTypeSchema', async (_evt, assetType, schema, ex
 );
 
 // ─── IPC: Inspections ─────────────────────────────────────────────────────
-ipcMain.handle('inspections:list', async (_evt, siteName, stationId) =>
-  inspectionHistory.listInspections(siteName, stationId)
+// Accept optional opts (e.g., { keywords: [...] }) and pass through to backend.
+ipcMain.handle('inspections:list', async (_evt, siteName, stationId, opts) =>
+  inspectionHistory.listInspections(siteName, stationId, 5, opts || {})
 );
+
+// ─── IPC: Inspection History Keywords (global, lookups.xlsx) ─────────────
+ipcMain.handle('inspectionKeywords:get', async () =>
+  lookups.getInspectionKeywords()
+);
+ipcMain.handle('inspectionKeywords:set', async (_evt, keywords) =>
+  lookups.setInspectionKeywords(Array.isArray(keywords) ? keywords : [])
+);
+
 ipcMain.handle('inspections:delete', async (_evt, siteName, stationId, folderName) =>
   inspectionHistory.deleteInspectionFolder(siteName, stationId, folderName)
 );

@@ -73,8 +73,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('excel:updateAssetTypeSchema', assetType, schema, excludeStationId),
 
   // ─── Inspections ─────────────────────────────────────────────────────────
-  listInspections: (siteName, stationId) =>
-    ipcRenderer.invoke('inspections:list', siteName, stationId),
+  // Optional third arg `opts` (e.g., { keywords: ['inspection','assessment'] })
+  listInspections: (siteName, stationId, opts) =>
+    ipcRenderer.invoke('inspections:list', siteName, stationId, opts),
+
+  // Inspection History keywords (global, stored in lookups.xlsx)
+  getInspectionKeywords: () =>
+    ipcRenderer.invoke('inspectionKeywords:get'),
+  setInspectionKeywords: (keywords) =>
+    ipcRenderer.invoke('inspectionKeywords:set', Array.isArray(keywords) ? keywords : []),
 
   deleteInspection: (siteName, stationId, folderName) =>
     ipcRenderer.invoke('inspections:delete', siteName, stationId, folderName),

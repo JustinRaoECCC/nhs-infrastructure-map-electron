@@ -6,6 +6,8 @@ const { pathToFileURL } = require('url');
 const { IMAGE_EXTS } = require('./config');
 const app = require('./app');
 const { ensureDir } = require('./utils/fs_utils');
+const lookups = require('./lookups_repo');
+
 
 function sanitizeSegment(s) {
   return String(s || '')
@@ -38,9 +40,16 @@ async function copyWithUniqueName(src, destDir) {
   return target;
 }
 
-function containsInspectionWord(s) {
+function containsInspectionWordFromList(s, words) {
   const x = String(s || '').toLowerCase();
-  return x.includes('inspection') || x.includes('assessment');
+  // NOTE:
+  // - If 'words' is undefined (no opts passed), the caller should provide a default.
+  // - If 'words' is an empty array, match NOTHING (return false).
+  const list = (Array.isArray(words) ? words : [])
+    .map(w => String(w || '').toLowerCase().trim())
+    .filter(Boolean);
+  if (list.length === 0) return false;
+  return list.some(w => x.includes(w));
 }
 
 function parseDateFromFolderName(name) {
@@ -72,6 +81,29 @@ function titleCase(s) {
 
 function toFileUrl(p) { try { return pathToFileURL(p).href; } catch { return null; } }
 
+function parseCommentTxt(raw) {
+  if (!raw) return { inspector: null, commentText: null };
+  // Primary pattern: labeled blocks
+  const m = raw.match(/^\s*Comment:\s*\r?\n([\s\S]*?)\r?\n\s*Inspector:\s*\r?\n?([\s\S]*?)\s*$/i);
+  if (m) {
+    const commentText = (m[1] || '').trim();
+    const inspector   = (m[2] || '').trim();
+    return {
+      inspector: inspector || null,
+      commentText: commentText || null,
+    };
+  }
+  // Fallbacks: tolerate single-line labels or loose order
+  const cm = raw.match(/Comment:\s*([\s\S]*?)(?:\r?\n\r?\n|$)/i);
+  const im = raw.match(/Inspector:\s*([^\r\n]+)/i);
+  const commentText = (cm?.[1] || '').trim();
+  const inspector   = (im?.[1] || '').trim();
+  return {
+    inspector: inspector || null,
+    commentText: commentText || null,
+  };
+}
+
 async function collectFilesRecursive(dir, accept) {
   const files = [];
   const seen = new Set();
@@ -95,13 +127,23 @@ async function collectFilesRecursive(dir, accept) {
 /** List inspection folders + up to 5 recent photos + report PDF URL */
 async function listInspections(siteName, stationId, perPhotos = 5) {
   try {
+    // Pull global keywords from lookups.xlsx ("Inspection History Keywords" sheet).
+    // If the sheet exists but is empty -> match nothing.
+    // If the sheet is missing -> backend returns ['inspection'] by default.
+    let keywords = [];
+    try {
+      keywords = await lookups.getInspectionKeywords();
+    } catch (_) {
+      keywords = ['inspection'];
+    }
+
     const { stationDir: stnDir } = await app.resolvePhotosBaseAndStationDir(siteName, stationId);
     if (!stnDir) return [];
 
     let entries = [];
     try { entries = await fsp.readdir(stnDir, { withFileTypes: true }); } catch (_) {}
     const folders = entries
-      .filter(e => e.isDirectory() && containsInspectionWord(e.name))
+      .filter(e => e.isDirectory() && containsInspectionWordFromList(e.name, keywords))
       .map(e => e.name);
 
     const out = [];
@@ -129,6 +171,18 @@ async function listInspections(siteName, stationId, perPhotos = 5) {
       // Date to show (from folder name only)
       const dateHuman = parsedDate ? parsedDate.human : '';
 
+      // NEW: read comment.txt if present
+      let inspector = null, commentText = null;
+      try {
+        const cpath = path.join(full, 'comment.txt');
+        const raw = await fsp.readFile(cpath, 'utf-8');
+        const parsed = parseCommentTxt(raw);
+        inspector   = parsed.inspector;
+        commentText = parsed.commentText;
+      } catch (_) {
+        // no comment.txt or unreadable; silently ignore
+      }
+
       out.push({
         folderName,
         fullPath: full,
@@ -137,7 +191,10 @@ async function listInspections(siteName, stationId, perPhotos = 5) {
         dateMs,
         photos,
         moreCount,
-        reportUrl: rep ? toFileUrl(rep.path) : null
+        reportUrl: rep ? toFileUrl(rep.path) : null,
+        inspector: inspector || null,
+        commentText: commentText || null,
+        hasComment: Boolean((inspector && inspector.trim()) || (commentText && commentText.trim())),
       });
     }
 

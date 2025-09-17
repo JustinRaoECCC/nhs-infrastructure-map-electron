@@ -107,7 +107,8 @@
     applyStatusColorsOnMap: false,
     applyRepairColorsOnMap: false,
     statusChanged: new Set(), // lowercased keys that changed color/label
-    togglesChanged: new Set() // 'applyStatus','applyRepair'
+    togglesChanged: new Set(), // 'applyStatus','applyRepair'
+    statusTimer: null          // timer for auto-clearing the "Saved changes" message
   };
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -293,14 +294,22 @@
     // Check if Photo Links tab has changes
     const linkHasChanges = window.linkSettings && window.linkSettings.hasChanges();
 
+    // Always report "Saved changes" even if nothing changed
     if (!entries.length && !statusChanged.length && state.togglesChanged.size === 0 && !linkHasChanges) {
-      if (status) status.textContent = 'No changes.';
+      if (status) {
+        status.textContent = 'Saved changes';
+        // auto-clear after 3s
+        if (state.statusTimer) clearTimeout(state.statusTimer);
+        state.statusTimer = setTimeout(() => {
+          if (status) status.textContent = '';
+          state.statusTimer = null;
+        }, 3000);
+      }
       return;
     }
 
     saveBtn.disabled = true;
     if (cancelBtn) cancelBtn.disabled = true;
-    if (status) status.textContent = 'Saving…';
 
     let ok = 0, fail = 0;
 
@@ -369,7 +378,22 @@
     if (typeof window.refreshMarkers === 'function') setTimeout(window.refreshMarkers, 0);
     if (typeof window.renderList === 'function') setTimeout(window.renderList, 0);
 
-    if (status) status.textContent = fail ? `Saved ${ok}, ${fail} failed.` : `Saved ${ok} change${ok === 1 ? '' : 's'}.`;
+    // Only deviate from the message when failures occur.
+    // On success, auto-clear "Saved changes" after 3 seconds.
+    if (status) {
+      if (fail) {
+        status.textContent = `Saved ${ok}, ${fail} failed.`;
+        // Do NOT auto-clear failures.
+        if (state.statusTimer) { clearTimeout(state.statusTimer); state.statusTimer = null; }
+      } else {
+        status.textContent = 'Saved changes';
+        if (state.statusTimer) clearTimeout(state.statusTimer);
+        state.statusTimer = setTimeout(() => {
+          if (status) status.textContent = '';
+          state.statusTimer = null;
+        }, 3000);
+      }
+    }
     saveBtn.disabled = false;
     if (cancelBtn) cancelBtn.disabled = false;
     if (!fail) {
@@ -383,6 +407,16 @@
   async function loadAndRender(root) {
     const tbody = root.querySelector('#mapPinTbody');
     if (!tbody) return;
+
+    // Reset save status/counter display whenever Settings is (re)opened/reloaded
+    const statusEl = root.querySelector('#settingsSaveStatus');
+    if (statusEl) statusEl.textContent = '';
+
+    // Clear transient change-tracking state on (re)open
+    state.changes.clear();
+    state.statusChanged.clear();
+    state.deletedStatusKeys.clear();
+    state.togglesChanged.clear();
 
     // Load lookups for main table
     const lookups = await getLookupTreeSafe();
@@ -402,7 +436,6 @@
     });
 
     state.rows = rows;
-    state.changes.clear();
     renderRows(tbody);
     bindColorInputs(tbody);
 
