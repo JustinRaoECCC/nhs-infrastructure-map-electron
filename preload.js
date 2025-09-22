@@ -115,6 +115,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPhotosBase: (ctx) => ipcRenderer.invoke('getPhotosBase', ctx),
 
   browseForFolder: () => ipcRenderer.invoke('browseForFolder'),
+
+
+  // Excel import
+  importRepairsExcel: (b64) => ipcRenderer.invoke('excel:importRepairsExcel', b64),
+  // Algorithm parameters
+  getAlgorithmParameters: () => ipcRenderer.invoke('excel:getAlgorithmParameters'),
+  saveAlgorithmParameters: (rows) => ipcRenderer.invoke('excel:saveAlgorithmParameters', rows),
+  getWorkplanConstants: () => ipcRenderer.invoke('excel:getWorkplanConstants'),
+  saveWorkplanConstants: (rows) => ipcRenderer.invoke('excel:saveWorkplanConstants', rows),
+  getCustomWeights: () => ipcRenderer.invoke('excel:getCustomWeights'),
+  addCustomWeight: (weight, active=true) => ipcRenderer.invoke('excel:addCustomWeight', weight, !!active),
+  // Optimization I / II
+  optimizeWorkplan: (payload) => ipcRenderer.invoke('algo:optimizeWorkplan', payload),
+  runGeographicalAlgorithm: (payload) => ipcRenderer.invoke('algo:runGeographical', payload),
 });
 
 // --- BEGIN: appAlert (custom modal replacement for window.alert) ---

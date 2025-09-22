@@ -44,6 +44,10 @@ const REPAIRS_HEADERS = [
   'Category',
   'Type'         // rightmost
 ];
+// ─── New sheet names ───────────────────────────────────────────────────────
+const ALG_PARAMS_SHEET       = 'Algorithm Parameters';
+const WORKPLAN_CONST_SHEET   = 'Workplan Constants';
+const CUSTOM_WEIGHTS_SHEET   = 'Custom Weights';
 
 // ─── Ensure workbook exists with canonical sheets ─────────────────────────
 async function ensureLookupsReady() {
@@ -1542,6 +1546,133 @@ async function applySchemaToRow(worksheet, row, rowNumber, schema, twoRowHeader)
   }
 }
 
+// ─── Algorithm Parameters (read/write) ─────────────────────────────────────
+async function getAlgorithmParameters() {
+  await ensureLookupsReady();
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(LOOKUPS_PATH);
+  const ws = getSheet(wb, ALG_PARAMS_SHEET);
+  const out = [];
+  if (!ws) return out;
+  ws.eachRow({ includeEmpty:false }, (row, i) => {
+    if (i === 1) return;
+    const applies  = normStr(row.getCell(1)?.text);
+    const param    = normStr(row.getCell(2)?.text);
+    const cond     = normStr(row.getCell(3)?.text) || 'IF';
+    const maxW     = parseInt(normStr(row.getCell(4)?.text) || '1', 10) || 1;
+    const option   = normStr(row.getCell(5)?.text);
+    const weight   = parseFloat(normStr(row.getCell(6)?.text) || '0') || 0;
+    const selected = toBool(row.getCell(7)?.text);
+    if (!param) return;
+    out.push({
+      applies_to: applies,
+      parameter:  param,
+      condition:  cond,
+      max_weight: maxW,
+      option,
+      weight,
+      selected
+    });
+  });
+  return out;
+}
+
+async function saveAlgorithmParameters(rows = []) {
+  await ensureLookupsReady();
+  const list = Array.isArray(rows) ? rows : [];
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(LOOKUPS_PATH);
+  const existing = getSheet(wb, ALG_PARAMS_SHEET);
+  if (existing) wb.removeWorksheet(existing.id);
+  const ws = wb.addWorksheet(ALG_PARAMS_SHEET);
+  ws.addRow(['Applies To','Parameter','Condition','MaxWeight','Option','Weight','Selected']);
+  for (const r of list) {
+    ws.addRow([
+      normStr(r.applies_to),
+      normStr(r.parameter),
+      normStr(r.condition || 'IF'),
+      parseInt(r.max_weight ?? 1, 10) || 1,
+      normStr(r.option),
+      r.weight ?? 0,
+      (r.selected ? 'TRUE' : '')
+    ]);
+  }
+  await wb.xlsx.writeFile(LOOKUPS_PATH);
+  return { success:true, count: list.length };
+}
+
+// ─── Workplan Constants (read/write) ───────────────────────────────────────
+async function getWorkplanConstants() {
+  await ensureLookupsReady();
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(LOOKUPS_PATH);
+  const ws = getSheet(wb, WORKPLAN_CONST_SHEET);
+  const out = [];
+  if (!ws) return out;
+  ws.eachRow({ includeEmpty:false }, (row, i) => {
+    if (i === 1) return;
+    out.push({ field: normStr(row.getCell(1)?.text), value: normStr(row.getCell(2)?.text) });
+  });
+  return out;
+}
+
+async function saveWorkplanConstants(rows = []) {
+  await ensureLookupsReady();
+  const list = Array.isArray(rows) ? rows : [];
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(LOOKUPS_PATH);
+  const existing = getSheet(wb, WORKPLAN_CONST_SHEET);
+  if (existing) wb.removeWorksheet(existing.id);
+  const ws = wb.addWorksheet(WORKPLAN_CONST_SHEET);
+  ws.addRow(['Field','Value']);
+  for (const r of list) ws.addRow([normStr(r.field), normStr(r.value)]);
+  await wb.xlsx.writeFile(LOOKUPS_PATH);
+  return { success:true, count: list.length };
+}
+
+// ─── Custom Weights (read/upsert) ──────────────────────────────────────────
+async function getCustomWeights() {
+  await ensureLookupsReady();
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(LOOKUPS_PATH);
+  const ws = getSheet(wb, CUSTOM_WEIGHTS_SHEET);
+  const out = [];
+  if (!ws) return out;
+  ws.eachRow({ includeEmpty:false }, (row, i) => {
+    if (i === 1) return;
+    const w = normStr(row.getCell(1)?.text);
+    const active = toBool(row.getCell(2)?.text);
+    if (w && (active || row.getCell(2)?.text === undefined)) out.push({ weight: w, active: !!active });
+  });
+  return out;
+}
+
+async function addCustomWeight(weight, active = true) {
+  await ensureLookupsReady();
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(LOOKUPS_PATH);
+  const ws = getSheet(wb, CUSTOM_WEIGHTS_SHEET) || wb.addWorksheet(CUSTOM_WEIGHTS_SHEET);
+  if (ws.rowCount === 0) ws.addRow(['weight','active']);
+  const tgt = lc(weight);
+  let found = false;
+  ws.eachRow({ includeEmpty:false }, (row, i) => {
+    if (i === 1) return;
+    if (lc(row.getCell(1)?.text) === tgt) {
+      row.getCell(2).value = active ? 'TRUE' : '';
+      found = true;
+    }
+  });
+  if (!found) ws.addRow([normStr(weight), active ? 'TRUE' : '']);
+  await wb.xlsx.writeFile(LOOKUPS_PATH);
+  return { success:true };
+}
+
 // ─── RPC shim ─────────────────────────────────────────────────────────────
 const handlers = {
   ping: async () => 'pong',
@@ -1568,7 +1699,14 @@ const handlers = {
   setLocationLink,
   setAssetTypeLink,
   appendRepair,
-  setInspectionKeywords
+  setInspectionKeywords,
+  // NEW dashboard RPCs
+  getAlgorithmParameters,
+  saveAlgorithmParameters,
+  getWorkplanConstants,
+  saveWorkplanConstants,
+  getCustomWeights,
+  addCustomWeight
 };
 
 parentPort.on('message', async (msg) => {

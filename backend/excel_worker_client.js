@@ -83,4 +83,11 @@ module.exports = {
   // NEW: Inspection keywords (global list stored in lookups.xlsx)
   setInspectionKeywords: (keywords) =>
     call('setInspectionKeywords', Array.isArray(keywords) ? keywords : []),
+  // NEW: Algorithm/Workplan
+  getAlgorithmParameters: () => call('getAlgorithmParameters'),
+  saveAlgorithmParameters: (rows) => call('saveAlgorithmParameters', rows),
+  getWorkplanConstants: () => call('getWorkplanConstants'),
+  saveWorkplanConstants: (rows) => call('saveWorkplanConstants', rows),
+  getCustomWeights: () => call('getCustomWeights'),
+  addCustomWeight: (weight, active) => call('addCustomWeight', weight, !!active),
 };

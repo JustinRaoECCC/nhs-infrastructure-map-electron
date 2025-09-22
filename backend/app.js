@@ -720,6 +720,96 @@ async function appendRepair(payload = {}) {
   return await excel.appendRepair(company, location, repair);
 }
 
+// ─── Dashboard: Optimization I (weighted scoring) ─────────────────────────
+function normalizeCell(v) {
+  if (v == null) return 0;
+  const s = String(v).trim();
+  if (!s) return 0;
+  // percent like "75%" → 0.75
+  const mPct = s.match(/^(-?\d+(?:\.\d+)?)\s*%$/);
+  if (mPct) return Math.max(0, parseFloat(mPct[1]) / 100);
+  // range "2-4" -> average (assume out of 10 => normalize 0..1)
+  const mRange = s.match(/^(-?\d+(?:\.\d+)?)\s*[-–]\s*(-?\d+(?:\.\d+)?)$/);
+  if (mRange) {
+    const avg = (parseFloat(mRange[1]) + parseFloat(mRange[2])) / 2;
+    return isFinite(avg) ? Math.max(0, Math.min(1, avg / 100)) : 0;
+  }
+  // comparator "<2" or ">5" → numeric
+  const mComp = s.match(/^[<>]=?\s*(-?\d+(?:\.\d+)?)$/);
+  if (mComp) { const val = parseFloat(mComp[1]); return isFinite(val) ? Math.max(0, Math.min(1, val / 100)) : 0; }
+  // yes/no
+  if (/^(yes|true|y)$/i.test(s)) return 1;
+  if (/^(no|false|n)$/i.test(s)) return 0;
+  // plain number: assume 0..100 scale unless 0..1
+  const num = parseFloat(s);
+  if (isFinite(num)) return num <= 1 ? Math.max(0, num) : Math.max(0, Math.min(1, num/100));
+  return 0;
+}
+
+async function optimizeWorkplan(payload = {}) {
+  const rows = Array.isArray(payload.workplan_rows) ? payload.workplan_rows : [];
+  const overall = payload.param_overall || {};
+  const weights = Object.entries(overall).filter(([,v]) => isFinite(v) && v>0);
+  const total = weights.reduce((s, [,v]) => s + (v||0), 0) || 1;
+  const normW = new Map(weights.map(([k,v]) => [k, (v||0)/total]));
+  const ranking = rows.map(r => {
+    let score = 0;
+    for (const [p, w] of normW.entries()) {
+      const v = normalizeCell(r[p]);
+      score += w * v;
+    }
+    return {
+      station_number: r['Station Number'] || r['Station ID'] || '',
+      operation: r['Operation'] || r['Repair Name'] || '',
+      score: Math.round(score * 1000) / 10  // 1 decimal percent
+    };
+  }).sort((a,b) => b.score - a.score);
+  return { ranking };
+}
+
+// ─── Dashboard: Optimization II (very simple trip chunker + nearest-neighbor) ─
+async function runGeographicalAlgorithm({ items = [] } = {}) {
+  const stations = await getStationData({ skipColors: true });
+  const byId = new Map(stations.map(s => [String(s.station_id).trim(), s]));
+  const nodes = items
+    .map(x => {
+      const s = byId.get(String(x.station_id).trim());
+      const lat = parseFloat(s?.lat), lon = parseFloat(s?.lon);
+      if (!isFinite(lat) || !isFinite(lon)) return null;
+      return { station_id: x.station_id, operation: x.operation, score: x.score||0, days: Math.max(1, Math.ceil(x.days||1)), lat, lon };
+    }).filter(Boolean);
+  if (!nodes.length) return { success:false, message:'No geolocated items to plan.' };
+
+  // greedy nearest-neighbor ordering
+  function dist(a,b){ const dx=a.lat-b.lat, dy=a.lon-b.lon; return Math.hypot(dx,dy); }
+  const pool = nodes.slice(); const ordered = [];
+  let cur = pool.shift(); if (!cur) return { success:false, message:'No items.' };
+  ordered.push(cur);
+  while (pool.length) {
+    let bestIdx = 0, bestD = Infinity;
+    for (let i=0;i<pool.length;i++) {
+      const d = dist(cur, pool[i]); if (d < bestD) { bestD = d; bestIdx = i; }
+    }
+    cur = pool.splice(bestIdx,1)[0];
+    ordered.push(cur);
+  }
+
+  // chunk into trips of ~10 days
+  const trips=[]; let t=1, day=1, cap=10, curTrip=null, driveCount=0;
+  const startTrip = () => { curTrip = { trip_name:`Trip ${t}`, days:0, count:0, drive_count:0, helicopter_count:0, schedule:[] }; trips.push(curTrip); t++; day=1; };
+  startTrip();
+  for (const n of ordered) {
+    if (curTrip.days + n.days > cap) startTrip();
+    for (let d=0; d<n.days; d++) {
+      curTrip.schedule.push({ day: day, station_id: n.station_id, operation: n.operation, score: n.score, mode: 'drive' });
+      day++;
+    }
+    curTrip.days += n.days; curTrip.count += 1; curTrip.drive_count += 1;
+  }
+  const totals = { trip_count: trips.length, planned: ordered.length, unplanned: 0 };
+  return { success:true, plan_name:'Geographical Plan', trips, totals, unplanned: [] };
+}
+
 module.exports = {
   getStationData,
   getActiveCompanies,
@@ -749,4 +839,14 @@ module.exports = {
   updateStationData,
   // repairs
   appendRepair,
+  // dashboard algos
+  optimizeWorkplan,
+  runGeographicalAlgorithm, 
+  // algorithm/workplan & weights
+  getAlgorithmParameters: () => excel.getAlgorithmParameters(),
+  saveAlgorithmParameters: (rows) => excel.saveAlgorithmParameters(rows),
+  getWorkplanConstants: () => excel.getWorkplanConstants(),
+  saveWorkplanConstants: (rows) => excel.saveWorkplanConstants(rows),
+  getCustomWeights: () => excel.getCustomWeights(),
+  addCustomWeight: (w, a) => excel.addCustomWeight(w, !!a),
 };

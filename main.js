@@ -7,7 +7,6 @@ const backend     = require('./backend/app');
 const lookups     = require('./backend/lookups_repo');
 const excelClient = require('./backend/excel_worker_client');
 const nukeBackend = require('./backend/nuke');
-const dataApi = require('./backend/data_manager');
 const inspectionHistory = require('./backend/inspection_history');
 const repairsBackend = require('./backend/repairs');
 
@@ -305,3 +304,36 @@ ipcMain.handle('browseForFolder', async () => {
   }
   return null;
 });
+
+// ─── IPC: Dashboard data + Excel helpers ───────────────────────────────────
+ipcMain.handle('app:getStationData', async () => backend.getStationData({}));
+
+ipcMain.handle('excel:importRepairsExcel', async (_e, b64) => {
+  // first sheet rows
+  return await excelClient.parseRows(b64);
+});
+
+// Algorithm Parameters / Constants / Custom Weights
+// ─── Excel/dashboard IPC (new) ─────────────────────────────────────────────
+ipcMain.handle('excel:getAlgorithmParameters', async () =>
+  backend.getAlgorithmParameters()
+);
+ipcMain.handle('excel:saveAlgorithmParameters', async (_e, rows) =>
+  backend.saveAlgorithmParameters(rows)
+);
+ipcMain.handle('excel:getWorkplanConstants', async () =>
+  backend.getWorkplanConstants()
+);
+ipcMain.handle('excel:saveWorkplanConstants', async (_e, rows) =>
+  backend.saveWorkplanConstants(rows)
+);
+ipcMain.handle('excel:getCustomWeights', async () =>
+  backend.getCustomWeights()
+);
+ipcMain.handle('excel:addCustomWeight', async (_e, weight, active) =>
+  backend.addCustomWeight(weight, active)
+);
+
+// Optimization I / II
+ipcMain.handle('algo:optimizeWorkplan', async (_e, payload) => await backend.optimizeWorkplan(payload));
+ipcMain.handle('algo:runGeographical', async (_e, payload) => await backend.runGeographicalAlgorithm(payload));
