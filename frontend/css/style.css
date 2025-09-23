@@ -2952,23 +2952,13 @@ html.modal-open, body.modal-open { overflow: hidden; }
 /* Container background & soft gradient header halo */
 .stats-view {
   color: var(--stats-text);
-  background: var(--stats-bg);
+  background: var(--bg);
   padding: 16px;
   border-radius: var(--stats-radius-lg);
   position: relative;
   isolation: isolate;
 }
-.stats-view::before {
-  content: "";
-  position: absolute;
-  inset: -40px -40px auto -40px;
-  height: 220px;
-  z-index: -1;
-  background:
-    radial-gradient(1200px 240px at 10% -20%, rgba(37,99,235,.15), transparent 60%),
-    radial-gradient(900px 220px at 90% -30%, rgba(14,165,233,.18), transparent 60%);
-  pointer-events: none;
-}
+.stats-view::before { content: none; }
 
 /* Header */
 .stats-view .stats-header {
