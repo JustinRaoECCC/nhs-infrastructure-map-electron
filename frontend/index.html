@@ -37,7 +37,8 @@
             <ul class="nav-list">
               <li class="nav-item active" id="navMap">🗺️ <span>Map View</span></li>
               <li class="nav-item" id="navList">📋 <span>List View</span></li>
-              <li class="nav-item" id="navDash">📄 <span>Dashboard</span></li>
+              <li class="nav-item" id="navDash">📊 <span>Dashboard</span></li>
+              <li class="nav-item" id="navOpt">📄 <span>Optimization</span></li>
             </ul>
           </div>
 
@@ -72,8 +73,11 @@
         <!-- List View (content loaded from list.html) -->
         <div id="listContainer" class="list-container" style="display:none;"></div>
 
-        <!-- Dashboard View -->
+        <!-- Optimization View -->
         <div id="dashboardContentContainer" class="view" style="display:none;"></div>
+
+        <!-- Dashboard View (content loaded from dashboard.html) -->
+        <div id="statisticsContainer" class="view" style="display:none;"></div>
 
         <!-- Station Detail View (content loaded from station_specific.html) -->
         <div id="stationContentContainer" style="display:none;"></div>
@@ -117,6 +121,7 @@
   <script defer src="js/map_view.js"></script>
   <script defer src="js/list_view.js"></script>
   <script defer src="js/add_infra.js"></script>
+  <script defer src="js/optimization.js"></script>
   <script defer src="js/dashboard.js"></script>
   <script defer src="js/inspection_history.js"></script>
   <script defer src="js/station.js"></script>

@@ -1,583 +1,511 @@
 // frontend/js/dashboard.js
-document.addEventListener('DOMContentLoaded', () => {
+(function () {
+  'use strict';
 
-  const dashPlaceholder    = document.getElementById('dashboardContentContainer');
-  const mapContainer       = document.getElementById('mapContainer');
-  const rightPanel         = document.getElementById('rightPanel');
-  const stationPlaceholder = document.getElementById('stationContentContainer');
+  // ---- Helpers -------------------------------------------------------------
 
-  // optional left-nav hook (if your nav has an item with this id)
-  const navDash = document.getElementById('navDash');
-  if (navDash && !navDash._wired) {
-    navDash.addEventListener('click', (e) => {
-      e.preventDefault();
-      showDashboard();
-    });
-    navDash._wired = true;
-  }
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+  const hasStatsDOM = () => !!document.getElementById('statisticsPage');
 
-  // Utilities
-  function resetOptimizationViews() {
-    if (!dashPlaceholder || !dashPlaceholder.innerHTML.trim()) return;
-    const optRoot  = dashPlaceholder.querySelector('#optimization');
-    const optPane  = optRoot && (optRoot.querySelector('.opt-container') || optRoot);
-    const opt2Pane = dashPlaceholder.querySelector('#optimization2 .opt2-container')
-                   || dashPlaceholder.querySelector('#optimization2');
-    const optBtn = dashPlaceholder.querySelector('#optimizeBtn');
-    const geoBtn = dashPlaceholder.querySelector('#optimizeGeoBtn');
-    const hero   = dashPlaceholder.querySelector('#optimization2 .opt2-hero');
-    if (optBtn) optBtn.style.display = '';
-    if (geoBtn) geoBtn.style.display = '';
-    if (hero) hero.style.display = '';
-    if (optPane)  optPane.querySelectorAll('pre, ol, table.opt-table').forEach(el => el.remove());
-    if (opt2Pane) opt2Pane.innerHTML = '';
-  }
-
-  async function showDashboard() {
-    // hide map/right/station, show our docs area
-    if (mapContainer)       mapContainer.style.display = 'none';
-    if (rightPanel)         rightPanel.style.display   = 'none';
-    if (stationPlaceholder) stationPlaceholder.style.display = 'none';
-    const filtersPanel = document.querySelector('.left-panel');
-    if (filtersPanel) filtersPanel.style.display = '';
-
-    // lazy inject HTML once
-    if (!dashPlaceholder.innerHTML.trim()) {
-      const html = await fetch('dashboard.html').then(r => r.text());
-      dashPlaceholder.innerHTML = html;
-      await initDashboardUI();
+  const getFieldValue = (row, fieldName) => {
+    // Finds "Inspection Frequency" or any "Section – Inspection Frequency" etc., case-insensitive
+    const target = String(fieldName).toLowerCase();
+    for (const k of Object.keys(row || {})) {
+      if (!k) continue;
+      if (String(k).toLowerCase() === target) return row[k];
     }
-    dashPlaceholder.style.display = 'block';
-    resetOptimizationViews();
+    for (const k of Object.keys(row || {})) {
+      if (k.includes(' – ')) {
+        const parts = k.split(' – ');
+        const last = parts[parts.length - 1];
+        if (String(last).toLowerCase() === target) return row[k];
+      }
+    }
+    return '';
+  };
+
+  const normStr = (s) => String(s ?? '').trim();
+  const stationLocation = (s) => normStr(s.province || s.location || s.location_file);
+  const stationAssetType = (s) => normStr(s.asset_type);
+
+  // Haversine distance in km
+  function haversineKm(lat1, lon1, lat2, lon2) {
+    const toRad = (d) => (d * Math.PI) / 180;
+    const R = 6371;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(a));
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  async function initDashboardUI() {
-    const tabs               = document.querySelectorAll('.dashboard-tab');
-    const contents           = document.querySelectorAll('.dashboard-content');
-    const paramContainer     = document.querySelector('#paramContainer');
-    const statsDiv           = document.querySelector('#paramStats');
-    const addBtn             = document.querySelector('#addParamBtn');
-    const saveParamsBtn      = document.querySelector('#saveParamsBtn');
-    const addParamModal      = document.querySelector('#addParamModal');
-    const closeModalBtn      = document.querySelector('#closeAddParamModal');
-    const cancelParamBtn     = document.querySelector('#cancelParamBtn');
-    const saveParamBtn       = document.querySelector('#saveParamBtn');
-    const paramNameInput     = document.querySelector('#paramNameInput');
-    const paramConditionSel  = document.querySelector('#paramConditionSelect');
-    const paramMaxWeightInp  = document.querySelector('#paramMaxWeight');
-    const addOptionBtn       = document.querySelector('#addOptionBtn');
-    const optionsList        = document.querySelector('#optionsList');
-    const paramAssetFilter   = document.querySelector('#paramAssetFilter');
+  // Basic, dependency-free bar chart
+  function renderBarChart(container, dataPairs, opts = {}) {
+    // dataPairs: [{ label, value }]
+    container.innerHTML = '';
+    const width = Math.max(320, container.clientWidth || 600);
+    const height = opts.height || 240;
+    const padL = 40, padR = 12, padT = 10, padB = 28;
 
-    // tabs
-    tabs.forEach(tab => {
-      tab.addEventListener('click', async () => {
-        tabs.forEach(t => t.classList.remove('active'));
-        contents.forEach(c => c.classList.remove('active'));
-        tab.classList.add('active');
-        document.getElementById(tab.dataset.target).classList.add('active');
-        if (tab.dataset.target === 'workplan') await loadWorkplan();
-      });
+    const W = width, H = height;
+    const plotW = W - padL - padR;
+    const plotH = H - padT - padB;
+
+    const maxVal = Math.max(1, ...dataPairs.map(d => +d.value || 0));
+    const barGap = 8;
+    const n = dataPairs.length || 1;
+    const barW = Math.max(6, (plotW - (n - 1) * barGap) / n);
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', W);
+    svg.setAttribute('height', H);
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', esc(opts.ariaLabel || 'Bar chart'));
+
+    // Y axis line
+    const yAxis = document.createElementNS(svg.namespaceURI, 'line');
+    yAxis.setAttribute('x1', padL);
+    yAxis.setAttribute('x2', padL);
+    yAxis.setAttribute('y1', padT);
+    yAxis.setAttribute('y2', padT + plotH);
+    yAxis.setAttribute('stroke', 'currentColor');
+    yAxis.setAttribute('stroke-opacity', '0.35');
+    svg.appendChild(yAxis);
+
+    // Bars + labels
+    dataPairs.forEach((d, i) => {
+      const v = (+d.value || 0);
+      const h = Math.round((v / maxVal) * plotH);
+      const x = padL + i * (barW + barGap);
+      const y = padT + (plotH - h);
+
+      const rect = document.createElementNS(svg.namespaceURI, 'rect');
+      rect.setAttribute('x', x);
+      rect.setAttribute('y', y);
+      rect.setAttribute('width', barW);
+      rect.setAttribute('height', h);
+      rect.setAttribute('fill', 'currentColor');
+      rect.setAttribute('fill-opacity', '0.8');
+      svg.appendChild(rect);
+
+      // Value label
+      const tv = document.createElementNS(svg.namespaceURI, 'text');
+      tv.setAttribute('x', x + barW / 2);
+      tv.setAttribute('y', y - 4);
+      tv.setAttribute('text-anchor', 'middle');
+      tv.setAttribute('font-size', '10');
+      tv.textContent = String(v);
+      svg.appendChild(tv);
+
+      // X labels (rotate if long)
+      const tl = document.createElementNS(svg.namespaceURI, 'text');
+      tl.setAttribute('x', x + barW / 2);
+      tl.setAttribute('y', padT + plotH + 14);
+      tl.setAttribute('text-anchor', 'end');
+      tl.setAttribute('transform', `rotate(-30, ${x + barW / 2}, ${padT + plotH + 14})`);
+      tl.setAttribute('font-size', '10');
+      tl.textContent = String(d.label);
+      svg.appendChild(tl);
     });
 
-    // ─── Helpers
-    function recalcPercentageTotal() {
-      const all = document.querySelectorAll('.param-percentage');
-      let sum = 0; all.forEach(inp => sum += parseInt(inp.value,10) || 0);
-      const el = document.getElementById('percentageTotal');
-      if (!el) return;
-      el.textContent = sum;
-      el.style.color = sum === 100 ? '' : 'red';
+    container.appendChild(svg);
+  }
+
+  // ---- State ---------------------------------------------------------------
+
+  const state = {
+    allStations: [],
+    filteredStations: [],
+    lookupTree: null,
+    cards: [],
+    initialized: false
+  };
+
+  // ---- Filters integration (Analytics only) --------------------------------
+
+  function readActiveFilters() {
+    const tree = $('#filterTree');
+    if (!tree) return { locations: null, assetsByLocation: new Map() };
+
+    // Selected locations
+    const locCbs = $$('input.location', tree);
+    const checkedLocs = new Set(locCbs.filter(cb => cb.checked).map(cb => cb.value));
+
+    // Selected asset types per location (only if not all are selected)
+    const assetsByLoc = new Map();
+    const locMap = new Map(); // quick map of location -> all asset type checkboxes under it
+    $$('.ft-location', tree).forEach(locDetails => {
+      const locCb = $('input.location', locDetails);
+      if (!locCb) return;
+      const atCbs = $$('input.asset-type', locDetails);
+      locMap.set(locCb.value, atCbs);
+    });
+
+    for (const [loc, atCbs] of locMap.entries()) {
+      if (!checkedLocs.has(loc)) continue;
+      const checked = atCbs.filter(cb => cb.checked).map(cb => cb.value);
+      if (checked.length && checked.length !== atCbs.length) {
+        assetsByLoc.set(loc, new Set(checked));
+      }
     }
-    function makeDisplayRow({ applies_to, parameter, condition, max_weight, options }) {
+
+    return { locations: checkedLocs, assetsByLocation: assetsByLoc };
+  }
+
+  function applyAnalyticsFilters() {
+    const { locations, assetsByLocation } = readActiveFilters();
+
+    if (!locations || locations.size === 0) {
+      state.filteredStations = [];
+      return;
+    }
+
+    const matches = (s) => {
+      const loc = stationLocation(s);
+      if (!loc || !locations.has(loc)) return false;
+      const set = assetsByLocation.get(loc);
+      if (!set || set.size === 0) return true; // no AT filter for this location
+      return set.has(stationAssetType(s));
+    };
+
+    state.filteredStations = state.allStations.filter(matches);
+  }
+
+  function onFiltersChanged() {
+    applyAnalyticsFilters();
+    // Re-render all analytics cards
+    state.cards.forEach(c => c.update());
+  }
+
+  // ---- Overview (unfiltered) -----------------------------------------------
+
+  function computeOverview() {
+    const all = state.allStations;
+
+    const byLoc = new Map();
+    const byCo  = new Map();
+
+    // Build location -> count
+    all.forEach(s => {
+      const loc = stationLocation(s);
+      if (!loc) return;
+      byLoc.set(loc, (byLoc.get(loc) || 0) + 1);
+    });
+
+    // Derive company counts from lookup tree: sum counts of their locations
+    const companies = (state.lookupTree?.companies || []);
+    const locsByCompany = state.lookupTree?.locationsByCompany || {};
+    companies.forEach(co => {
+      let sum = 0;
+      (locsByCompany[co] || []).forEach(loc => { sum += (byLoc.get(loc) || 0); });
+      // Even if a company has 0 (no stations yet), we still show it.
+      byCo.set(co, sum);
+    });
+
+    return {
+      totalStations: all.length,
+      totalLocations: byLoc.size,
+      totalCompanies: companies.length,
+      byLocation: Array.from(byLoc.entries()).sort((a,b)=>a[0].localeCompare(b[0])),
+      byCompany: Array.from(byCo.entries()).sort((a,b)=>a[0].localeCompare(b[0]))
+    };
+  }
+
+  function renderOverview() {
+    const ov = computeOverview();
+    $('#ovTotalStations').textContent = String(ov.totalStations);
+    $('#ovTotalLocations').textContent = String(ov.totalLocations);
+    $('#ovTotalCompanies').textContent = String(ov.totalCompanies);
+
+    const locWrap = $('#ovByLocation');
+    locWrap.innerHTML = '';
+    ov.byLocation.forEach(([loc, n]) => {
       const row = document.createElement('div');
-      row.className = 'param-row';
-      row.dataset.appliesto = applies_to;
-      row.dataset.maxWeight = max_weight;
-      row.innerHTML = `
-        <input type="text" class="param-name" value="${parameter}" disabled />
-        <select class="param-condition" disabled>
-          <option value="${condition}" selected>${condition}</option>
-        </select>
-        <select class="param-options"></select>
-        <span class="param-weight-display"></span>
-        <input type="number" class="param-percentage" min="0" max="100" value="0"
-               style="width:60px; margin-left:0.5em;" title="Enter % (total should sum to 100)" />%
-        <button class="deleteParamBtn">×</button>
-      `;
-      const condSel = row.querySelector('.param-condition'); condSel.disabled = true;
-      ['IF'].forEach(optVal => {
-        const opt = document.createElement('option'); opt.value = opt.textContent = optVal;
-        if (optVal === condition) opt.selected = true; condSel.appendChild(opt);
-      });
-      const optSel = row.querySelector('.param-options');
-      const weightDisplay = row.querySelector('.param-weight-display');
-      options.forEach(o => {
-        const opt = document.createElement('option');
-        opt.value = o.weight; opt.textContent = o.label;
-        if (o.selected) { opt.selected = true; weightDisplay.textContent = o.weight; }
-        optSel.appendChild(opt);
-      });
-      if (!options.some(o=>o.selected) && options.length) {
-        optSel.selectedIndex = 0; weightDisplay.textContent = options[0].weight;
-      }
-      optSel.addEventListener('change', () => { weightDisplay.textContent = optSel.value; });
-      row.querySelector('.param-percentage').addEventListener('input', recalcPercentageTotal);
-      row.querySelector('.deleteParamBtn').addEventListener('click', () => row.remove());
-      return row;
-    }
+      row.className = 'kv';
+      row.innerHTML = `<div class="k">Total ${esc(loc)}</div><div class="v">${n}</div>`;
+      locWrap.appendChild(row);
+    });
 
-    function makeOptionRow(label = '', weight = 1) {
+    const coWrap = $('#ovByCompany');
+    coWrap.innerHTML = '';
+    ov.byCompany.forEach(([co, n]) => {
       const row = document.createElement('div');
-      row.className = 'option-row';
-      row.style = 'display:flex; align-items:center; margin-top:0.5em;';
-      row.innerHTML = `
-        <input type="text" class="option-name" placeholder="Option label"
-               style="flex:1; margin-right:0.5em;" />
-        <select class="option-weight" style="width:5em; margin-right:0.5em;"></select>
-        <button class="deleteOptionBtn" style="color:red;">×</button>
-      `;
-      const weightSelect = row.querySelector('.option-weight');
-      function populateWeights(max = Math.max(1, parseInt(paramMaxWeightInp.value) || 1)) {
-        const prev = parseInt(weightSelect.value,10) || weight;
-        weightSelect.innerHTML = '';
-        for (let i=1; i<=max; i++) {
-          const opt = document.createElement('option');
-          opt.value = opt.textContent = i; weightSelect.appendChild(opt);
-        }
-        weightSelect.value = Math.min(prev, max);
-      }
-      paramMaxWeightInp.addEventListener('change', () => populateWeights());
-      populateWeights();
-      row.querySelector('.option-name').value = label;
-      row.querySelector('.deleteOptionBtn').addEventListener('click', () => row.remove());
-      return row;
-    }
-
-    // ===== Load existing parameters (from lookups.xlsx) =====
-    const existing = await window.electronAPI.getAlgorithmParameters();
-    statsDiv.innerHTML = ''; paramContainer.innerHTML = '';
-    const grouped = {};
-    (existing || []).forEach(e => {
-      const key = `${e.parameter}||${e.condition}`;
-      if (!grouped[key]) {
-        grouped[key] = {
-          applies_to: e.applies_to, parameter: e.parameter,
-          condition: e.condition, max_weight: e.max_weight, options: []
-        };
-      }
-      grouped[key].options.push({ label: e.option, weight: e.weight, selected: !!e.selected });
+      row.className = 'kv';
+      row.innerHTML = `<div class="k">Total ${esc(co)}</div><div class="v">${n}</div>`;
+      coWrap.appendChild(row);
     });
-    Object.values(grouped).forEach(grp => paramContainer.appendChild(makeDisplayRow(grp)));
-
-    // ===== Applies-To (clone filter tree if present) =====
-    function populateParamAssetFilter() {
-      paramAssetFilter.innerHTML = '';
-      const filterTree = document.getElementById('filterTree');
-      if (!filterTree) return;
-      filterTree.querySelectorAll('.filter-checkbox.asset-type').forEach(box => {
-        const cb = document.createElement('input');
-        cb.type='checkbox'; cb.checked = box.checked;
-        cb.dataset.company = box.dataset.company;
-        cb.dataset.location = box.dataset.location;
-        cb.dataset.assetType = box.value;
-        const lbl = document.createElement('label');
-        lbl.style.marginLeft = '0.3em';
-        lbl.textContent = `${box.dataset.company} → ${box.dataset.location} → ${box.value}`;
-        const row = document.createElement('div'); row.append(cb, lbl);
-        paramAssetFilter.appendChild(row);
-      });
-    }
-
-    // ===== Modal wiring =====
-    addOptionBtn.addEventListener('click', () => optionsList.appendChild(makeOptionRow()));
-    function closeAddParamModal(){ addParamModal.style.display='none'; }
-    addBtn.addEventListener('click', () => {
-      paramNameInput.value=''; paramConditionSel.value='IF'; paramMaxWeightInp.value='3';
-      optionsList.innerHTML=''; optionsList.appendChild(makeOptionRow());
-      populateParamAssetFilter();
-      addParamModal.style.display='flex';
-    });
-    closeModalBtn.addEventListener('click', closeAddParamModal);
-    cancelParamBtn.addEventListener('click', closeAddParamModal);
-    addParamModal.addEventListener('click', e => { if (e.target === addParamModal) closeAddParamModal(); });
-
-    // custom weight sub-modal
-    const btnOpenCustomWeightModal = document.getElementById('addCustomWeightBtn');
-    const customWeightModal        = document.getElementById('customWeightModal');
-    const closeCustomWeightModal   = document.getElementById('closeCustomWeightModal');
-    const cancelCustomWeight       = document.getElementById('cancelCustomWeight');
-    const confirmCustomWeight      = document.getElementById('confirmCustomWeight');
-    const selectCustomWeight       = document.getElementById('selectCustomWeight');
-    const inputNewCustomWeight     = document.getElementById('inputNewCustomWeight');
-    const btnSaveCustomWeight      = document.getElementById('btnSaveCustomWeight');
-
-    btnOpenCustomWeightModal.addEventListener('click', async () => {
-      selectCustomWeight.innerHTML = '<option value="">-- select weight --</option>';
-      const weights = await window.electronAPI.getCustomWeights();
-      (weights || []).forEach(w => {
-        const opt = document.createElement('option');
-        opt.value = opt.textContent = w.weight; selectCustomWeight.appendChild(opt);
-      });
-      inputNewCustomWeight.value = '';
-      customWeightModal.style.display = 'flex';
-    });
-    btnSaveCustomWeight.addEventListener('click', async () => {
-      const newWt = inputNewCustomWeight.value.trim();
-      if (!newWt) return alert('Please enter a custom weight.');
-      await window.electronAPI.addCustomWeight(newWt, true);
-      const opt = document.createElement('option'); opt.value = opt.textContent = newWt;
-      selectCustomWeight.appendChild(opt); selectCustomWeight.value = newWt;
-    });
-    confirmCustomWeight.addEventListener('click', () => {
-      const chosen = selectCustomWeight.value;
-      if (!chosen) return alert('Please select or add a custom weight.');
-      document.querySelectorAll('.option-weight').forEach(sel => {
-        if (![...sel.options].some(o => o.value === chosen)) {
-          const o = document.createElement('option'); o.value = o.textContent = chosen; sel.appendChild(o);
-        }
-        sel.value = chosen;
-      });
-      customWeightModal.style.display = 'none';
-    });
-    [closeCustomWeightModal, cancelCustomWeight].forEach(btn =>
-      btn.addEventListener('click', () => customWeightModal.style.display='none')
-    );
-    customWeightModal.addEventListener('click', e => { if (e.target === customWeightModal) customWeightModal.style.display='none'; });
-
-    // save new parameter rows
-    saveParamBtn.addEventListener('click', async () => {
-      const parameter = paramNameInput.value.trim();
-      const condition = paramConditionSel.value;
-      const maxWeight = parseInt(paramMaxWeightInp.value, 10) || 1;
-      const options = Array.from(optionsList.querySelectorAll('.option-row')).map(r => ({
-        label:  r.querySelector('.option-name').value.trim(),
-        weight: parseInt(r.querySelector('.option-weight').value, 10)
-      }));
-      const applies = Array.from(paramAssetFilter.querySelectorAll('input[type="checkbox"]:checked'))
-        .map(cb => ({ company: cb.dataset.company, location: cb.dataset.location, assetType: cb.dataset.assetType }));
-      const rows = [];
-      applies.forEach(a => {
-        options.forEach(o => {
-          rows.push({
-            applies_to:  `${a.company} → ${a.location} → ${a.assetType}`,
-            parameter, condition, max_weight: maxWeight, option: o.label, weight: o.weight
-          });
-        });
-      });
-      await window.electronAPI.saveAlgorithmParameters(rows, { append: true });
-      const applies_to_str = applies.map(a => `${a.company} → ${a.location} → ${a.assetType}`).join(', ');
-      paramContainer.appendChild(makeDisplayRow({
-        applies_to: applies_to_str, parameter, condition, max_weight: maxWeight, options
-      }));
-      await loadWorkplan();
-      await populateWorkplanFromImport();
-      closeAddParamModal();
-    });
-
-    // save edited parameter selections (Selected flag)
-    saveParamsBtn.addEventListener('click', async () => {
-      const toSave = Array.from(paramContainer.querySelectorAll('.param-row')).flatMap(r => {
-        const applies = r.dataset.appliesto;
-        const maxW    = parseInt(r.dataset.maxWeight, 10);
-        const param   = r.querySelector('.param-name').value.trim();
-        const cond    = r.querySelector('.param-condition').value;
-        return Array.from(r.querySelectorAll('.param-options option')).map(opt => ({
-          applies_to: applies, parameter: param, condition: cond,
-          max_weight: maxW, option: opt.textContent, weight: parseInt(opt.value,10), selected: opt.selected
-        }));
-      });
-      await window.electronAPI.saveAlgorithmParameters(toSave, { replace: true });
-      await loadWorkplan();
-      await populateWorkplanFromImport();
-      const total = toSave.reduce((s,p)=>s+(p.weight||0),0);
-      statsDiv.innerHTML = `<p><strong>Total weight:</strong> ${total}</p>`;
-    });
-
-    // ===== Workplan =====
-    const wpContainer        = dashPlaceholder.querySelector('#workplanContainer');
-    const constantsContainer = wpContainer.querySelector('#constantsContainer');
-    const saveWPBtn          = dashPlaceholder.querySelector('#saveWorkplanBtn');
-    const addConstBtn        = dashPlaceholder.querySelector('#addConstantBtn');
-
-    function makeConstantRow(field='', value='') {
-      const row = document.createElement('div');
-      row.className = 'const-row';
-      row.style = 'display:flex; align-items:center; gap:.5em; margin-bottom:.5em;';
-      const fld = document.createElement('input'); fld.type='text'; fld.className='const-field';
-      fld.value = field; fld.placeholder='Field'; fld.style = 'border:none; flex:1;';
-      const val = document.createElement('input'); val.type='text'; val.className='const-value';
-      val.value = value; val.placeholder='Value'; val.style = 'flex:1;';
-      const del = document.createElement('button'); del.textContent='×'; del.addEventListener('click', () => row.remove());
-      row.append(fld, val, del);
-      return row;
-    }
-
-    if (saveWPBtn) {
-      saveWPBtn.addEventListener('click', async () => {
-        const toSave = Array.from(constantsContainer.querySelectorAll('.const-row'))
-          .map(r => ({ field: r.querySelector('.const-field').value.trim(),
-                       value: r.querySelector('.const-value').value }));
-        await window.electronAPI.saveWorkplanConstants(toSave);
-      });
-      addConstBtn.addEventListener('click', () => constantsContainer.append(makeConstantRow()));
-    }
-
-    async function loadWorkplan() {
-      // constants
-      const consts = await window.electronAPI.getWorkplanConstants();
-      constantsContainer.innerHTML = '';
-      (consts || []).forEach(c => constantsContainer.append(makeConstantRow(c.field, c.value||'')));
-
-      // params → unique list for columns
-      const params = await window.electronAPI.getAlgorithmParameters();
-      const uniqueParams = [...new Set((params||[]).map(p => p.parameter))];
-
-      const hdrRow = dashPlaceholder.querySelector('#workplanHeaders');
-      hdrRow.innerHTML = '';
-      const headers = ['Site Name','Station Number','Operation', ...uniqueParams];
-      headers.forEach(text => { const th=document.createElement('th'); th.textContent=text; hdrRow.appendChild(th); });
-
-      dashPlaceholder.querySelector('#workplanBody').innerHTML = '';
-      await populateWorkplanFromImport();
-    }
-
-    // ===== Optimization I
-    const optimizeBtn = document.getElementById('optimizeBtn');
-    if (optimizeBtn) {
-      optimizeBtn.addEventListener('click', async () => {
-        const hdrRow = document.querySelector('#workplanHeaders');
-        const body   = document.querySelector('#workplanBody');
-        const headers = Array.from(hdrRow.querySelectorAll('th')).map(th => th.textContent.trim());
-        const workplanRows = Array.from(body.querySelectorAll('tr')).map(tr => {
-          const cells = Array.from(tr.querySelectorAll('td')); const rec = {};
-          headers.forEach((h, i) => { rec[h] = (cells[i] ? cells[i].textContent : '') || ''; });
-          return rec;
-        });
-        const overall = {};
-        document.querySelectorAll('.param-row').forEach(row => {
-          const pname = row.querySelector('.param-name')?.value?.trim();
-          const pct   = parseFloat(row.querySelector('.param-percentage')?.value || '0');
-          if (pname) overall[pname] = isFinite(pct) ? pct : 0;
-        });
-
-        const result = await window.electronAPI.optimizeWorkplan({ workplan_rows: workplanRows, param_overall: overall });
-        optimizeBtn.style.display = 'none';
-
-        const optPane = document.querySelector('#optimization .opt-container');
-        optPane.querySelectorAll('pre, ol').forEach(p => p.remove());
-        const ol = document.createElement('ol'); ol.style.marginTop='1em';
-        (result?.ranking || []).forEach(item => {
-          const li = document.createElement('li');
-          const left = [item.station_number ? String(item.station_number) : '', item.operation ? String(item.operation) : '']
-            .filter(Boolean).join('  |  ');
-          li.textContent = `${left}  |  ${item.score}%`;
-          ol.appendChild(li);
-        });
-        if ((result?.ranking || []).length === 0) {
-          const li = document.createElement('li'); li.textContent = 'No items to rank.'; ol.appendChild(li);
-        }
-        optPane.appendChild(ol);
-      });
-    }
-
-    // ===== Optimization II (geographical)
-    const geoBtn = dashPlaceholder.querySelector('#optimizeGeoBtn');
-    if (geoBtn && !geoBtn._wired) {
-      geoBtn.addEventListener('click', async () => {
-        geoBtn.style.display = 'none';
-        const hero = dashPlaceholder.querySelector('#optimization2 .opt2-hero'); if (hero) hero.style.display = 'none';
-        const optRoot = dashPlaceholder.querySelector('#optimization');
-        const optPane = optRoot && (optRoot.querySelector('.opt-container') || optRoot);
-        const opt2Pane = dashPlaceholder.querySelector('#optimization2 .opt2-container')
-                       || dashPlaceholder.querySelector('#optimization2');
-        const table = optPane && optPane.querySelector('table.opt-table');
-        if (!table) { opt2Pane.innerHTML = `<div class="opt2-note">Run Optimization I first, then click Optimization II.</div>`; return; }
-
-        const headers = [...table.querySelectorAll('thead th')].map(th => th.textContent.trim());
-        const idxStation = headers.findIndex(h => /Station ID/i.test(h));
-        const idxOp      = headers.findIndex(h => /Operation/i.test(h));
-        const idxScore   = headers.findIndex(h => /Summed Value/i.test(h));
-
-        const wpHdrs = [...(document.querySelectorAll('#workplanHeaders th') || [])].map(th => th.textContent.trim());
-        const wpIdxStation = wpHdrs.findIndex(h => /Station Number/i.test(h));
-        const wpIdxOp      = wpHdrs.findIndex(h => /Operation/i.test(h));
-        const wpIdxDays    = wpHdrs.findIndex(h => /^Days$/i.test(h));
-        const wpRows = [...(document.querySelectorAll('#workplanBody tr') || [])];
-        const wpDaysByKey = new Map();
-        if (wpIdxStation >= 0 && wpIdxOp >= 0 && wpIdxDays >= 0) {
-          wpRows.forEach(tr => {
-            const tds = [...tr.querySelectorAll('td')];
-            const sid = (tds[wpIdxStation]?.textContent || '').trim();
-            const op  = (tds[wpIdxOp]?.textContent || '').trim();
-            const daysRaw = (tds[wpIdxDays]?.textContent || '').trim();
-            const key = sid + '||' + op;
-            const val = Number.parseFloat(daysRaw);
-            if (sid && op && Number.isFinite(val)) wpDaysByKey.set(key, Math.max(1, Math.ceil(val)));
-          });
-        }
-
-        const items = [...table.querySelectorAll('tbody tr')].map(tr => {
-          const tds = [...tr.querySelectorAll('td')];
-          const sid = (tds[idxStation]?.textContent || '').trim();
-          const op  = (tds[idxOp]?.textContent || '').trim();
-          const sc  = parseFloat((tds[idxScore]?.textContent || '').replace('%','')) || 0;
-          const key = sid + '||' + op;
-          const out = { station_id: sid, operation: op, score: sc };
-          if (wpDaysByKey.has(key)) out.days = wpDaysByKey.get(key);
-          return out;
-        }).filter(x => x.station_id);
-
-        const stationList = await window.electronAPI.getStationData();
-        const nameById = new Map((stationList || []).map(s => [String(s.station_id), String(s.name || '')]));
-        opt2Pane.innerHTML = `<div class="opt2-note">Planning…</div>`;
-
-        let res;
-        try { res = await window.electronAPI.runGeographicalAlgorithm({ items }); }
-        catch { opt2Pane.innerHTML = `<div class="opt2-error">Optimization II failed.</div>`; return; }
-        if (!res || !res.success) {
-          opt2Pane.innerHTML = `<div class="opt2-error">${(res && res.message) || 'Optimization II failed.'}</div>`;
-          return;
-        }
-        renderGeoPlan(opt2Pane, res, nameById);
-      });
-      geoBtn._wired = true;
-    }
-
-    function renderGeoPlan(root, data, nameById) {
-      root.innerHTML = '';
-      const hdr = document.createElement('div');
-      hdr.className = 'opt2-header';
-      hdr.innerHTML = `
-        <div class="opt2-title">${data.plan_name || 'Geographical Plan'}</div>
-        <div class="opt2-summary">
-          <span class="chip">Trips: ${data.totals.trip_count}</span>
-          <span class="chip">Planned items: ${data.totals.planned}</span>
-          <span class="chip">Unplanned: ${data.totals.unplanned}</span>
-        </div>`;
-      root.appendChild(hdr);
-
-      (data.trips || []).forEach(trip => {
-        const sec = document.createElement('section'); sec.className = 'opt2-trip';
-        sec.innerHTML = `
-          <div class="opt2-trip-head">
-            <div class="trip-title">${trip.trip_name}</div>
-            <div class="trip-meta">
-              <span class="pill">Days: ${trip.days}</span>
-              <span class="pill">Items: ${trip.count}</span>
-              <span class="pill">Drive: ${trip.drive_count}</span>
-              <span class="pill">Heli: ${trip.helicopter_count}</span>
-            </div>
-          </div>`;
-        const table = document.createElement('table'); table.className = 'opt2-table';
-        table.innerHTML = `
-          <thead>
-            <tr>
-              <th>#</th><th>Day</th><th>Station Name</th>
-              <th class="station-id">Station ID</th><th>Operation</th>
-              <th class="num">Score</th><th>Mode</th>
-            </tr>
-          </thead><tbody></tbody>`;
-        const tbody = table.querySelector('tbody');
-        trip.schedule.forEach((r, i) => {
-          const tr = document.createElement('tr');
-          tr.innerHTML = `
-            <td class="rank">${i+1}</td>
-            <td>${r.day}</td>
-            <td>${nameById.get(String(r.station_id)) || ''}</td>
-            <td class="station-id">${r.station_id}</td>
-            <td>${r.operation || ''}</td>
-            <td class="num">${Number.isFinite(r.score) ? r.score.toFixed(2) + '%' : ''}</td>
-            <td>${r.mode === 'helicopter' ? '🚁 helicopter' : '🚗 drive'}</td>`;
-          tbody.appendChild(tr);
-        });
-        sec.appendChild(table); root.appendChild(sec);
-      });
-
-      if ((data.unplanned || []).length) {
-        const sec = document.createElement('section'); sec.className = 'opt2-trip';
-        const title = document.createElement('div'); title.className='trip-title'; title.textContent = 'Unplanned / Not In Trip Plan';
-        sec.appendChild(title);
-        const table = document.createElement('table'); table.className='opt2-table';
-        table.innerHTML = `
-          <thead>
-            <tr><th>#</th><th>Station Name</th><th class="station-id">Station ID</th>
-                <th>Operation</th><th class="num">Score</th></tr>
-          </thead><tbody></tbody>`;
-        const tbody = table.querySelector('tbody');
-        data.unplanned.forEach((r,i) => {
-          const tr = document.createElement('tr');
-          tr.innerHTML = `
-            <td class="rank">${i+1}</td>
-            <td>${nameById.get(String(r.station_id)) || ''}</td>
-            <td class="station-id">${r.station_id}</td>
-            <td>${r.operation || ''}</td>
-            <td class="num">${Number.isFinite(r.score) ? r.score.toFixed(2) + '%' : ''}</td>`;
-          tbody.appendChild(tr);
-        });
-        sec.appendChild(table); root.appendChild(sec);
-      }
-    }
-
-    // ===== Workplan import (bottom of container) =====
-    const importBar = document.createElement('div');
-    importBar.style = 'margin-top:12px; display:flex; gap:10px; align-items:center;';
-    const importBtn = document.createElement('button'); importBtn.id='btnImportRepairs'; importBtn.textContent='Import Repairs'; importBtn.className='btn';
-    const importInfo = document.createElement('span'); importInfo.style='opacity:.75; font-size:12px;'; importInfo.textContent='No file imported';
-    const fileInput = document.createElement('input'); fileInput.type='file';
-    fileInput.accept='.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'; fileInput.style.display='none';
-    importBtn.addEventListener('click', () => fileInput.click());
-    fileInput.addEventListener('change', async (e) => {
-      const f = (e.target.files || [])[0]; if (!f) return;
-      const buf = await f.arrayBuffer(); const bytes = new Uint8Array(buf);
-      let bin=''; for (let b of bytes) bin += String.fromCharCode(b);
-      const b64 = btoa(bin);
-      const res = await window.electronAPI.importRepairsExcel(b64);
-      if (!res || !res.success) { alert('Import failed: ' + (res && res.message ? res.message : 'Unknown error')); return; }
-      window.__repairsImportCache = res.rows || [];
-      importInfo.textContent = `Imported ${window.__repairsImportCache.length} rows`;
-      await loadWorkplan();
-      await populateWorkplanFromImport();
-    });
-    importBar.append(importBtn, importInfo, fileInput);
-    const wpContainerEl = dashPlaceholder.querySelector('#workplanContainer');
-    if (wpContainerEl) wpContainerEl.appendChild(importBar);
-
-    async function populateWorkplanFromImport() {
-      const rows = window.__repairsImportCache || []; if (!rows.length) return;
-      const hdrRow = dashPlaceholder.querySelector('#workplanHeaders');
-      const tbody  = dashPlaceholder.querySelector('#workplanBody'); if (!hdrRow || !tbody) return;
-      const headers = Array.from(hdrRow.querySelectorAll('th')).map(th => th.textContent.trim());
-      const paramSet = new Set(headers.slice(3));
-      const stationList = await window.electronAPI.getStationData();
-      const siteByStation = new Map((stationList || []).map(s => [String(s.station_id), String(s.name || '')]));
-      tbody.innerHTML = '';
-      rows.forEach(r => {
-        const tr = document.createElement('tr');
-        headers.forEach(h => {
-          const td = document.createElement('td'); let val = '';
-          if (h === 'Site Name') {
-            const stn = r['Station Number'] != null ? String(r['Station Number'])
-                       : (r['Station ID'] != null ? String(r['Station ID']) : '');
-            val = siteByStation.get(stn) || '';
-          } else if (h === 'Station Number') {
-            val = r['Station Number'] != null ? r['Station Number'] : (r['Station ID'] || '');
-          } else if (h === 'Operation') {
-            val = (r['Operation'] != null) ? r['Operation'] : (r['Repair Name'] != null ? r['Repair Name'] : '');
-          } else if (paramSet.has(h)) {
-            val = r.hasOwnProperty(h) && r[h] != null ? r[h] : '';
-          }
-          td.textContent = val == null ? '' : String(val); tr.appendChild(td);
-        });
-        tbody.appendChild(tr);
-      });
-    }
-
-    await loadWorkplan();
-    recalcPercentageTotal();
   }
 
-  // expose a quick global opener if you want to call from HTML
-  window.__openDashboard = showDashboard;
-});
+  // ---- Analytics cards -----------------------------------------------------
+
+  function addCard(node, updater) {
+    const list = $('#statsCards');
+    const wrap = document.createElement('div');
+    wrap.className = 'stat-card';
+    const header = document.createElement('div');
+    header.className = 'stat-card-header';
+    const body = document.createElement('div');
+    body.className = 'stat-card-body';
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'btn btn-ghost stat-card-close';
+    closeBtn.textContent = '✕';
+    closeBtn.title = 'Remove';
+    closeBtn.addEventListener('click', () => {
+      wrap.remove();
+      state.cards = state.cards.filter(c => c.wrap !== wrap);
+    });
+
+    header.appendChild(closeBtn);
+    wrap.appendChild(header);
+    body.appendChild(node);
+    wrap.appendChild(body);
+    list.appendChild(wrap);
+
+    const card = { wrap, update: updater };
+    state.cards.push(card);
+    updater();
+    return card;
+  }
+
+  // -- Card: Province bar chart
+  function createProvinceCard() {
+    const root = document.createElement('div');
+    root.innerHTML = `
+      <div class="stat-title">Stations per Province</div>
+      <div class="chart" style="width:100%;" aria-label="Province chart"></div>
+    `;
+    const chart = $('.chart', root);
+
+    const update = () => {
+      const data = state.filteredStations;
+      const counts = new Map();
+      data.forEach(s => {
+        const loc = stationLocation(s);
+        if (!loc) return;
+        counts.set(loc, (counts.get(loc) || 0) + 1);
+      });
+      const items = Array.from(counts.entries()).sort((a,b)=>a[0].localeCompare(b[0]))
+        .map(([label, value]) => ({ label, value }));
+      chart.innerHTML = '';
+      if (!items.length) {
+        chart.innerHTML = '<div class="empty">No data (adjust filters)</div>';
+        return;
+      }
+      renderBarChart(chart, items, { ariaLabel: 'Stations per province' });
+    };
+
+    return addCard(root, update);
+  }
+
+  // -- Card: Inspection Frequency bar chart
+  function createInspectionFrequencyCard() {
+    const root = document.createElement('div');
+    root.innerHTML = `
+      <div class="stat-title">Stations by Inspection Frequency</div>
+      <div class="chart" style="width:100%;" aria-label="Inspection Frequency chart"></div>
+      <div class="hint">Looks for a column named “Inspection Frequency” (any section).</div>
+    `;
+    const chart = $('.chart', root);
+
+    const update = () => {
+      const data = state.filteredStations;
+      const counts = new Map();
+      data.forEach(s => {
+        let v = getFieldValue(s, 'Inspection Frequency');
+        v = normStr(v) || 'Unknown';
+        counts.set(v, (counts.get(v) || 0) + 1);
+      });
+      const items = Array.from(counts.entries()).sort((a,b)=>a[0].localeCompare(b[0]))
+        .map(([label, value]) => ({ label, value }));
+      chart.innerHTML = '';
+      if (!items.length) {
+        chart.innerHTML = '<div class="empty">No data (adjust filters)</div>';
+        return;
+      }
+      renderBarChart(chart, items, { ariaLabel: 'Stations by inspection frequency' });
+    };
+
+    return addCard(root, update);
+  }
+
+  // -- Card: Lat/Lon radius count
+  function createLatLonCard() {
+    const root = document.createElement('div');
+    root.innerHTML = `
+      <div class="stat-title">Count within radius</div>
+      <div class="form-row compact">
+        <label>Latitude</label>
+        <input type="number" step="0.000001" class="in-lat" placeholder="49.2827">
+        <label>Longitude</label>
+        <input type="number" step="0.000001" class="in-lon" placeholder="-123.1207">
+        <label>Radius (km)</label>
+        <input type="number" step="0.1" class="in-rad" placeholder="10" value="10">
+        <button class="btn btn-primary btn-run">Compute</button>
+      </div>
+      <div class="result"><strong>Stations in circle:</strong> <span class="out">—</span></div>
+      <div class="hint">Uses the current filters. Change inputs and click Compute.</div>
+    `;
+    const out = $('.result .out', root);
+    const latIn = $('.in-lat', root);
+    const lonIn = $('.in-lon', root);
+    const radIn = $('.in-rad', root);
+    const runBtn = $('.btn-run', root);
+
+    // Provide a sane default center (mean of filtered lat/lon if available)
+    const seedDefaults = () => {
+      const pts = state.filteredStations
+        .map(s => ({ lat: parseFloat(s.lat), lon: parseFloat(s.lon) }))
+        .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+      if (!pts.length) return;
+      const avgLat = pts.reduce((a,b)=>a+b.lat,0)/pts.length;
+      const avgLon = pts.reduce((a,b)=>a+b.lon,0)/pts.length;
+      if (!latIn.value) latIn.value = String(avgLat.toFixed(6));
+      if (!lonIn.value) lonIn.value = String(avgLon.toFixed(6));
+    };
+
+    const compute = () => {
+      const lat = parseFloat(latIn.value);
+      const lon = parseFloat(lonIn.value);
+      const rad = Math.max(0, parseFloat(radIn.value));
+      if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(rad)) {
+        out.textContent = '—';
+        return;
+      }
+      let n = 0;
+      for (const s of state.filteredStations) {
+        const a = parseFloat(s.lat), b = parseFloat(s.lon);
+        if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+        if (haversineKm(lat, lon, a, b) <= rad) n++;
+      }
+      out.textContent = String(n);
+    };
+
+    runBtn.addEventListener('click', compute);
+
+    const update = () => {
+      // try to seed reasonable center; do not auto-compute to avoid surprises
+      seedDefaults();
+      out.textContent = '—';
+    };
+
+    return addCard(root, update);
+  }
+
+  // ---- Add-stat popup ------------------------------------------------------
+
+  function openAddStatMenu(anchor) {
+    const menu = $('#addStatMenu');
+    if (!menu) return;
+    const rect = anchor.getBoundingClientRect();
+    menu.style.display = 'block';
+    menu.style.position = 'fixed';
+    menu.style.top = (rect.bottom + 6) + 'px';
+    menu.style.left = rect.left + 'px';
+
+    const onDoc = (e) => {
+      if (!menu.contains(e.target) && e.target !== anchor) close();
+    };
+    const close = () => {
+      menu.style.display = 'none';
+      document.removeEventListener('click', onDoc, true);
+    };
+
+    setTimeout(() => document.addEventListener('click', onDoc, true), 0);
+
+    $$('.menu-item', menu).forEach(btn => {
+      btn.onclick = () => {
+        const kind = btn.dataset.kind;
+        if (kind === 'province') createProvinceCard();
+        else if (kind === 'inspection_frequency') createInspectionFrequencyCard();
+        else if (kind === 'latlon') createLatLonCard();
+        // FUTURE: add more cases here to introduce new stats
+        close();
+      };
+    });
+  }
+
+  // ---- Tabs ----------------------------------------------------------------
+
+  function bindTabs() {
+    const tabOverview = $('#tabOverview');
+    const tabAnalytics = $('#tabAnalytics');
+    const paneOverview = $('#overviewTab');
+    const paneAnalytics = $('#analyticsTab');
+
+    tabOverview.addEventListener('click', () => {
+      tabOverview.classList.add('active');
+      tabAnalytics.classList.remove('active');
+      paneOverview.style.display = '';
+      paneAnalytics.style.display = 'none';
+    });
+
+    tabAnalytics.addEventListener('click', () => {
+      tabAnalytics.classList.add('active');
+      tabOverview.classList.remove('active');
+      paneAnalytics.style.display = '';
+      paneOverview.style.display = 'none';
+    });
+  }
+
+  // ---- Initialization -------------------------------------------------------
+
+  async function refreshStatisticsView() {
+    // If the stats DOM isn't loaded yet, skip silently (caller-safe).
+    if (!hasStatsDOM()) return;
+    try {
+      const [rows, tree] = await Promise.all([
+        window.electronAPI.getStationData({}),
+        window.electronAPI.getLookupTree()
+      ]);
+      state.allStations = Array.isArray(rows) ? rows : [];
+      state.lookupTree = tree || { companies: [], locationsByCompany: {} };
+    } catch (e) {
+      console.error('[statistics] refresh failed', e);
+      state.allStations = [];
+      state.lookupTree = { companies: [], locationsByCompany: {} };
+    }
+    // Re-render everything
+    renderOverview();           // Overview = unfiltered
+    applyAnalyticsFilters();    // Analytics = filtered
+    state.cards.forEach(c => c.update());
+  }
+  // Expose globally so other flows can poke it after imports/adds
+  window.refreshStatisticsView = refreshStatisticsView;
+
+  async function initStatisticsView() {
+    if (state.initialized) {
+      // If already initialized and the DOM is present, just refresh data.
+      await refreshStatisticsView();
+      return;
+    }
+    state.initialized = true;
+
+    bindTabs();
+
+    // Wire + Add Statistic
+    const addBtn = $('#btnAddStat');
+    if (addBtn) {
+      addBtn.addEventListener('click', (e) => openAddStatMenu(addBtn));
+    }
+
+    // First data load + paint
+    await refreshStatisticsView();
+
+    // Listen to filter changes
+    const filterTree = $('#filterTree');
+    if (filterTree) {
+      filterTree.addEventListener('change', onFiltersChanged);
+    }
+
+    // Recompute on resize (charts)
+    window.addEventListener('resize', () => {
+      state.cards.forEach(c => c.update());
+    });
+  }
+
+  // Expose init for index loader
+  window.initStatisticsView = initStatisticsView;
+})();

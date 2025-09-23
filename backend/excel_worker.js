@@ -81,7 +81,6 @@ async function ensureLookupsReady() {
     if (need('Algorithm Parameters')) {
       wb.addWorksheet('Algorithm Parameters').addRow(['Applies To','Parameter','Condition','MaxWeight','Option','Weight','Selected']); changed = true;
     }
-    if (need('Workplan Details'))   { wb.addWorksheet('Workplan Details').addRow(['Parameter','Value']); changed = true; }
 
     // NEW sheets
     if (need('Status Colors')) {
@@ -119,7 +118,6 @@ async function ensureLookupsReady() {
     wb.addWorksheet('Custom Weights').addRow(['weight','active']);
     wb.addWorksheet('Workplan Constants').addRow(['Field','Value']);
     wb.addWorksheet('Algorithm Parameters').addRow(['Applies To','Parameter','Condition','MaxWeight','Option','Weight','Selected']);
-    wb.addWorksheet('Workplan Details').addRow(['Parameter','Value']);
 
     // NEW: default Status Colors & Settings
     const wsS = wb.addWorksheet('Status Colors');

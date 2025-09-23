@@ -161,14 +161,21 @@
     const wizardWrap = document.getElementById('addInfraContainer');
     const settingsEl = document.getElementById('settingsContainer');
     const stationEl  = document.getElementById('stationContentContainer');
+    const statsEl    = document.getElementById('statisticsContainer');
+    const rightToggleBtn = document.getElementById('toggleRight');
 
     if (mapEl)      mapEl.style.display      = map    ? 'block' : 'none';
     if (listEl)     listEl.style.display     = list   ? 'block' : 'none';
     if (docsEl)     docsEl.style.display     = docs   ? 'block' : 'none';
     if (wizardWrap) wizardWrap.style.display = wizard ? 'block' : 'none';
     if (settingsEl) settingsEl.style.display = settings ? 'block' : 'none';
+    if (statsEl)    statsEl.style.display    = arguments[0]?.stats ? 'block' : 'none';
 
-    if (stationEl && (map || list || docs || wizard || settings)) stationEl.style.display = 'none';
+    if (stationEl && (map || list || docs || wizard || settings || arguments[0]?.stats))
+      stationEl.style.display = 'none';
+
+    // Hide the right toggle while on Optimization (docs), show it otherwise
+    if (rightToggleBtn) rightToggleBtn.style.display = docs ? 'none' : '';
   }
 
   async function showMapView() {
@@ -265,11 +272,41 @@
     }
   }
 
-  async function showDocsView() {
-    setActiveNav('navDash');
+  async function showOptView() {
+    setActiveNav('navOpt');
     showViews({ map: false, list: false, docs: true, wizard: false, settings: false });
     safeDisableFullWidthMode();
     if (!document.getElementById('dashboardContentContainer')) showMapView();
+  }
+
+  async function showStatisticsView() {
+    setActiveNav('navDash'); // "Statistics" has become "Dashboard"
+    showViews({ map: false, list: false, docs: false, wizard: false, settings: false, stats: true });
+    safeEnableFullWidthMode();
+
+    // Optional: hide RHS panel content while in full-width stats view
+    try {
+      const right = document.getElementById('rightPanel');
+      if (right) right.style.display = '';
+    } catch(_) {}
+
+    const container = document.getElementById('statisticsContainer');
+    if (!container) return;
+
+    if (!container.dataset.loaded) {
+      try {
+        const resp = await fetch('dashboard.html');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        container.innerHTML = await resp.text();
+        container.dataset.loaded = '1';
+        if (window.initStatisticsView) requestAnimationFrame(() => window.initStatisticsView());
+      } catch (e) {
+        console.error('[showStatisticsView] failed to load dashboard.html:', e);
+        container.innerHTML = `<div class="panel"><div class="panel-title">Statistics</div><p>Failed to load.</p></div>`;
+      }
+    } else if (window.initStatisticsView) {
+      window.initStatisticsView();
+    }
   }
 
   // Panel host helpers
@@ -656,6 +693,7 @@
         await window.refreshFilters?.();
         await window.refreshMarkers?.();
         await window.renderList?.();
+        await window.refreshStatisticsView?.();
         appAlert('Asset created.');
         closePanel();
       } catch (e) {
@@ -979,6 +1017,7 @@
         await window.refreshFilters?.();
         await window.refreshMarkers?.();
         await window.renderList?.();
+        await window.refreshStatisticsView?.();
         appAlert(`Successfully imported ${res.added} row(s) into “${assetType}”.`);
         closePanel();
       } catch (e) {
@@ -1344,7 +1383,8 @@
         await window.refreshFilters?.();
         await window.refreshMarkers?.();
         await window.renderList?.();
-
+        await window.refreshStatisticsView?.();
+        
         appAlert(`Successfully imported ${res.added} row(s). Data will be synchronized with existing ${assetName} schema if applicable.`);
         closePanel();
 
@@ -1398,6 +1438,7 @@
 
     const navMap  = document.getElementById('navMap');
     const navList = document.getElementById('navList');
+    const navOpt  = document.getElementById('navOpt');
     const navDash = document.getElementById('navDash');
     const navSettings = document.getElementById('navSettings');
 
@@ -1409,8 +1450,12 @@
       navList.addEventListener('click', (e) => { e.preventDefault(); showListView(); });
       navList.dataset.bound = '1';
     }
+    if (navOpt && !navOpt.dataset.bound) {
+      navOpt.addEventListener('click', (e) => { e.preventDefault(); showOptView(); });
+      navOpt.dataset.bound = '1';
+    }
     if (navDash && !navDash.dataset.bound) {
-      navDash.addEventListener('click', (e) => { e.preventDefault(); showDocsView(); });
+      navDash.addEventListener('click', (e) => { e.preventDefault(); showStatisticsView(); });
       navDash.dataset.bound = '1';
     }
     if (navSettings && !navSettings.dataset.bound) {
@@ -1429,7 +1474,8 @@
   // Also expose view switches
   window.showMapView   = window.showMapView   || showMapView;
   window.showListView  = window.showListView  || showListView;
-  window.showDocsView  = window.showDocsView  || showDocsView;
+  window.showOptView  = window.showOptView  || showOptView;
+  window.showStatisticsView = window.showStatisticsView || showStatisticsView;
   window.showSettingsView = window.showSettingsView || showSettingsView;
 
 })();

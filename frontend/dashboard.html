@@ -1,132 +1,65 @@
 <!-- frontend/dashboard.html -->
-<div id="dashboardContainer" class="nhs-dashboard">
-  <div class="dashboard-tabs">
-    <button class="dashboard-tab active" data-target="parameters">Parameters</button>
-    <button class="dashboard-tab" data-target="workplan">Workplan</button>
-    <button class="dashboard-tab" data-target="optimization">Optimization I</button>
-    <button class="dashboard-tab" data-target="optimization2">Optimization II</button>
+<div id="statisticsPage" class="stats-view">
+  <header class="stats-header">
+    <h1>Dashboard</h1>
+    <p class="stats-subtitle">Infrastructure monitoring and analysis</p>
+  </header>
+
+  <div class="stats-tabs">
+    <button id="tabOverview" class="tab-button active" type="button">Overview</button>
+    <button id="tabAnalytics" class="tab-button" type="button">Analytics</button>
   </div>
 
-  <!-- 1) Interactive Parameters editor -->
-  <div id="parameters" class="dashboard-content active">
-    <div class="top-pane">
-      <div id="paramContainer"></div>
-      <div class="actions">
-        <button id="addParamBtn" class="btn">+ Add Parameter</button>
-        <button id="saveParamsBtn" class="btn btn-primary">💾 Save Changes</button>
+  <!-- OVERVIEW (always uses ALL data; not affected by filters) -->
+  <section id="overviewTab" class="stats-tab">
+    <div class="stats-summary">
+      <div class="summary-card">
+        <div class="summary-title">Total Stations</div>
+        <div id="ovTotalStations" class="summary-value">—</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-title">Total Locations</div>
+        <div id="ovTotalLocations" class="summary-value">—</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-title">Total Companies</div>
+        <div id="ovTotalCompanies" class="summary-value">—</div>
       </div>
     </div>
 
-    <hr class="separator"/>
+    <div class="split-columns">
+      <div class="panel">
+        <div class="panel-title">Totals by Location</div>
+        <div id="ovByLocation" class="kv-list"><!-- filled by JS --></div>
+      </div>
 
-    <div class="bottom-pane">
-      <div id="paramStats"></div>
-      <div id="percentageSection" style="margin-top:1em;">
-        <h3>Percentage Summary</h3>
-        <p>Total: <span id="percentageTotal">0</span>%</p>
+      <div class="panel">
+        <div class="panel-title">Totals by Company</div>
+        <div id="ovByCompany" class="kv-list"><!-- filled by JS --></div>
       </div>
     </div>
-  </div>
+  </section>
 
-  <!-- 2) Workplan -->
-  <div id="workplan" class="dashboard-content">
-    <div class="top-pane">
-      <div id="workplanContainer">
-        <div id="constantsContainer"></div>
-        <div class="actions">
-          <button id="addConstantBtn" class="btn">+ Add Constant</button>
-          <button id="saveWorkplanBtn" class="btn btn-primary">💾 Save Changes</button>
-        </div>
+  <!-- ANALYTICS (affected by the LHS filters) -->
+  <section id="analyticsTab" class="stats-tab" style="display:none;">
+    <div class="analytics-toolbar">
+      <button id="btnAddStat" class="btn">+ Add Statistic</button>
+      <div class="hint">
+        Use the button to add a statistic. The filters on the left apply to this Analytics tab only
+        (the Overview tab is always unfiltered).
       </div>
     </div>
 
-    <hr class="separator" />
+    <div id="statsCards" class="stats-cards"><!-- dynamic stat cards --></div>
+  </section>
 
-    <div class="bottom-pane">
-      <table id="workplanTable" class="opt-table">
-        <thead><tr id="workplanHeaders"></tr></thead>
-        <tbody id="workplanBody"></tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- 3) Optimization I -->
-  <div id="optimization" class="dashboard-content">
-    <div class="opt-container">
-      <button id="optimizeBtn" class="btn btn-primary">Optimize Workplan</button>
-    </div>
-  </div>
-
-  <!-- 4) Optimization II -->
-  <div id="optimization2" class="dashboard-content">
-    <div class="opt2-hero">
-      <button id="optimizeGeoBtn" class="btn btn-primary" style="padding:12px 18px; font-weight:600;">
-        Geographically Order Workplan
-      </button>
-    </div>
-    <div class="opt2-container"></div>
-  </div>
-
-  <!-- Add Parameter Modal -->
-  <div id="addParamModal" class="modal" style="display:none;">
-    <div class="modal-content" style="width:400px; max-width:90%;">
-      <span class="close-modal" id="closeAddParamModal">&times;</span>
-      <h2 class="modal-header">Add New Parameter</h2>
-
-      <div style="margin-top:1em;">
-        <label>Parameter Name</label><br/>
-        <input type="text" id="paramNameInput" placeholder="Enter name" style="width:100%; padding:0.5em;"/>
-      </div>
-
-      <div style="margin-top:1em;">
-        <label>Condition Type</label><br/>
-        <select id="paramConditionSelect" style="width:100%; padding:0.5em;">
-          <option value="IF">IF</option>
-        </select>
-      </div>
-
-      <div style="margin-top:1em;">
-        <label>Max Weight (1–Y)</label><br/>
-        <input type="number" id="paramMaxWeight" min="1" value="3" style="width:100%; padding:0.5em;"/>
-      </div>
-
-      <div style="margin-top:1em;">
-        <button id="addCustomWeightBtn" class="btn">+ Add Custom Weight</button>
-      </div>
-
-      <div id="optionsContainer" style="margin-top:1em;">
-        <h3>Options → Weight</h3>
-        <button type="button" id="addOptionBtn" class="btn" style="margin-bottom:0.5em;">+ Add Option</button>
-        <div id="optionsList"></div>
-      </div>
-
-      <!-- Custom Weight Modal -->
-      <div id="customWeightModal" class="modal" style="display:none;">
-        <div class="modal-content" style="width:300px; max-width:90%;">
-          <span class="close-modal" id="closeCustomWeightModal">&times;</span>
-          <h2 class="modal-header">Add / Select Custom Weight</h2>
-          <select id="selectCustomWeight" style="width:100%; padding:0.5em; margin-top:1em;">
-            <option value="">-- select weight --</option>
-          </select>
-          <input type="text" id="inputNewCustomWeight" placeholder="New custom weight"
-                 style="width:100%; padding:0.5em; margin-top:0.5em;"/>
-          <button id="btnSaveCustomWeight" class="btn" style="margin-top:0.5em;">➕ Add Custom Weight</button>
-          <div style="margin-top:1.5em; text-align:right;">
-            <button id="confirmCustomWeight" class="btn btn-primary">Confirm</button>
-            <button id="cancelCustomWeight" class="btn">Cancel</button>
-          </div>
-        </div>
-      </div>
-
-      <div style="margin-top:1em;">
-        <h3>Applies To</h3>
-        <div id="paramAssetFilter" style="max-height:200px; overflow:auto; border:1px solid #ccc; padding:0.5em;"></div>
-      </div>
-
-      <div style="margin-top:1.5em; text-align:right;">
-        <button id="saveParamBtn" class="btn btn-primary">Save Parameter</button>
-        <button id="cancelParamBtn" class="btn">Cancel</button>
-      </div>
-    </div>
+  <!-- lightweight popup menu for + Add Statistic -->
+  <div id="addStatMenu" class="stat-menu" style="display:none;">
+    <button class="menu-item" data-kind="latlon">Latitude &amp; Longitude (radius count)</button>
+    <button class="menu-item" data-kind="province">Province (bar chart)</button>
+    <button class="menu-item" data-kind="inspection_frequency">Inspection Frequency (bar chart)</button>
+    <div class="menu-sep"></div>
+    <!-- Future stats hook -->
+    <div class="menu-note">More statistics coming soon…</div>
   </div>
 </div>
