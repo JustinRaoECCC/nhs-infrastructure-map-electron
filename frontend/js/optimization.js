@@ -130,7 +130,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return row;
     }
 
-    function makeOptionRow(label = '', weight = 1) {
+    function makeOptionRow(label = '', weight = 0) {
       const row = document.createElement('div');
       row.className = 'option-row';
       row.style = 'display:flex; align-items:center; margin-top:0.5em;';
@@ -141,10 +141,10 @@ document.addEventListener('DOMContentLoaded', () => {
         <button class="deleteOptionBtn" style="color:red;">×</button>
       `;
       const weightSelect = row.querySelector('.option-weight');
-      function populateWeights(max = Math.max(1, parseInt(paramMaxWeightInp.value) || 1)) {
+      function populateWeights(max = Math.max(1, parseInt(paramMaxWeightInp.value) ||0)) {
         const prev = parseInt(weightSelect.value,10) || weight;
         weightSelect.innerHTML = '';
-        for (let i=1; i<=max; i++) {
+        for (let i=0; i<=max; i++) {
           const opt = document.createElement('option');
           opt.value = opt.textContent = i; weightSelect.appendChild(opt);
         }
@@ -368,19 +368,31 @@ document.addEventListener('DOMContentLoaded', () => {
         optimizeBtn.style.display = 'none';
 
         const optPane = document.querySelector('#optimization .opt-container');
-        optPane.querySelectorAll('pre, ol').forEach(p => p.remove());
-        const ol = document.createElement('ol'); ol.style.marginTop='1em';
+        // Clear any previous output (including earlier table renders)
+        optPane.querySelectorAll('pre, ol, table.opt-table').forEach(el => el.remove());
+        // (Numbered list removed — we render only the nice table below)
+
+        // Add a minimal table that Opt II expects to read
+        const tbl = document.createElement('table');
+        tbl.className = 'opt-table';
+        tbl.innerHTML = `
+          <thead>
+            <tr>
+              <th>Station ID</th>
+              <th>Operation</th>
+              <th>Summed Value</th>
+            </tr>
+          </thead>
+          <tbody></tbody>`;
         (result?.ranking || []).forEach(item => {
-          const li = document.createElement('li');
-          const left = [item.station_number ? String(item.station_number) : '', item.operation ? String(item.operation) : '']
-            .filter(Boolean).join('  |  ');
-          li.textContent = `${left}  |  ${item.score}%`;
-          ol.appendChild(li);
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${item.station_number ?? ''}</td>
+            <td>${item.operation ?? ''}</td>
+            <td>${Number(item.score).toFixed(2)}%</td>`;
+          tbl.querySelector('tbody').appendChild(tr);
         });
-        if ((result?.ranking || []).length === 0) {
-          const li = document.createElement('li'); li.textContent = 'No items to rank.'; ol.appendChild(li);
-        }
-        optPane.appendChild(ol);
+        optPane.appendChild(tbl);
       });
     }
 

@@ -4,6 +4,7 @@ const os   = require('os');
 
 // Import AFTER NHS_DATA_DIR is set so backends pick up the fast path.
 const backend     = require('./backend/app');
+const algorithms  = require('./backend/algorithms');
 const lookups     = require('./backend/lookups_repo');
 const excelClient = require('./backend/excel_worker_client');
 const nukeBackend = require('./backend/nuke');
@@ -334,6 +335,6 @@ ipcMain.handle('excel:addCustomWeight', async (_e, weight, active) =>
   backend.addCustomWeight(weight, active)
 );
 
-// Optimization I / II
-ipcMain.handle('algo:optimizeWorkplan', async (_e, payload) => await backend.optimizeWorkplan(payload));
-ipcMain.handle('algo:runGeographical', async (_e, payload) => await backend.runGeographicalAlgorithm(payload));
+// Optimization I / II (now call the dedicated algorithms module)
+ipcMain.handle('algo:optimizeWorkplan', async (_e, payload) => algorithms.optimizeWorkplan(payload));
+ipcMain.handle('algo:runGeographical', async (_e, payload) => algorithms.runGeographicalAlgorithm(payload));
