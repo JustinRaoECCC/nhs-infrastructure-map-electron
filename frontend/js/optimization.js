@@ -364,7 +364,13 @@ document.addEventListener('DOMContentLoaded', () => {
           if (pname) overall[pname] = isFinite(pct) ? pct : 0;
         });
 
-        const result = await window.electronAPI.optimizeWorkplan({ workplan_rows: workplanRows, param_overall: overall });
+        // Pass the same parameter rows the UI is using, so backend can’t miss them
+        const params = await window.electronAPI.getAlgorithmParameters();
+        const result = await window.electronAPI.optimizeWorkplan({
+          workplan_rows: workplanRows,
+          param_overall: overall,
+          parameters: params
+        });
         optimizeBtn.style.display = 'none';
 
         const optPane = document.querySelector('#optimization .opt-container');

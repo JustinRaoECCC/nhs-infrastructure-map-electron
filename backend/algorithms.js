@@ -9,6 +9,10 @@ const lookupsRepo = require('./lookups_repo');
 
 // ───────── helpers (Python parity) ─────────
 const _norm = (x) => (x == null ? '' : String(x).trim());
+const _canon = (s) => String(s ?? '')
+  .trim()
+  .replace(/[\u2013\u2014]/g, '-')  // en/em dash -> hyphen
+  .toLowerCase();
 const _tryFloat = (s) => {
   const v = Number(String(s ?? '').replace(/,/g, '').trim());
   return Number.isFinite(v) ? v : null;
@@ -70,12 +74,17 @@ function _normalizeOverallWeights(rawMap, paramIndex) {
 function _matchOptionWeight(paramCfg, value) {
   // Returns { matched:boolean, weight:number }
   const options = paramCfg?.options || {};
-  const vnorm = _norm(value);
-  if (Object.prototype.hasOwnProperty.call(options, vnorm)) {
-    const w = _tryFloat(options[vnorm]);
-    return { matched: true, weight: w == null ? 0 : w };
+  const v = _canon(value);
+
+  // Case/whitespace/dash-insensitive label match
+  for (const [label, w] of Object.entries(options)) {
+    if (_canon(label) === v) {
+      const wn = _tryFloat(w);
+      return { matched: true, weight: wn == null ? 0 : wn };
+    }
   }
-  const vnum = _tryFloat(vnorm);
+  // Numeric label match still supported (e.g., "1", 1)
+  const vnum = _tryFloat(v);
   if (vnum != null) {
     for (const [label, w] of Object.entries(options)) {
       const onum = _tryFloat(label);
@@ -103,9 +112,19 @@ async function _loadParams() {
  * @param {{workplan_rows?: Array<Object>, param_overall?: Object}} payload
  * @returns {{success: boolean, optimized_count: number, ranking: Array<Object>, notes: string}}
  */
-async function optimizeWorkplan({ workplan_rows = [], param_overall = {} } = {}) {
-  const parameters = await _loadParams();
+async function optimizeWorkplan({ workplan_rows = [], param_overall = {}, parameters: paramsFromUI } = {}) {
+  // Prefer params passed from the UI (same source as the Parameters tab). Fallback to repo load.
+  const parameters = Array.isArray(paramsFromUI) ? paramsFromUI : await _loadParams();
+  console.log('[optimizeWorkplan] workplan_rows=', workplan_rows.length, 'parameters=', (parameters || []).length);
   const pindex = _buildParamIndex(parameters || []);
+  if (!Object.keys(pindex).length) {
+    return {
+      success: false,
+      optimized_count: 0,
+      ranking: [],
+      notes: 'No algorithm parameters loaded. Ensure Parameters are saved and passed in.'
+    };
+  }
  const overallFrac = _normalizeOverallWeights(param_overall || {}, pindex);
   const paramNames = Object.keys(pindex);
 

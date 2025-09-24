@@ -1549,8 +1549,16 @@ async function getAlgorithmParameters() {
   await ensureLookupsReady();
   const _ExcelJS = getExcel();
   const wb = new _ExcelJS.Workbook();
-  await wb.xlsx.readFile(LOOKUPS_PATH);
+  // --- DEBUG: log file and sheet being read
+  try {
+    console.log('[excel_worker] getAlgorithmParameters: reading file:', LOOKUPS_PATH);
+    await wb.xlsx.readFile(LOOKUPS_PATH);
+  } catch (e) {
+    console.error('[excel_worker] getAlgorithmParameters: failed to read', LOOKUPS_PATH, '-', (e && e.message) || e);
+    throw e;
+  }
   const ws = getSheet(wb, ALG_PARAMS_SHEET);
+  console.log('[excel_worker] getAlgorithmParameters: sheet "%s" %s', ALG_PARAMS_SHEET, ws ? 'FOUND' : 'MISSING');
   const out = [];
   if (!ws) return out;
   ws.eachRow({ includeEmpty:false }, (row, i) => {
@@ -1573,6 +1581,13 @@ async function getAlgorithmParameters() {
       selected
     });
   });
+  console.log('[excel_worker] getAlgorithmParameters: parsed rows =', out.length);
+  if (out.length) {
+    const pnames = Array.from(new Set(out.map(r => r.parameter))).slice(0, 10);
+    console.log('[excel_worker] getAlgorithmParameters: parameters =', pnames.join(', '));
+    const sample = out.slice(0, 5).map(r => `${r.parameter} | ${r.option} -> ${r.weight}`);
+    console.log('[excel_worker] getAlgorithmParameters: sample:', sample);
+  }
   return out;
 }
 
