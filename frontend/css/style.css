@@ -2908,6 +2908,36 @@ html.modal-open, body.modal-open { overflow: hidden; }
 .nhs-dashboard .muted{ color:#64748b; }
 .nhs-dashboard .num{ font-variant-numeric: tabular-nums; }
 
+/* ── Make Add Parameter modal scrollable ───────────────────────────────── */
+.nhs-dashboard .modal-content{
+  /* keep your existing styles */
+  max-height: calc(100vh - 48px);  /* never exceed the screen */
+  overflow: auto;                   /* scroll inside the modal */
+  overscroll-behavior: contain;     /* prevent scroll chaining to page */
+  scrollbar-gutter: stable;         /* avoids layout shift when scrollbar appears (supported browsers) */
+}
+
+/* Tweak for small screens */
+@media (max-width: 640px){
+  .nhs-dashboard .modal-content{
+    max-height: 92vh;
+    width: 92vw;                    /* already near this, but ensures it on small screens */
+  }
+}
+
+/* Optional: keep the very tall options list tidy without making the whole modal huge */
+#addParamModal #optionsList{
+  max-height: 40vh;                 /* the options area itself can scroll */
+  overflow: auto;
+}
+
+/* The small custom-weight modal can scroll too, just in case */
+#customWeightModal .modal-content{
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+}
+
+
 /* ==========================================================================
    STATISTICS — polished redesign (scoped to .stats-view)
    Drop this at the end of style.css and remove the previous Statistics block.
