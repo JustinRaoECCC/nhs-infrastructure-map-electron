@@ -31,6 +31,8 @@
 
   async function fetchTree() {
     let treeFromLookups = null;
+
+    // Try to load the authoritative lookup tree
     try {
       if (window.electronAPI?.getLookupTree) {
         const t = await window.electronAPI.getLookupTree();
@@ -40,20 +42,24 @@
       console.error('[filters] getLookupTree failed', e);
     }
 
-    // Data-introspection to union values
+    // Introspect raw data to collect assets by location (no synthetic companies)
     let dataLocs = [], assetsByLocData = {};
     try {
       const data = await window.electronAPI.getStationData({});
       const norm = s => String(s ?? '').trim();
+
       dataLocs = uniq((data || [])
         .map(s => norm(s.province || s.location || s.location_file))
-        .filter(Boolean)).sort((a, b) => a.localeCompare(b));
+        .filter(Boolean))
+        .sort((a, b) => a.localeCompare(b));
+
       (data || []).forEach(s => {
         const loc = norm(s.province || s.location || s.location_file || '');
         const at  = norm(s.asset_type || '');
         if (!loc || !at) return;
         (assetsByLocData[loc] ||= new Set()).add(at);
       });
+
       Object.keys(assetsByLocData).forEach(k => {
         assetsByLocData[k] = Array.from(assetsByLocData[k]).sort((a, b) => a.localeCompare(b));
       });
@@ -61,34 +67,36 @@
       console.error('[filters] data introspection failed', e);
     }
 
+    // If we have lookups, return them as-is, only enriching assets for known locations.
     if (treeFromLookups && treeFromLookups.companies.length) {
       const tree = {
         companies: [...treeFromLookups.companies],
         locationsByCompany: { ...(treeFromLookups.locationsByCompany || {}) },
         assetsByLocation:   { ...(treeFromLookups.assetsByLocation   || {}) },
       };
-      // Bucket data-only locations under a fallback company if needed
-      if (!tree.companies.includes('NHS')) tree.companies.push('NHS');
-      tree.locationsByCompany['NHS'] ||= [];
-      dataLocs.forEach(loc => {
-        const exists = Object.values(tree.locationsByCompany)
-          .some(arr => Array.isArray(arr) && arr.includes(loc));
-        if (!exists) {
-          tree.locationsByCompany['NHS'].push(loc);
-          tree.locationsByCompany['NHS'].sort((a,b)=>a.localeCompare(b));
-        }
-        if (!tree.assetsByLocation[loc]) {
-          tree.assetsByLocation[loc] = assetsByLocData[loc] || [];
+
+      // Only update assets for locations that already exist in the lookup mapping.
+      const knownLocations = new Set(
+        Object.values(tree.locationsByCompany || {})
+          .flat()
+          .filter(Boolean)
+      );
+
+      knownLocations.forEach(loc => {
+        if (assetsByLocData[loc] && !tree.assetsByLocation[loc]) {
+          tree.assetsByLocation[loc] = assetsByLocData[loc];
         }
       });
+
       return tree;
     }
 
-    // No lookups yet → build a minimal tree from data
-    const companies = dataLocs.length ? ['NHS'] : [];
-    return { companies,
-             locationsByCompany: dataLocs.length ? { 'NHS': dataLocs } : {},
-             assetsByLocation: assetsByLocData };
+    // No lookups available → return an empty structure (no synthetic companies).
+    return {
+      companies: [],
+      locationsByCompany: {},
+      assetsByLocation: {}, // or use assetsByLocData if you want assets without company mapping
+    };
   }
 
   // Preserve your initial-render gating so map pins aren’t cleared at boot

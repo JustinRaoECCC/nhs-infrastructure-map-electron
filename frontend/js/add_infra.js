@@ -6,6 +6,16 @@
   const debounce = (fn, ms = 150) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 
+  // View helpers
+  function isDocsActive() {
+    const el = document.getElementById('dashboardContentContainer');
+    return !!(el && el.style.display !== 'none' && el.offsetParent !== null);
+  }
+  function hideRightPanel() {
+    const right = document.getElementById('rightPanel');
+    if (right) right.style.display = 'none';
+  }
+
   // ===== Virtualized table helper (windowing) =====
   function mountVirtualizedTable({
     rows,
@@ -109,6 +119,11 @@
 
   // ===== RHS Panel Restoration Functions =====
   function restoreRHSPanel() {
+    // Do NOT restore while docs/optimization is active or suppression flag set
+    if (isDocsActive() || document.body?.dataset?.suppressRhs === '1') {
+      hideRightPanel();
+      return;
+    }
     const rightPanel = document.getElementById('rightPanel');
     const stationContentContainer = document.getElementById('stationContentContainer');
     
@@ -163,6 +178,7 @@
     const stationEl  = document.getElementById('stationContentContainer');
     const statsEl    = document.getElementById('statisticsContainer');
     const rightToggleBtn = document.getElementById('toggleRight');
+    const rightPanel = document.getElementById('rightPanel');
 
     if (mapEl)      mapEl.style.display      = map    ? 'block' : 'none';
     if (listEl)     listEl.style.display     = list   ? 'block' : 'none';
@@ -176,12 +192,23 @@
 
     // Hide the right toggle while on Optimization (docs), show it otherwise
     if (rightToggleBtn) rightToggleBtn.style.display = docs ? 'none' : '';
+
+    // Suppress RHS while in docs; allow restore in other views
+    if (docs) {
+      document.body.dataset.suppressRhs = '1';
+      hideRightPanel();
+    } else {
+      delete document.body.dataset.suppressRhs;
+    }
   }
 
   async function showMapView() {
     setActiveNav('navMap');
     showViews({ map: true, list: false, docs: false, wizard: false, settings: false });
     safeDisableFullWidthMode();
+
+    // Leaving docs: allow RHS to restore again
+    delete document.body.dataset.suppressRhs;
 
     // Restore RHS panel when returning to map view
     restoreRHSPanel();
@@ -196,6 +223,9 @@
     setActiveNav('navList');
     showViews({ map: false, list: true, docs: false, wizard: false, settings: false });
     safeDisableFullWidthMode();
+
+    // Leaving docs: allow RHS to restore again
+    delete document.body.dataset.suppressRhs;
 
     // Restore RHS panel when returning to list view
     restoreRHSPanel();
@@ -275,7 +305,9 @@
   async function showOptView() {
     setActiveNav('navOpt');
     showViews({ map: false, list: false, docs: true, wizard: false, settings: false });
-    safeDisableFullWidthMode();
+    // Optimization/dashboard docs should be full-width; no RHS gutter
+    safeEnableFullWidthMode();
+    hideRightPanel();
     if (!document.getElementById('dashboardContentContainer')) showMapView();
   }
 
@@ -1410,7 +1442,10 @@
           const container = mutation.target;
           // If station container was just hidden, restore RHS panel
           if (container.style.display === 'none' || !container.style.display) {
-            restoreRHSPanel();
+            // Skip restoration while docs active or explicitly suppressed
+            if (!isDocsActive() && document.body?.dataset?.suppressRhs !== '1') {
+              restoreRHSPanel();
+            }
           }
         }
       });
@@ -1425,7 +1460,7 @@
     }
     
     // Initial restoration check
-    restoreRHSPanel();
+    if (!isDocsActive()) restoreRHSPanel();
 
     const navNewCompany = document.getElementById('navNewCompany');
     if (navNewCompany && !navNewCompany.dataset.boundNew) {

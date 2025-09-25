@@ -38,6 +38,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (mapContainer)       mapContainer.style.display = 'none';
     if (rightPanel)         rightPanel.style.display   = 'none';
     if (stationPlaceholder) stationPlaceholder.style.display = 'none';
+    // Prevent any external observer from reviving the RHS while in docs
+    if (document && document.body) document.body.dataset.suppressRhs = '1';
     const filtersPanel = document.querySelector('.left-panel');
     if (filtersPanel) filtersPanel.style.display = '';
     const rightToggleBtn = document.getElementById('toggleRight');
