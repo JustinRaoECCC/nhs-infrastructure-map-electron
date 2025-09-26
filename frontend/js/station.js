@@ -3,6 +3,13 @@ let currentStationData = null;
 let hasUnsavedChanges = false;
 let generalInfoUnlocked = false;
 
+// Helper
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = String(str ?? '');
+  return div.innerHTML;
+}
+
 async function loadStationPage(stationId, origin = 'map') {
   // Fetch station data
   const all = await window.electronAPI.getStationData();
@@ -120,12 +127,79 @@ function setupStationDetailUI(container, stn) {
 
   // Dynamic sections
   renderDynamicSections(container, stn);
+  // Also render any additional GI fields *inside* the main GI block (read-only)
+  try { renderExtraGIFields(container, stn); } catch (_) {}
 
   // Setup event handlers
   setupEventHandlers(container, stn);
 
   // Back button
   setupBackButton(container);
+}
+
+function renderExtraGIFields(container, stn) {
+  // Render GI extras as one-normal-row-per-field to match built-in rows exactly.
+  const giTable = container.querySelector('#giTable');
+  if (!giTable) return;
+
+  // Prefer inserting after Status (or after the last standard GI row we can find)
+  const giAnchor = container.querySelector('#giStatus') ||
+                   container.querySelector('#giLongitude') ||
+                   container.querySelector('#giProvince') ||
+                   container.querySelector('#giSiteName') ||
+                   container.querySelector('#giCategory') ||
+                   container.querySelector('#giStationId');
+  const anchorRow = giAnchor ? giAnchor.closest('tr') : null;
+  const tbody = giTable.tBodies[0] || giTable.appendChild(document.createElement('tbody'));
+
+  // Collect extra GI fields from the station object
+  const GI_STD = new Set(['station id','category','site name','station name','province','latitude','longitude','status']);
+  const extra = {};
+  Object.keys(stn || {}).forEach(k => {
+    const m = k.split(' – ');
+    if (m.length !== 2) return;
+    if (String(m[0]).trim().toLowerCase() !== 'general information') return;
+    const fld = String(m[1]).trim();
+    if (GI_STD.has(fld.toLowerCase())) return;
+    extra[fld] = stn[k];
+  });
+
+  // If nothing to render, clear any previous injected rows and exit
+  if (!Object.keys(extra).length) {
+    tbody.querySelectorAll('tr[data-gi-extra]').forEach(tr => tr.remove());
+    return;
+  }
+
+  // Remove any previously injected extra rows to avoid duplicates
+  tbody.querySelectorAll('tr[data-gi-extra]').forEach(tr => tr.remove());
+
+  // Insert one <tr><th>Label</th><td><input disabled ...></td></tr> per extra field
+  let insertAfter = anchorRow;
+  Object.entries(extra).forEach(([label, value]) => {
+    const tr = document.createElement('tr');
+    tr.setAttribute('data-gi-extra', '1');
+
+    const th = document.createElement('th');
+    th.textContent = label;
+
+    const td = document.createElement('td');
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.disabled = true;               // matches .station-section input[disabled] styles
+    input.value = value == null ? '' : String(value);
+    input.dataset.fieldKey = label;      // optional hook for future editing
+    input.className = 'gi-extra-input';  // <-- used by unlock/save/event hooks
+
+    td.appendChild(input);
+    tr.append(th, td);
+
+    if (insertAfter && insertAfter.parentNode) {
+      insertAfter.parentNode.insertBefore(tr, insertAfter.nextSibling);
+      insertAfter = tr; // next extras follow after the one we just inserted
+    } else {
+      tbody.appendChild(tr);
+    }
+  });
 }
 
 function setHeaderPills(container, stn) {
@@ -246,17 +320,8 @@ function renderDynamicSections(container, stn) {
   
   Object.keys(sections).forEach(sectionName => {
     if (String(sectionName).trim().toLowerCase() !== GI_NAME) return;
-    const filtered = {};
-    Object.entries(sections[sectionName]).forEach(([fld, val]) => {
-      if (!GI_SHOWN_FIELDS.has(String(fld).trim().toLowerCase())) {
-        filtered[fld] = val;
-      }
-    });
-    if (Object.keys(filtered).length) {
-      sections[sectionName] = filtered;
-    } else {
-      delete sections[sectionName];
-    }
+    // Remove GI section entirely; GI extras are rendered inside the main GI block
+    delete sections[sectionName];
   });
 
   // Render sections
@@ -478,7 +543,10 @@ function setupEventHandlers(container, stn) {
 
   setupPasswordModal(container);
 
-  const generalInputs = container.querySelectorAll('#giStationId, #giCategory, #giSiteName, #giProvince, #giLatitude, #giLongitude, #giStatus');
+  // Built-in GI inputs + any extra GI inputs we render into the table
+  const generalInputs = container.querySelectorAll(
+    '#giStationId, #giCategory, #giSiteName, #giProvince, #giLatitude, #giLongitude, #giStatus, .gi-extra-input'
+  );
   generalInputs.forEach(input => {
     input.addEventListener('input', () => {
       if (!input.disabled) markUnsavedChanges();
@@ -567,7 +635,10 @@ function hidePasswordModal() {
 
 function unlockGeneralInformation(container) {
   generalInfoUnlocked = true;
-  const inputs = container.querySelectorAll('#giStationId, #giCategory, #giSiteName, #giProvince, #giLatitude, #giLongitude, #giStatus');
+  // Unlock both the standard GI fields and the extra GI inputs
+  const inputs = container.querySelectorAll(
+    '#giStationId, #giCategory, #giSiteName, #giProvince, #giLatitude, #giLongitude, #giStatus, .gi-extra-input'
+  );
   inputs.forEach(input => {
     input.disabled = false;
     input.style.backgroundColor = '#fff3cd';
@@ -614,7 +685,11 @@ async function saveStationChanges(assetType) {
     // Dynamic sections data - clear old ones first
     Object.keys(updatedData).forEach(key => {
       if (key.includes(' – ')) {
-        delete updatedData[key];
+        // Keep "General Information – ..." keys; other sections will be rebuilt
+        const [sec] = key.split(' – ');
+        if (String(sec).trim().toLowerCase() !== 'general information') {
+          delete updatedData[key];
+        }
       }
     });
 
@@ -642,6 +717,16 @@ async function saveStationChanges(assetType) {
         }
       });
     });
+
+    // If GI is unlocked, also persist any edited extra GI fields
+    if (generalInfoUnlocked) {
+      container.querySelectorAll('.gi-extra-input').forEach(inp => {
+        const label = (inp.dataset.fieldKey || '').trim();
+        if (label) {
+          updatedData[`General Information – ${label}`] = inp.value.trim();
+        }
+      });
+    }
 
     // Save to this station's Excel file
     const result = await window.electronAPI.updateStationData(updatedData);

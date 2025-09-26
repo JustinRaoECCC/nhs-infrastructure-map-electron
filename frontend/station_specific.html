@@ -21,28 +21,30 @@
 
   <div id="overview" class="tab-content active">
     <!-- General Information (locked editing) -->
-    <div class="station-section">
+    <div class="station-section gi-section" id="giSection">
       <div style="display:flex;justify-content:space-between;align-items:center;">
         <h3>General Information</h3>
         <button id="unlockEditing" class="btn btn-ghost">🔒 Unlock Editing</button>
       </div>
-      <table>
+      <table id="giTable">
         <tr><th>Station ID:</th> <td><input id="giStationId" type="text" disabled /></td></tr>
         <tr><th>Category:</th>   <td><input id="giCategory"  type="text" disabled /></td></tr>
         <tr><th>Site Name:</th>  <td><input id="giSiteName"  type="text" disabled /></td></tr>
         <tr><th>Province:</th>   <td><input id="giProvince"  type="text" disabled /></td></tr>
         <tr><th>Latitude:</th>   <td><input id="giLatitude"  type="number" step="any" disabled /></td></tr>
         <tr><th>Longitude:</th>  <td><input id="giLongitude" type="number" step="any" disabled /></td></tr>
-        <tr>
+        <tr data-gi-anchor="status">
           <th>Status:</th>
           <td>
             <select id="giStatus" disabled>
               <option>Active</option>
               <option>Inactive</option>
+              <option>Mothballed</option>
               <option>Unknown</option>
             </select>
           </td>
         </tr>
+        <!-- Extra General Information fields will be appended here by station.js -->
       </table>
     </div>
 

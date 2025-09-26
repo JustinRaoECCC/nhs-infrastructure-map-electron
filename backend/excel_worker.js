@@ -44,6 +44,56 @@ const REPAIRS_HEADERS = [
   'Category',
   'Type'         // rightmost
 ];
+
+// ─── GI normalization helpers ─────────────────────────────────────────────
+function isGIAnchorName(s) {
+  const l = String(s || '').trim().toLowerCase();
+  return [
+    'station id','stationid','id','category',
+    'site name','station name','name',
+    'province','location','state','region',
+    'latitude','lat','y','longitude','long','lng','lon','x',
+    'status'
+  ].includes(l);
+}
+
+function giSectionForFieldName(field) {
+  const f = String(field || '').trim().toLowerCase();
+  if (f === 'asset type' || f === 'type') return 'General Information';
+  if (isGIAnchorName(field)) return 'General Information';
+  return 'Extra Information';
+}
+
+function normalizeHeaderPair(sec, fld) {
+  const s = String(sec || '').trim();
+  const f = String(fld || '').trim();
+  const fl = f.toLowerCase();
+  // Collapse synonyms into GI/Category (but NEVER "Structure Type")
+  if (fl === 'asset type' || fl === 'type') return { sec: 'General Information', fld: 'Category' };
+  if (isGIAnchorName(f)) return { sec: 'General Information', fld: f };
+  // If section is blank for a non-GI field, force "Extra Information"
+  return { sec: s || giSectionForFieldName(f), fld: f };
+}
+
+// Ensure a sheet has a two-row header; synthesize sections if missing
+function ensureTwoRowHeader(ws) {
+  const row2HasAny = (ws.getRow(2)?.actualCellCount || ws.getRow(2)?.cellCount || 0) > 0;
+  if (row2HasAny) return;
+  const headerRow = ws.getRow(1);
+  const maxCol = ws.actualColumnCount || headerRow.cellCount || 0;
+  const sections = [];
+  const fields = [];
+  for (let c = 1; c <= maxCol; c++) {
+    const fld = takeText(headerRow.getCell(c));
+    fields.push(fld);
+    sections.push(giSectionForFieldName(fld));
+  }
+  // Insert a new row at the top for sections; original header becomes row 2
+  ws.spliceRows(1, 0, []);
+  ws.getRow(1).values = [, ...sections];
+  ws.getRow(2).values = [, ...fields];
+}
+
 // ─── New sheet names ───────────────────────────────────────────────────────
 const ALG_PARAMS_SHEET       = 'Algorithm Parameters';
 const WORKPLAN_CONST_SHEET   = 'Workplan Constants';
@@ -747,6 +797,16 @@ function sheetToObjectsOneRow(ws) {
   return out;
 }
 
+// Decide if a string labels "General Information" (variants: case/underscore/hyphen/short)
+function isGeneralHeaderText(t) {
+  const s = String(t || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ');
+  return s === 'general' || s === 'general info' || s === 'general information';
+}
+
 function sheetTwoRowMeta(ws) {
   const row1 = ws.getRow(1);
   const row2 = ws.getRow(2);
@@ -800,9 +860,13 @@ async function parseRowsFromSheet(b64, sheetName) {
   const ws = wb.worksheets.find(w => w?.name === sheetName)
           || wb.worksheets.find(w => lc(w?.name) === lc(sheetName));
   if (!ws) return { success:false, message:`Sheet not found: ${sheetName}`, rows: [] };
-  // Decide if sheet has two header rows
+  // Decide formatting using TOP-LEFT cell (authoritative per requirements)
+  const topLeft = takeText(ws.getRow(1)?.getCell(1));
   const row2HasAny = (ws.getRow(2)?.actualCellCount || 0) > 0;
-  if (row2HasAny) {
+  const looksGeneral = isGeneralHeaderText(topLeft);
+
+  // If A1 is a General* variant AND row2 has data => treat as two-row "normal" format
+  if (looksGeneral && row2HasAny) {
     const { rows, sections, fields } = sheetToObjectsTwoRow(ws);
     return { success:true, rows, sections, headers: fields };
   } else {
@@ -811,6 +875,7 @@ async function parseRowsFromSheet(b64, sheetName) {
     const fields = [];
     const maxCol = ws.actualColumnCount || headerRow.cellCount || 0;
     for (let c = 1; c <= maxCol; c++) fields.push(takeText(headerRow.getCell(c)));
+    // "No sections" situation → sections empty here; synthesis happens in writeLocationRows
     const sections = fields.map(() => '');
     return { success:true, rows, sections, headers: fields };
   }
@@ -851,6 +916,28 @@ async function writeLocationRows(location, sheetName, sections, headers, rows) {
   }
   if (!curFlds.some(Boolean)) { curSecs = sections.slice(); curFlds = headers.slice(); }
 
+  // ── Synthesize sections for “unsectioned” sheets per spec ────────────────
+  // If the parsed sheet had no meaningful section headers, create:
+  //   - "General Information" for the 7 core fields (see giFields)
+  //   - "Extra Information" for everything else
+  const giFields = ['Station ID','Category','Site Name','Province','Latitude','Longitude','Status'];
+  const isUnsectioned = !sections?.some(s => String(s || '').trim()) || (curSecs.every(s => !String(s || '').trim()));
+  if (isUnsectioned && Array.isArray(headers) && headers.length) {
+    curSecs = headers.map(h => {
+      const l = String(h || '').trim().toLowerCase();
+      const isGI =
+        l === 'station id' || l === 'stationid' || l === 'id' ||
+        l === 'category'   || l === 'asset type' || l === 'assettype' ||
+        l === 'site name'  || l === 'station name' || l === 'name' ||
+        l === 'province'   || l === 'location' || l === 'state' || l === 'region' ||
+        l === 'latitude'   || l === 'lat'  || l === 'y' ||
+        l === 'longitude'  || l === 'long' || l === 'lng' || l === 'lon' || l === 'x' ||
+        l === 'status';
+      return isGI ? 'General Information' : 'Extra Information';
+    });
+    curFlds = headers.slice();
+  }  
+
   // Normalize incoming pairs first:
   //  - Coerce {Asset Type|Type|Category} → "General Information" / "Category"
   //  - Do NOT treat "Structure Type" as Category
@@ -874,6 +961,17 @@ async function writeLocationRows(location, sheetName, sections, headers, rows) {
       curSecs.push(sec); curFlds.push(fld); have.add(k);
     }
   });
+
+  // Ensure the 7 GI anchors ALWAYS exist (even if missing from the source),
+  // so the main app can always show them; missing values stay blank.
+  for (const must of giFields) {
+    const k = pairKey('General Information', must);
+    if (!have.has(k)) {
+      curSecs.unshift('General Information');
+      curFlds.unshift(must);
+      have.add(k);
+    }
+  }
 
   // ── Reorder "General Information" anchors only (do not move Structure Type) ─
   // Goal: ensure "Category" appears under "General Information" between
@@ -922,6 +1020,25 @@ async function writeLocationRows(location, sheetName, sections, headers, rows) {
     curFlds = ordered.map(p => p.fld);
   })();
 
+  // Normalize and de-duplicate synonyms (e.g., Asset Type/Type → Category)
+  (function normalizeAndDedupPairs() {
+    const pairs = [];
+    const seen = new Set();
+    for (let i = 0; i < curFlds.length; i++) {
+      const { sec, fld } = normalizeHeaderPair(curSecs[i], curFlds[i]);
+      const key = `${sec.toLowerCase()}|||${fld.toLowerCase()}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        pairs.push({ sec, fld });
+      }
+    }
+    curSecs = pairs.map(p => p.sec);
+    curFlds = pairs.map(p => p.fld);
+  })();
+
+  // Final safety: no blank sections; default by field type
+  curSecs = curSecs.map((s, i) => (String(s || '').trim() ? s : giSectionForFieldName(curFlds[i])));
+
   // Rewrite header rows to final union
   ws.getRow(1).values = [ , ...curSecs ];
   ws.getRow(2).values = [ , ...curFlds ];
@@ -945,6 +1062,18 @@ async function writeLocationRows(location, sheetName, sections, headers, rows) {
         rowObj['General Information – Category'] = v;
       }
     }
+
+    // If Province missing, fall back to the workbook file's location tag
+    const provPlain = rowObj['Province'] ?? rowObj['province'];
+    const provGI    = rowObj['General Information – Province'];
+    if ((provPlain === undefined || String(provPlain).trim() === '') &&
+        (provGI   === undefined || String(provGI).trim()   === '')) {
+      if (location) {
+        rowObj['Province'] = location;
+        rowObj['General Information – Province'] = location;
+      }
+    }
+
     const arr = compositeKeys.map((k, i) => {
       const plain = curFlds[i];
       return (rowObj?.[k] ?? rowObj?.[plain] ?? '');
@@ -1162,13 +1291,21 @@ async function updateStationInLocationFile(locationName, stationId, updatedRowDa
 
 async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHeader) {
   // Get current header structure
-  const headerRowNum = twoRowHeader ? 2 : 1;
-  const sectionRowNum = twoRowHeader ? 1 : null;
+  let headerRowNum = twoRowHeader ? 2 : 1;
+  let sectionRowNum = twoRowHeader ? 1 : null;
+
+  // If the sheet is 1-row header, upgrade to 2-row with synthesized sections
+  if (!twoRowHeader) {
+    ensureTwoRowHeader(worksheet);
+    twoRowHeader = true;
+    headerRowNum = 2;
+    sectionRowNum = 1;
+  }
   
-  const headerRow = worksheet.getRow(headerRowNum);
-  const sectionRow = sectionRowNum ? worksheet.getRow(sectionRowNum) : null;
+  let headerRow = worksheet.getRow(headerRowNum);
+  let sectionRow = sectionRowNum ? worksheet.getRow(sectionRowNum) : null;
   
-  const maxCol = worksheet.actualColumnCount || headerRow.cellCount || 0;
+  let maxCol = worksheet.actualColumnCount || headerRow.cellCount || 0;
   
   // Build maps of existing headers
   const existingHeaders = [];
@@ -1185,7 +1322,7 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
   const columnMap = new Map();
   existingHeaders.forEach((header, index) => {
     if (!header) return;
-    const section = existingSections[index] || '';
+    const section = existingSections[index] || giSectionForFieldName(header);
     const compositeKey = section ? `${section} – ${header}` : header;
     columnMap.set(compositeKey.toLowerCase(), index + 1); // Excel columns are 1-indexed
     columnMap.set(header.toLowerCase(), index + 1); // Also map plain header
@@ -1246,27 +1383,29 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
       const colIndex = startCol + index;
       
       // Parse section and field from composite key
-      let section = '';
+      let section = 'Extra Information';
       let field = newCol.key;
-
-      // Normalize GI section for common fields (but NOT "Structure Type")
-      const lcKey = String(field).trim().toLowerCase();
-      if (['category','asset_type','station id','stationid','id','site name','station name','name'].includes(lcKey)) {
-        section = 'General Information';
-        if (lcKey === 'asset_type') field = 'Category';
-      }
-      
       if (newCol.key.includes(' – ')) {
         [section, field] = newCol.key.split(' – ', 2);
+      } else {
+        // Normalize GI section for common fields (but NOT "Structure Type")
+        const lcKey = String(field).trim().toLowerCase();
+        if ([
+          'category','asset_type','station id','stationid','id',
+          'site name','station name','name',
+          'province','location','state','region',
+          'latitude','lat','y','longitude','long','lng','lon','x',
+          'status'
+        ].includes(lcKey)) {
+          section = 'General Information';
+          if (lcKey === 'asset_type') field = 'Category';
+        }
       }
       
       // Add headers
-      if (twoRowHeader) {
-        worksheet.getRow(1).getCell(colIndex).value = section;
-        worksheet.getRow(2).getCell(colIndex).value = field;
-      } else {
-        worksheet.getRow(1).getCell(colIndex).value = field;
-      }
+      // After upgrade above, we always have twoRowHeader=true here
+      worksheet.getRow(1).getCell(colIndex).value = section || 'Extra Information';
+      worksheet.getRow(2).getCell(colIndex).value = field;
       
       // Add the value to the current row
       row.getCell(colIndex).value = newCol.value;
@@ -1450,13 +1589,21 @@ async function updateAssetTypeSchema(assetType, schema, excludeStationId) {
 
 // Helper to apply schema changes to a row in Excel
 async function applySchemaToRow(worksheet, row, rowNumber, schema, twoRowHeader) {
-  const headerRowNum = twoRowHeader ? 2 : 1;
-  const sectionRowNum = twoRowHeader ? 1 : null;
+  let headerRowNum = twoRowHeader ? 2 : 1;
+  let sectionRowNum = twoRowHeader ? 1 : null;
+
+  // Upgrade 1-row header sheets to two-row with synthesized sections
+  if (!twoRowHeader) {
+    ensureTwoRowHeader(worksheet);
+    twoRowHeader = true;
+    headerRowNum = 2;
+    sectionRowNum = 1;
+  }
   
-  const headerRow = worksheet.getRow(headerRowNum);
-  const sectionRow = sectionRowNum ? worksheet.getRow(sectionRowNum) : null;
+  let headerRow = worksheet.getRow(headerRowNum);
+  let sectionRow = sectionRowNum ? worksheet.getRow(sectionRowNum) : null;
   
-  const maxCol = worksheet.actualColumnCount || headerRow.cellCount || 0;
+  let maxCol = worksheet.actualColumnCount || headerRow.cellCount || 0;
   
   // Build current column structure
   const existingColumns = new Map(); // Map of "section – field" or "field" to column index
@@ -1519,12 +1666,10 @@ async function applySchemaToRow(worksheet, row, rowNumber, schema, twoRowHeader)
       targetCol = nextCol++;
       
       // Add headers for the new column
-      if (twoRowHeader) {
-        worksheet.getRow(1).getCell(targetCol).value = section;
-        worksheet.getRow(2).getCell(targetCol).value = field;
-      } else {
-        worksheet.getRow(1).getCell(targetCol).value = field;
-      }
+      const secOut = String(section || '').trim() || 'Extra Information';
+      // Always two-row here after upgrade
+      worksheet.getRow(1).getCell(targetCol).value = secOut;
+      worksheet.getRow(2).getCell(targetCol).value = field;
     }
     
     // Preserve existing value if any (look for it in original data)

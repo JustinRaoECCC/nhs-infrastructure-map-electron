@@ -1031,7 +1031,22 @@
       try {
         $('#imImport').textContent = 'Importing…';
         $('#imImport').disabled = true;
-        const selectedRows = idxs.map(i => state.rows[i]).filter(Boolean);
+        const selectedRowsRaw = idxs.map(i => state.rows[i]).filter(Boolean);
+        // Normalize GI: ensure Category (from assetType) and Province (from location) exist when missing
+        const selectedRows = selectedRowsRaw.map((r) => {
+          const row = { ...r };
+          const hasCat = (row['Category'] ?? row['category'] ?? row['General Information – Category'])?.toString()?.trim();
+          if (!hasCat && assetType) {
+            row['Category'] = assetType;
+            row['General Information – Category'] = assetType;
+          }
+          const hasProv = (row['Province'] ?? row['province'] ?? row['General Information – Province'])?.toString()?.trim();
+          if (!hasProv && location) {
+            row['Province'] = location;
+            row['General Information – Province'] = location;
+          }
+          return row;
+        });
         const payload = {
           location,
           company,
@@ -1390,7 +1405,22 @@
         const up = await window.electronAPI.upsertAssetType(assetName, location);
         if (!up || up.success === false) return appAlert('Failed to create asset type.');
 
-        const selectedRows = idxs.map(i => state.rows[i]).filter(Boolean);
+        const selectedRowsRaw = idxs.map(i => state.rows[i]).filter(Boolean);
+        // Normalize GI for "no sections" sources
+        const selectedRows = selectedRowsRaw.map((r) => {
+          const row = { ...r };
+          const hasCat = (row['Category'] ?? row['category'] ?? row['General Information – Category'])?.toString()?.trim();
+          if (!hasCat && assetName) {
+            row['Category'] = assetName;
+            row['General Information – Category'] = assetName;
+          }
+          const hasProv = (row['Province'] ?? row['province'] ?? row['General Information – Province'])?.toString()?.trim();
+          if (!hasProv && location) {
+            row['Province'] = location;
+            row['General Information – Province'] = location;
+          }
+          return row;
+        });
 
         const payload = {
           location,

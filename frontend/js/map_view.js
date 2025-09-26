@@ -413,22 +413,16 @@ async function showStationDetails(stn) {
     (extras[section] ||= {})[field] = stn[k];
   });
 
-  // Filter out fields from an imported "General Information" section
+  // Extract ALL "General Information" fields to show in the main GI table
   const GI_NAME = 'general information';
-  const GI_SHOWN_FIELDS = new Set([
-    'station id', 'category', 'site name', 'station name',
-    'province', 'latitude', 'longitude', 'status'
-  ]);
-  Object.keys(extras).forEach(sectionName => {
-    if (String(sectionName).trim().toLowerCase() !== GI_NAME) return;
-    const filtered = {};
-    Object.entries(extras[sectionName] || {}).forEach(([fld, val]) => {
-      const key = String(fld).trim().toLowerCase();
-      if (!GI_SHOWN_FIELDS.has(key)) filtered[fld] = val;
-    });
-    if (Object.keys(filtered).length) extras[sectionName] = filtered;
-    else delete extras[sectionName];
-  });
+  const GI_STD = new Set(['station id','category','site name','station name','province','latitude','longitude','status']);
+  const giAll = {};
+  if (extras[Object.keys(extras).find(s => String(s).trim().toLowerCase() === GI_NAME)]){
+    const keyGI = Object.keys(extras).find(s => String(s).trim().toLowerCase() === GI_NAME);
+    Object.assign(giAll, extras[keyGI] || {});
+    // Remove GI section from extras entirely (no "extra general information")
+    delete extras[keyGI];
+  }
 
   let html = '';
   
@@ -448,8 +442,21 @@ async function showStationDetails(stn) {
   // General Information section
   html += '<div class="station-section">';
   html += '<h3>General Information</h3><table>';
-  fixedOrder.forEach(([label, val]) => {
-    html += `<tr><th>${label}:</th><td>${val ?? ''}</td></tr>`;
+  // 1) Render the standard/fixed GI rows once, in order
+  fixedOrder.forEach(([label, value]) => {
+    const display = (value === null || value === undefined || String(value).trim() === '')
+      ? '<span class="kv-empty">—</span>'
+      : escapeHtml(String(value));
+    html += `<tr><th>${escapeHtml(label)}:</th><td>${display}</td></tr>`;
+  });
+  // 2) Append any additional GI fields (beyond the standard 7) once
+  Object.entries(giAll).forEach(([fld, value]) => {
+    const key = String(fld || '').trim().toLowerCase();
+    if (GI_STD.has(key)) return; // already shown above
+    const display = (value === null || value === undefined || String(value).trim() === '')
+      ? '<span class="kv-empty">—</span>'
+      : escapeHtml(String(value));
+    html += `<tr><th>${escapeHtml(fld)}:</th><td>${display}</td></tr>`;
   });
   html += '</table></div>';
 
@@ -457,11 +464,7 @@ async function showStationDetails(stn) {
   if (Object.keys(extras).length > 0) {
     html += '<div class="rhs-accordion">';
     Object.entries(extras).forEach(([section, fields]) => {
-      const title =
-        String(section).trim().toLowerCase() === GI_NAME
-          ? 'Extra General Information'
-          : section;
-      
+      const title = section;
       html += `
         <div class="rhs-accordion-item">
           <button type="button" class="rhs-accordion-header">
@@ -507,9 +510,9 @@ async function loadRecentPhotoForRHS(stn) {
     const photo = photos[0]; // Get the most recent photo
     photoContainer.innerHTML = `
       <div class="rhs-photo-wrapper">
-        <img class="rhs-photo-thumb" 
-             src="${photo.url}" 
-             alt="${photo.name || `${stn.name} photo`}"
+        <img class="rhs-photo-thumb"
+             src="${photo.url}"
+             alt="${escapeHtml(photo.name || `${stn.name} photo`)}" />
       </div>`;
 
     // Add click handler to open lightbox (reuse station detail lightbox if available)

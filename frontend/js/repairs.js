@@ -131,7 +131,6 @@
     const addBtn = host.querySelector('#repAddBtn');
     const saveBtn = host.querySelector('#repSaveBtn');
     const resolveBtn = host.querySelector('#repResolveBtn');
-    const exportBtn = host.querySelector('#repExportBtn');
 
     const modal = document.querySelector('#repAddModal');
     const cancelBtn = document.querySelector('#repCancel');
@@ -271,12 +270,6 @@
       } finally {
         saveBtn.disabled = false; saveBtn.textContent = 'Save Changes';
       }
-    });
-
-    // --- Export (placeholder)
-    exportBtn?.addEventListener('click', () => {
-      if (!state.editMode) return;
-      appAlert('Export Repairs/Monitoring to Dashboard — not implemented yet.');
     });
   }
 
