@@ -1,265 +1,375 @@
 // backend/repairs.js
-const path = require('path');
-const fs = require('fs');
-const fsp = fs.promises;
-const ExcelJS = require('exceljs');
+const excel = require('./excel_worker_client');
+const app = require('./app');
 
-const lookupsRepo = require('./lookups_repo');
-const backendApp = require('./app'); // to fetch stations (getStationData)
-const { ensureDir } = require('./utils/fs_utils');
-
-// ----- Table spec (single-sheet model) -----
-// One workbook per company/location: data/repairs/<Company>/<Location>.xlsx
-// One sheet per workbook, named "Repairs".
-// Columns: Date (leftmost), Station ID (for grouping), …, Type (rightmost).
-const HEADERS = [
-  'Date',       // <-- new leftmost
-  'Station ID',
-  'Repair Name',
-  'Severity',
-  'Priority',
-  'Cost',
-  'Category',
-  'Type'        // <-- new rightmost (Repair | Monitoring)
-];
-const COL_WIDTHS = [14, 18, 40, 16, 16, 14, 14, 14];
-
-// ----- Helpers -----
-function sanitizeFolder(s) {
-  return String(s ?? '')
-    .normalize('NFKD')
-    .replace(/[<>:"/\\|?*\u0000-\u001F]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
+/**
+ * Normalize repair item data
+ */
 function normalizeItem(raw) {
   const item = raw || {};
-
+  
   // Cost: numeric if possible; else keep as string
   let cost = item.cost;
   if (typeof cost !== 'number') {
-    const num = Number(String(cost ?? '').replace(/[, ]/g, ''));
+    const num = Number(String(cost ?? '').replace(/[, $]/g, ''));
     cost = Number.isFinite(num) ? num : String(cost ?? '').trim();
   }
-  const category =
-    /^capital$/i.test(item.category) ? 'Capital'
-    : /^o&?m$/i.test(item.category) ? 'O&M'
-    : 'Capital';
-
-  const type =
-    /^monitor/i.test(item.type) ? 'Monitoring'
-    : 'Repair';
-
-  // date as yyyy-mm-dd string if present; else empty
-  const d = String(item.date ?? '').trim();
-
+  
+  // Normalize category
+  const category = /^o&?m$/i.test(item.category) ? 'O&M' : 'Capital';
+  
+  // Normalize type
+  const type = /^monitor/i.test(item.type) ? 'Monitoring' : 'Repair';
+  
+  // Ensure date format
+  const date = String(item.date ?? '').trim() || new Date().toISOString().slice(0, 10);
+  
   return {
-    date: d,
-    name: String(item.name ?? '').trim(),
+    date,
+    station_id: String(item.station_id ?? '').trim(),
+    // Handle both 'name' and 'Repair Name' fields
+    name: String(item.name || item['Repair Name'] || item.repair_name || '').trim(),
     severity: String(item.severity ?? '').trim(),
     priority: String(item.priority ?? '').trim(),
     cost,
     category,
     type,
+    location: String(item.location ?? '').trim(),
+    assetType: String(item.assetType ?? '').trim()
   };
 }
 
-// Build a small index: normalized location -> company
-function norm(s){ return String(s||'').trim().toLowerCase(); }
-async function companyForLocation(locRaw) {
-  try {
-    const tree = await lookupsRepo.getLookupTree(); // { locationsByCompany: { company: [loc1,loc2...] } }
-    const map = tree?.locationsByCompany || {};
-    const want = norm(locRaw);
-    for (const [company, locs] of Object.entries(map)) {
-      for (const L of (locs || [])) {
-        if (norm(L) === want) return company;
-      }
-    }
-  } catch (e) {}
-  return 'NHS'; // sensible default
-}
-
-async function resolveRepairsFileForStation(stationId) {
-  // Pull station row to discover asset type & location (Province acts as Location)
-  const all = await backendApp.getStationData({ skipColors: true });
+/**
+ * Resolve station information to get location and asset type
+ */
+async function resolveStationInfo(stationId) {
+  const all = await app.getStationData({ skipColors: true });
   const st = (all || []).find(s => String(s.station_id) === String(stationId));
-  if (!st) throw new Error(`Station not found for ID ${stationId}`);
-
-  const location  = String(st.location_file || st.province || 'Unknown').trim() || 'Unknown';
-  const company   = await companyForLocation(location);
-
-  // Path: data/repairs/<Company>/<Location>.xlsx (single "Repairs" sheet)
-  const baseDir = path.join(__dirname, '..', 'data', 'repairs', sanitizeFolder(company));
-  const file = path.join(baseDir, `${sanitizeFolder(location)}.xlsx`);
-  const sheetName = 'Repairs';
-
-  await ensureDir(baseDir);
-  return { file, sheetName, company, location };
-}
-
-async function loadWorkbook(file) {
-  const wb = new ExcelJS.Workbook();
-  try {
-    // If exists, read; otherwise return empty workbook
-    await fsp.access(file);
-    await wb.xlsx.readFile(file);
-  } catch (_) { /* new workbook */ }
-  return wb;
-}
-
-function ensureSheet(wb, sheetName = 'Repairs') {
-  // Keep a single canonical sheet named "Repairs"
-  let ws = wb.getWorksheet('Repairs') || (sheetName && wb.getWorksheet(sheetName));
-  if (!ws) {
-    ws = wb.addWorksheet('Repairs');
+  
+  if (!st) {
+    throw new Error(`Station not found for ID: ${stationId}`);
   }
-  // Drop any extra sheets to enforce the single-sheet model
-  for (const s of [...wb.worksheets]) {
-    if (s.name !== 'Repairs') wb.removeWorksheet(s.id);
-  }
-  // Ensure header exists and matches our spec
-  const r1 = ws.getRow(1);
-  const vals = (r1.values || []).slice(1).map(v => String(v ?? '').trim());
-  const same = HEADERS.every((h, i) => (vals[i] || '').toLowerCase() === h.toLowerCase());
-  if (!same) {
-    r1.values = [ , ...HEADERS ];
-    r1.font = { bold: true };
-  } else {
-    r1.font = { bold: true };
-  }
-  // Apply widths (idempotent)
-  COL_WIDTHS.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
-  return ws;
+  
+  const location = String(st.location_file || st.province || 'Unknown').trim();
+  const assetType = String(st.asset_type || 'Unknown').trim();
+  
+  return { location, assetType, station: st };
 }
 
-function rowIsEmpty(row) {
-  const vals = (row.values || []).slice(1);
-  return vals.every(v => v === null || v === undefined || String(v).trim() === '');
-}
-
-// ----- Public API -----
+/**
+ * List repairs for a specific station
+ * @param {string} siteName - Station site name (for compatibility)
+ * @param {string} stationId - Station ID
+ * @returns {Array} List of repairs for the station
+ */
 async function listRepairs(siteName, stationId) {
   try {
-    const { file, sheetName } = await resolveRepairsFileForStation(stationId);
-    const wb = await loadWorkbook(file);
-    const ws = wb.getWorksheet(sheetName);
-    if (!ws) return []; // nothing yet
-
-    // Map header names to column indices
-    const hrow = ws.getRow(1);
-    const hmax = ws.actualColumnCount || hrow.cellCount || HEADERS.length;
-    const hmap = new Map(); // lowercased header -> 1-based column index
-    for (let c = 1; c <= hmax; c++) {
-      const key = String(hrow.getCell(c)?.value ?? '').trim().toLowerCase();
-      if (key) hmap.set(key, c);
-    }
-    const colDate  = hmap.get('date');
-    const colSID   = hmap.get('station id') || 1;
-    const colName  = hmap.get('repair name') || 2;
-    const colSev   = hmap.get('severity') || 3;
-    const colPrio  = hmap.get('priority') || 4;
-    const colCost  = hmap.get('cost') || 5;
-    const colCat   = hmap.get('category') || 6;
-    const colType  = hmap.get('type');
-
-    const out = [];
-    const last = ws.rowCount;
-    for (let r = 2; r <= last; r++) {
-      const row = ws.getRow(r);
-      if (rowIsEmpty(row)) continue;
-      const sid = String(row.getCell(colSID).value ?? '').trim();
-      if (!sid || String(sid).toLowerCase() !== String(stationId).toLowerCase()) continue;
-
-      const date     = colDate ? row.getCell(colDate).value : '';
-      const name     = row.getCell(colName).value;
-      const severity = row.getCell(colSev).value;
-      const priority = row.getCell(colPrio).value;
-      const cost     = row.getCell(colCost).value;
-      const category = row.getCell(colCat).value;
-      const type     = colType ? row.getCell(colType).value : 'Repair';
-
-      out.push(normalizeItem({
-        date,
-        name,
-        severity,
-        priority,
-        cost: (typeof cost === 'object' && cost?.result != null) ? cost.result : cost,
-        category,
-        type,
-      }));
-    }
-    return out;
+    const { location, assetType } = await resolveStationInfo(stationId);
+    const repairs = await excel.listRepairsForStation(location, assetType, stationId);
+    
+    // Normalize and return
+    return (repairs || []).map(r => normalizeItem({
+      ...r,
+      location,
+      assetType
+    }));
   } catch (e) {
     console.error('[repairs:list] failed:', e);
     return [];
   }
 }
 
+/**
+ * Save repairs for a specific station (replaces all repairs for that station)
+ * @param {string} siteName - Station site name (for compatibility)
+ * @param {string} stationId - Station ID
+ * @param {Array} items - Array of repair items to save
+ * @returns {Object} Success status and details
+ */
 async function saveRepairs(siteName, stationId, items) {
   try {
-    // Replace this station's group instead of appending duplicates.
-    const { file, sheetName } = await resolveRepairsFileForStation(stationId);
-    const wb = await loadWorkbook(file);
-    const ws = ensureSheet(wb, sheetName);
-
-    // Build header map (case-insensitive)
-    const hrow = ws.getRow(1);
-    const hmax = ws.actualColumnCount || hrow.cellCount || HEADERS.length;
-    const hmap = new Map(); // lowercased header -> 1-based col idx
-    for (let c = 1; c <= hmax; c++) {
-      const key = String(hrow.getCell(c)?.value ?? '').trim().toLowerCase();
-      if (key) hmap.set(key, c);
-    }
-    const colDate  = hmap.get('date')        || 1;
-    const colSID   = hmap.get('station id')  || 2;
-    const colName  = hmap.get('repair name') || 3;
-    const colSev   = hmap.get('severity')    || 4;
-    const colPrio  = hmap.get('priority')    || 5;
-    const colCost  = hmap.get('cost')        || 6;
-    const colCat   = hmap.get('category')    || 7;
-    const colType  = hmap.get('type')        || 8;
-
-    // Find ALL rows for this Station ID (anywhere in sheet), remove them (bottom-up)
-    const toDelete = [];
-    const last = ws.rowCount;
-    for (let r = 2; r <= last; r++) {
-      const sid = String(ws.getRow(r).getCell(colSID).value ?? '').trim();
-      if (sid && sid.toLowerCase() === String(stationId).toLowerCase()) {
-        toDelete.push(r);
-      }
-    }
-    const insertAt = toDelete.length ? Math.min(...toDelete) : (ws.rowCount + 1);
-    for (let i = toDelete.length - 1; i >= 0; i--) {
-      ws.spliceRows(toDelete[i], 1);
-    }
-
-    // Insert new block
-    const rows = Array.isArray(items) ? items.map(normalizeItem) : [];
-    const payloadRows = rows.map(it => {
-      const arr = new Array(Math.max(hmax, HEADERS.length)).fill('');
-      arr[colDate - 1] = it.date || new Date().toISOString().slice(0, 10);
-      arr[colSID  - 1] = stationId;
-      arr[colName - 1] = it.name;
-      arr[colSev  - 1] = it.severity;
-      arr[colPrio - 1] = it.priority;
-      arr[colCost - 1] = it.cost;
-      arr[colCat  - 1] = it.category;
-      arr[colType - 1] = it.type || 'Repair';
-      return arr;
-    });
-    if (payloadRows.length) {
-      ws.spliceRows(insertAt, 0, ...payloadRows);
-    }
-
-    // Save
-    await wb.xlsx.writeFile(file);
-    return { success: true, count: rows.length, file, sheet: sheetName };
+    const { location, assetType } = await resolveStationInfo(stationId);
+    
+    // Normalize items
+    const normalizedItems = Array.isArray(items) 
+      ? items.map(item => normalizeItem({ ...item, location, assetType }))
+      : [];
+    
+    // Save to Excel
+    const result = await excel.saveStationRepairs(
+      location, 
+      assetType, 
+      stationId, 
+      normalizedItems
+    );
+    
+    return result;
   } catch (e) {
     console.error('[repairs:save] failed:', e);
     return { success: false, message: String(e) };
   }
 }
 
-module.exports = { listRepairs, saveRepairs };
+/**
+ * Add a single repair to a location/asset type
+ * @param {string} location - Location (e.g., "BC")
+ * @param {string} assetType - Asset type (e.g., "Cableway")
+ * @param {Object} repair - Repair data including Station ID
+ * @returns {Object} Success status and details
+ */
+async function addRepair(location, assetType, repair) {
+  try {
+    // Ensure required fields
+    if (!location) {
+      throw new Error('Location is required');
+    }
+    if (!assetType) {
+      throw new Error('Asset type is required');
+    }
+    if (!repair['Station ID'] && !repair.station_id) {
+      throw new Error('Station ID is required');
+    }
+    
+    // Normalize the repair data
+    const normalizedRepair = normalizeItem({
+      ...repair,
+      location,
+      assetType
+    });
+    
+    // Call Excel worker to append the repair
+    const result = await excel.appendRepair(
+      location, 
+      assetType, 
+      normalizedRepair
+    );
+    
+    return result;
+  } catch (e) {
+    console.error('[repairs:add] failed:', e);
+    return { success: false, message: String(e) };
+  }
+}
+
+/**
+ * Get all repairs across all locations and asset types
+ * @returns {Array} List of all repairs
+ */
+async function getAllRepairs() {
+  try {
+    const allRepairs = await excel.getAllRepairs();
+    
+    // Normalize all repairs
+    return (allRepairs || []).map(normalizeItem);
+  } catch (e) {
+    console.error('[repairs:getAll] failed:', e);
+    return [];
+  }
+}
+
+/**
+ * Delete a specific repair by index
+ * @param {string} location - Location
+ * @param {string} assetType - Asset type
+ * @param {string} stationId - Station ID
+ * @param {number} repairIndex - Index of repair to delete
+ * @returns {Object} Success status
+ */
+async function deleteRepair(location, assetType, stationId, repairIndex) {
+  try {
+    if (!location || !assetType || !stationId) {
+      throw new Error('Location, asset type, and station ID are required');
+    }
+    
+    if (!Number.isInteger(repairIndex) || repairIndex < 0) {
+      throw new Error('Valid repair index is required');
+    }
+    
+    const result = await excel.deleteRepair(
+      location, 
+      assetType, 
+      stationId, 
+      repairIndex
+    );
+    
+    return result;
+  } catch (e) {
+    console.error('[repairs:delete] failed:', e);
+    return { success: false, message: String(e) };
+  }
+}
+
+/**
+ * Get repairs filtered by location and/or asset type
+ * @param {Object} filters - { location?, assetType? }
+ * @returns {Array} Filtered list of repairs
+ */
+async function getFilteredRepairs(filters = {}) {
+  try {
+    const allRepairs = await getAllRepairs();
+    
+    // Apply filters
+    let filtered = allRepairs;
+    
+    if (filters.location) {
+      filtered = filtered.filter(r => 
+        String(r.location).toLowerCase() === String(filters.location).toLowerCase()
+      );
+    }
+    
+    if (filters.assetType) {
+      filtered = filtered.filter(r => 
+        String(r.assetType).toLowerCase() === String(filters.assetType).toLowerCase()
+      );
+    }
+    
+    if (filters.type) {
+      filtered = filtered.filter(r => 
+        String(r.type).toLowerCase() === String(filters.type).toLowerCase()
+      );
+    }
+    
+    return filtered;
+  } catch (e) {
+    console.error('[repairs:getFiltered] failed:', e);
+    return [];
+  }
+}
+
+/**
+ * Get repair statistics
+ * @returns {Object} Statistics about repairs
+ */
+async function getRepairStatistics() {
+  try {
+    const allRepairs = await getAllRepairs();
+    
+    const stats = {
+      total: allRepairs.length,
+      byType: {
+        repairs: allRepairs.filter(r => r.type === 'Repair').length,
+        monitoring: allRepairs.filter(r => r.type === 'Monitoring').length
+      },
+      byCategory: {
+        capital: allRepairs.filter(r => r.category === 'Capital').length,
+        oAndM: allRepairs.filter(r => r.category === 'O&M').length
+      },
+      byLocation: {},
+      byAssetType: {},
+      totalCost: 0
+    };
+    
+    // Calculate costs and groupings
+    allRepairs.forEach(repair => {
+      // Sum costs
+      if (typeof repair.cost === 'number') {
+        stats.totalCost += repair.cost;
+      }
+      
+      // Count by location
+      const loc = repair.location || 'Unknown';
+      stats.byLocation[loc] = (stats.byLocation[loc] || 0) + 1;
+      
+      // Count by asset type
+      const at = repair.assetType || 'Unknown';
+      stats.byAssetType[at] = (stats.byAssetType[at] || 0) + 1;
+    });
+    
+    return stats;
+  } catch (e) {
+    console.error('[repairs:getStatistics] failed:', e);
+    return {
+      total: 0,
+      byType: { repairs: 0, monitoring: 0 },
+      byCategory: { capital: 0, oAndM: 0 },
+      byLocation: {},
+      byAssetType: {},
+      totalCost: 0
+    };
+  }
+}
+
+/**
+ * Bulk add repairs from import
+ * @param {Array} repairs - Array of repair objects with location and assetType
+ * @returns {Object} Results of bulk add operation
+ */
+async function bulkAddRepairs(repairs) {
+  try {
+    if (!Array.isArray(repairs)) {
+      throw new Error('Repairs must be an array');
+    }
+    
+    const results = {
+      success: 0,
+      failed: 0,
+      errors: []
+    };
+    
+    // Group repairs by location and asset type for efficiency
+    const grouped = {};
+    repairs.forEach(repair => {
+      const key = `${repair.location}||${repair.assetType}`;
+      if (!grouped[key]) {
+        grouped[key] = [];
+      }
+      grouped[key].push(repair);
+    });
+    
+    // Process each group
+    for (const [key, groupRepairs] of Object.entries(grouped)) {
+      const [location, assetType] = key.split('||');
+      
+      for (const repair of groupRepairs) {
+        try {
+          const result = await addRepair(location, assetType, repair);
+          if (result.success) {
+            results.success++;
+          } else {
+            results.failed++;
+            results.errors.push(`Failed: ${repair.name || 'Unknown'} - ${result.message}`);
+          }
+        } catch (e) {
+          results.failed++;
+          results.errors.push(`Error: ${repair.name || 'Unknown'} - ${String(e)}`);
+        }
+      }
+    }
+    
+    return {
+      success: true,
+      added: results.success,
+      failed: results.failed,
+      errors: results.errors,
+      total: repairs.length
+    };
+  } catch (e) {
+    console.error('[repairs:bulkAdd] failed:', e);
+    return {
+      success: false,
+      message: String(e),
+      added: 0,
+      failed: repairs.length,
+      total: repairs.length
+    };
+  }
+}
+
+// Export all functions
+module.exports = {
+  // Core functions (for compatibility)
+  listRepairs,
+  saveRepairs,
+  
+  // New functions
+  addRepair,
+  getAllRepairs,
+  deleteRepair,
+  getFilteredRepairs,
+  getRepairStatistics,
+  bulkAddRepairs,
+  
+  // Utility functions
+  normalizeItem,
+  resolveStationInfo
+};

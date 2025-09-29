@@ -1,3 +1,5 @@
+// backend/lookups_repo.js
+
 const fs = require('fs');
 const path = require('path');
 const { ensureDir } = require('./utils/fs_utils');
@@ -8,7 +10,6 @@ const excel = require('./excel_worker_client');
 const DATA_DIR      = process.env.NHS_DATA_DIR || path.join(__dirname, '..', 'data');
 const LOOKUPS_PATH  = path.join(DATA_DIR, 'lookups.xlsx');
 const LOCATIONS_DIR = path.join(DATA_DIR, 'locations');
-const REPAIRS_DIR   = path.join(DATA_DIR, 'repairs');
 const CACHE_PATH    = path.join(DATA_DIR, '.lookups_cache.json');
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -29,10 +30,9 @@ function randHexColor() {
 // ─── FS-only, synchronous folder bootstrap (no ExcelJS) ───────────────────
 function ensureDataFoldersSync() {
   try {
-    // Only create the new repairs root (no legacy per-station directories).
+    // Create required directories
     ensureDir(DATA_DIR);
     ensureDir(LOCATIONS_DIR);
-    ensureDir(REPAIRS_DIR);
   } catch (e) { /* swallow — better to not crash on first run */ }
 }
 
@@ -493,6 +493,6 @@ module.exports = {
   getInspectionKeywords,
   setInspectionKeywords,
   // paths
-  LOOKUPS_PATH,
-  DATA_DIR, LOCATIONS_DIR, REPAIRS_DIR,
+  LOOKUPS_PATH, 
+  DATA_DIR, LOCATIONS_DIR,
 };

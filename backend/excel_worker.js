@@ -19,7 +19,6 @@ function getExcel() {
 const DATA_DIR      = process.env.NHS_DATA_DIR || path.join(__dirname, '..', 'data');
 const LOOKUPS_PATH  = path.join(DATA_DIR, 'lookups.xlsx');
 const LOCATIONS_DIR = path.join(DATA_DIR, 'locations');
-const REPAIRS_DIR   = path.join(DATA_DIR, 'repairs');
 const SEED_PATH     = path.join(__dirname, 'templates', 'lookups.template.xlsx');
 
 
@@ -102,7 +101,7 @@ const CUSTOM_WEIGHTS_SHEET   = 'Custom Weights';
 // ─── Ensure workbook exists with canonical sheets ─────────────────────────
 async function ensureLookupsReady() {
   progress('ensure', 40, 'Ensuring data folders…');
-  ensureDir(DATA_DIR); ensureDir(LOCATIONS_DIR); ensureDir(REPAIRS_DIR);
+  ensureDir(DATA_DIR); ensureDir(LOCATIONS_DIR);
   if (!fs.existsSync(LOOKUPS_PATH)) {
     if (fs.existsSync(SEED_PATH)) {
       progress('ensure', 45, 'Copying seed workbook…');
@@ -487,72 +486,89 @@ async function setSettingBoolean(key, flag) {
   return { success:true };
 }
 
-// ─── Repairs I/O (NEW single-sheet model) ─────────────────────────────────
+// ─── Repairs I/O (Location-based sheet model) ─────────────────────────────────
 /**
- * Ensure the repairs workbook exists at data/repairs/<company>/<location>.xlsx
- * and return { wb, ws, filePath } with exactly one sheet named "Repairs".
+ * Get or create a repairs sheet in the location workbook
+ * Sheet naming: "{AssetType} {Location} Repairs"
  */
-async function _ensureRepairsWorkbook(company, location) {
+async function _ensureRepairsSheet(location, assetType) {
   const _ExcelJS = getExcel();
-  ensureDir(REPAIRS_DIR);
-  const companyDir = path.join(REPAIRS_DIR, normStr(company || '').trim() || 'NHS');
-  ensureDir(companyDir);
-  const filePath = path.join(companyDir, `${normStr(location)}.xlsx`);
+  ensureDir(LOCATIONS_DIR);
+  const filePath = path.join(LOCATIONS_DIR, `${normStr(location)}.xlsx`);
 
   const wb = new _ExcelJS.Workbook();
   if (fs.existsSync(filePath)) {
     await wb.xlsx.readFile(filePath);
+  } else {
+    // Create location workbook if it doesn't exist
+    await wb.xlsx.writeFile(filePath);
   }
 
-  // Guarantee a single sheet named "Repairs"
-  let ws = getSheet(wb, REPAIRS_SHEET);
+  // Sheet name format: "{AssetType} {Location} Repairs"
+  const repairsSheetName = `${normStr(assetType)} ${normStr(location)} Repairs`;
+  let ws = getSheet(wb, repairsSheetName);
   if (!ws) {
-    if (wb.worksheets.length === 1) {
-      // Reuse the lone sheet, rename to "Repairs"
-      ws = wb.worksheets[0];
-      ws.name = REPAIRS_SHEET;
-    } else if (wb.worksheets.length === 0) {
-      ws = wb.addWorksheet(REPAIRS_SHEET);
-    } else {
-      // Multiple legacy/temporary sheets present; add our canonical one.
-      ws = wb.addWorksheet(REPAIRS_SHEET);
-    }
+    ws = wb.addWorksheet(repairsSheetName);
   }
 
   // Ensure header row exists (one-row header model)
   if (!ws.rowCount || ws.getRow(1).cellCount === 0) {
     ws.addRow(REPAIRS_HEADERS);
   } else {
-    // Normalize to canonical header order if different
     const r1 = ws.getRow(1);
     const existing = (r1.values || []).slice(1).map(v => String(v ?? '').trim());
     const same = REPAIRS_HEADERS.every((h, i) => (existing[i] || '').toLowerCase() === h.toLowerCase());
     if (!same) r1.values = [, ...REPAIRS_HEADERS];
   }
-  return { wb, ws, filePath };
+  return { wb, ws, filePath, sheetName: repairsSheetName };
 }
 
 /**
- * Append a repair row for a location workbook:
- * - Workbook path: data/repairs/<company>/<location>.xlsx
- * - Single sheet: "Repairs"
- * - If Station ID already exists, insert immediately after the last row for that ID.
- * - Else, append to the end.
- *
- * @param {string} company
- * @param {string} location  Province/region code (e.g., "BC")
- * @param {object} repair    Plain object of column->value (must include Station ID/StationID/ID)
+ * List all repairs for a specific station from location workbook
  */
-async function appendRepair(company, location, repair = {}) {
-  await ensureLookupsReady();
-  const { wb, ws, filePath } = await _ensureRepairsWorkbook(company, location);
+async function listRepairsForStation(location, assetType, stationId) {
+  const filePath = path.join(LOCATIONS_DIR, `${normStr(location)}.xlsx`);
+  if (!fs.existsSync(filePath)) return [];
+  
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(filePath);
+  
+  const repairsSheetName = `${normStr(assetType)} ${normStr(location)} Repairs`;
+  const ws = getSheet(wb, repairsSheetName);
+  if (!ws) return [];
+  
+  const repairs = [];
+  const maxRow = ws.actualRowCount || ws.rowCount || 1;
+  
+  for (let r = 2; r <= maxRow; r++) {
+    const row = ws.getRow(r);
+    const sid = takeText(row.getCell(2)); // Station ID column
+    if (sid === stationId) {
+      repairs.push({
+        date: takeText(row.getCell(1)),
+        station_id: sid,
+        name: takeText(row.getCell(3)),
+        severity: takeText(row.getCell(4)),
+        priority: takeText(row.getCell(5)),
+        cost: takeText(row.getCell(6)),
+        category: takeText(row.getCell(7)),
+        type: takeText(row.getCell(8))
+      });
+    }
+  }
+  
+  return repairs;
+}
 
-  // Normalize and require Station ID
-  const stationId =
-    normStr(repair['Station ID']) ||
-    normStr(repair['StationID'])  ||
-    normStr(repair['station_id']) ||
-    normStr(repair['ID']);
+/**
+ * Append a repair row to location workbook
+ */
+async function appendRepair(location, assetType, repair = {}) {
+  await ensureLookupsReady();
+  const { wb, ws, filePath, sheetName } = await _ensureRepairsSheet(location, assetType);
+
+  const stationId = normStr(repair['Station ID'] || repair['station_id'] || repair['StationID'] || repair['ID']);
   if (!stationId) {
     return { success: false, message: 'Station ID is required in the repair payload.' };
   }
@@ -610,6 +626,7 @@ async function appendRepair(company, location, repair = {}) {
     const l = (h || '').toLowerCase();
     if (l === 'date')        return getCI('Date') || today;
     if (l === 'station id')  return stationId;
+    if (l === 'repair name') return getCI('Repair Name') || getCI('name') || '';
     if (l === 'type')        return getCI('Type') || 'Repair';
     const v = repair[h] !== undefined ? repair[h] : getCI(h);
     return v !== undefined ? v : '';
@@ -626,7 +643,115 @@ async function appendRepair(company, location, repair = {}) {
   }
 
   await wb.xlsx.writeFile(filePath);
-  return { success: true, file: filePath, sheet: ws.name, insertedAt };
+  return { success: true, file: filePath, sheet: sheetName, insertedAt };
+}
+
+/**
+ * Get all repairs across all locations and asset types
+ */
+async function getAllRepairs() {
+  ensureDir(LOCATIONS_DIR);
+  const files = listExcelFiles(LOCATIONS_DIR);
+  const _ExcelJS = getExcel();
+  const allRepairs = [];
+  
+  for (const filePath of files) {
+    const location = path.basename(filePath, '.xlsx');
+    const wb = new _ExcelJS.Workbook();
+    try {
+      await wb.xlsx.readFile(filePath);
+    } catch (e) {
+      continue;
+    }
+    
+    // Look for repair sheets (ending with "Repairs")
+    for (const ws of wb.worksheets) {
+      if (!ws.name.endsWith('Repairs')) continue;
+      
+      // Extract asset type from sheet name
+      const match = ws.name.match(/^(.+)\s+\w+\s+Repairs$/);
+      if (!match) continue;
+      const assetType = match[1];
+      
+      const maxRow = ws.actualRowCount || ws.rowCount || 1;
+      for (let r = 2; r <= maxRow; r++) {
+        const row = ws.getRow(r);
+        const stationId = takeText(row.getCell(2));
+        if (!stationId) continue;
+        
+        allRepairs.push({
+          date: takeText(row.getCell(1)),
+          station_id: stationId,
+          name: takeText(row.getCell(3)),
+          severity: takeText(row.getCell(4)),
+          priority: takeText(row.getCell(5)),
+          cost: takeText(row.getCell(6)),
+          category: takeText(row.getCell(7)),
+          type: takeText(row.getCell(8)),
+          location,
+          assetType
+        });
+      }
+    }
+  }
+  
+  return allRepairs;
+}
+
+/**
+ * Save repairs for a station (replaces all repairs for that station)
+ */
+async function saveStationRepairs(location, assetType, stationId, repairs = []) {
+  await ensureLookupsReady();
+  const { wb, ws, filePath, sheetName } = await _ensureRepairsSheet(location, assetType);
+  
+  // Find and remove existing rows for this station
+  const maxRow = ws.actualRowCount || ws.rowCount || 1;
+  const rowsToDelete = [];
+  
+  for (let r = 2; r <= maxRow; r++) {
+    const row = ws.getRow(r);
+    const sid = takeText(row.getCell(2));
+    if (sid === stationId) {
+      rowsToDelete.push(r);
+    }
+  }
+  
+  // Delete from bottom to top
+  for (let i = rowsToDelete.length - 1; i >= 0; i--) {
+    ws.spliceRows(rowsToDelete[i], 1);
+  }
+  
+  // Add new repairs
+  const today = new Date().toISOString().slice(0,10);
+  for (const repair of repairs) {
+    const newValues = [
+      repair.date || today,
+      stationId,
+      repair.name || '',
+      repair.severity || '',
+      repair.priority || '',
+      repair.cost || '',
+      repair.category || 'Capital',
+      repair.type || 'Repair'
+    ];
+    ws.addRow(newValues);
+  }
+  
+  await wb.xlsx.writeFile(filePath);
+  return { success: true, file: filePath, sheet: sheetName, count: repairs.length };
+}
+
+/**
+ * Delete a repair by station ID and repair index
+ */
+async function deleteRepair(location, assetType, stationId, repairIndex) {
+  const repairs = await listRepairsForStation(location, assetType, stationId);
+  if (repairIndex >= 0 && repairIndex < repairs.length) {
+    repairs.splice(repairIndex, 1);
+    return await saveStationRepairs(location, assetType, stationId, repairs);
+  }
+  return { success: false, message: 'Invalid repair index' };
 }
 
 async function setAssetTypeColorForLocation(assetType, location, color) {
@@ -1858,6 +1983,11 @@ const handlers = {
   setAssetTypeLink,
   appendRepair,
   setInspectionKeywords,
+  // New repairs functions
+  listRepairsForStation,
+  saveStationRepairs,
+  deleteRepair,
+  getAllRepairs,
   // NEW dashboard RPCs
   getAlgorithmParameters,
   saveAlgorithmParameters,

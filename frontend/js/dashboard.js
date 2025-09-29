@@ -427,27 +427,404 @@
     });
   }
 
+  // ---- Repairs and Maintenance Tab ---------------------------------------
+  
+  let repairsState = {
+    allRepairs: [],
+    selectedRepairs: new Set(),
+    selectedMaintenance: new Set()
+  };
+  let stationsList = [];
+
+  async function loadRepairsData() {
+    try {
+      const repairs = await window.electronAPI.getAllRepairs();
+      repairsState.allRepairs = Array.isArray(repairs) ? repairs : [];
+      renderRepairsTables();
+    } catch (e) {
+      console.error('[dashboard:repairs] Failed to load repairs:', e);
+      repairsState.allRepairs = [];
+    }
+  }
+
+  // Expose globally for other views to refresh
+  window.loadRepairsData = loadRepairsData;
+
+  function renderRepairsTables() {
+    const repairsBody = $('#globalRepairsBody');
+    const maintenanceBody = $('#globalMaintenanceBody');
+    
+    if (!repairsBody || !maintenanceBody) return;
+    
+    repairsBody.innerHTML = '';
+    maintenanceBody.innerHTML = '';
+    
+    const repairs = repairsState.allRepairs.filter(r => r.type !== 'Monitoring');
+    const maintenance = repairsState.allRepairs.filter(r => r.type === 'Monitoring');
+
+    // Clear selections
+    repairsState.selectedRepairs.clear();
+    repairsState.selectedMaintenance.clear();    
+    
+    repairs.forEach((repair, idx) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><input type="checkbox" class="repair-checkbox" data-index="${idx}" /></td>
+        <td>${esc(repair.date || '')}</td>
+        <td>${esc(repair.station_id || '')}</td>
+        <td>${esc(repair.location || '')}</td>
+        <td>${esc(repair.assetType || '')}</td>
+        <td>${esc(repair.name || '')}</td>
+        <td>${esc(repair.severity || '')}</td>
+        <td>${esc(repair.priority || '')}</td>
+        <td>${formatCost(repair.cost)}</td>
+        <td>${esc(repair.category || '')}</td>
+      `;
+      const checkbox = tr.querySelector('.repair-checkbox');
+      checkbox.addEventListener('change', (e) => {
+        if (e.target.checked) repairsState.selectedRepairs.add(repair);
+        else repairsState.selectedRepairs.delete(repair);
+      });
+      repairsBody.appendChild(tr);
+    });
+    
+    maintenance.forEach((item, idx) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><input type="checkbox" class="maintenance-checkbox" data-index="${idx}" /></td>
+        <td>${esc(item.date || '')}</td>
+        <td>${esc(item.station_id || '')}</td>
+        <td>${esc(item.location || '')}</td>
+        <td>${esc(item.assetType || '')}</td>
+        <td>${esc(item.name || '')}</td>
+        <td>${esc(item.severity || '')}</td>
+        <td>${esc(item.priority || '')}</td>
+        <td>${formatCost(item.cost)}</td>
+        <td>${esc(item.category || '')}</td>
+      `;
+      const checkbox = tr.querySelector('.maintenance-checkbox');
+      checkbox.addEventListener('change', (e) => {
+        if (e.target.checked) repairsState.selectedMaintenance.add(item);
+        else repairsState.selectedMaintenance.delete(item);
+      });
+      maintenanceBody.appendChild(tr);
+    });
+  }
+
+  function formatCost(cost) {
+    if (typeof cost === 'number' && Number.isFinite(cost)) {
+      return `$${cost.toLocaleString()}`;
+    }
+    return String(cost || '—');
+  }
+
+  function openGlobalRepairModal() {
+    const modal = $('#globalRepairModal');
+    if (!modal) return;
+
+    // Load stations list for validation
+    window.electronAPI.getStationData({}).then(data => { stationsList = data || []; });
+    
+    // Get available filters from the tree
+    const filterOptions = getFilteredAssetTypes();
+    
+    modal.innerHTML = `
+      <div class="modal-content" style="max-width:680px;width:92%;">
+        <h3 style="margin-top:0;">Add Repair/Maintenance</h3>
+        <div class="form-grid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
+          <div class="form-row" style="grid-column: 1 / 4;">
+            <label>Company</label>
+            <select id="grCompany">
+              <option value="">Select Company...</option>
+              ${filterOptions.companies.map(c => `<option value="${c}">${c}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-row" style="grid-column: 1 / 4;">
+            <label>Location</label>
+            <select id="grLocation" disabled>
+              <option value="">Select Company first...</option>
+            </select>
+          </div>
+          <div class="form-row" style="grid-column: 1 / 4;">
+            <label>Asset Type</label>
+            <select id="grAssetType" disabled>
+              <option value="">Select Location first...</option>
+            </select>
+          </div>
+          <div class="form-row" style="grid-column: 1 / 4;">
+            <label>Station ID *</label>
+            <select id="grStationId" disabled>
+              <option value="">Select Asset Type first...</option>
+            </select>
+          </div>
+          <div class="form-row" style="grid-column: 1 / 4;">
+            <label>Name *</label>
+            <input id="grName" type="text" placeholder="Repair/Maintenance name" />
+          </div>
+          <div class="form-row">
+            <label>Severity</label>
+            <input id="grSeverity" type="text" placeholder="Low/Medium/High" />
+          </div>
+          <div class="form-row">
+            <label>Priority</label>
+            <input id="grPriority" type="text" placeholder="1-5" />
+          </div>
+          <div class="form-row">
+            <label>Cost</label>
+            <input id="grCost" type="text" placeholder="15000" />
+          </div>
+          <div class="form-row">
+            <label>Category</label>
+            <select id="grCategory">
+              <option value="Capital">Capital</option>
+              <option value="O&M">O&M</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Type</label>
+            <select id="grType">
+              <option value="Repair">Repair</option>
+              <option value="Monitoring">Monitoring</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+          <button id="grCreate" class="btn btn-primary">Add</button>
+          <button id="grCancel" class="btn btn-ghost">Cancel</button>
+        </div>
+      </div>
+    `;
+    
+    modal.style.display = 'flex';
+    
+    // Wire up cascading dropdowns
+    const companySelect = $('#grCompany');
+    const locationSelect = $('#grLocation');
+    const assetTypeSelect = $('#grAssetType');
+    const stationSelect = $('#grStationId');
+    
+    companySelect.addEventListener('change', () => {
+      const company = companySelect.value;
+      locationSelect.innerHTML = '<option value="">Select Location...</option>';
+      assetTypeSelect.innerHTML = '<option value="">Select Asset Type...</option>';
+      assetTypeSelect.disabled = true;
+      
+      if (company) {
+        const locations = filterOptions.locationsByCompany[company] || [];
+        locations.forEach(loc => {
+          const opt = document.createElement('option');
+          opt.value = loc;
+          opt.textContent = loc;
+          locationSelect.appendChild(opt);
+        });
+        locationSelect.disabled = false;
+      } else {
+        locationSelect.disabled = true;
+      }
+    });
+    
+    locationSelect.addEventListener('change', () => {
+      const location = locationSelect.value;
+      assetTypeSelect.innerHTML = '<option value="">Select Asset Type...</option>';
+      
+      if (location) {
+        const assetTypes = filterOptions.assetTypesByLocation[location] || [];
+        assetTypes.forEach(at => {
+          const opt = document.createElement('option');
+          opt.value = at;
+          opt.textContent = at;
+          assetTypeSelect.appendChild(opt);
+        });
+        assetTypeSelect.disabled = false;
+      } else {
+        assetTypeSelect.disabled = true;
+      }
+    });
+
+    assetTypeSelect.addEventListener('change', () => {
+      const location = locationSelect.value;
+      const assetType = assetTypeSelect.value;
+      stationSelect.innerHTML = '<option value="">Select Station...</option>';
+      
+      if (location && assetType) {
+        // Filter stations by location and asset type
+        const validStations = stationsList.filter(s => 
+          (s.location_file === location || s.province === location) && 
+          s.asset_type === assetType
+        );
+        validStations.forEach(st => {
+          const opt = document.createElement('option');
+          // Store just the station ID as the value
+          opt.value = String(st.station_id).trim();
+          opt.textContent = `${st.station_id} - ${st.name || ''}`;
+          stationSelect.appendChild(opt);
+        });
+        stationSelect.disabled = false;
+      } else {
+        stationSelect.disabled = true;
+      }
+    });
+    
+    // Wire up buttons
+    $('#grCancel').addEventListener('click', () => {
+      modal.style.display = 'none';
+    });
+    
+    $('#grCreate').addEventListener('click', async () => {
+      const location = $('#grLocation').value;
+      const assetType = $('#grAssetType').value;
+      // Ensure we get just the station ID value, not the display text
+      const stationId = String($('#grStationId').value).trim();
+      const repair = {
+        'Station ID': stationId,  // This must match what backend expects
+        'station_id': stationId,  // Also include lowercase version for compatibility
+        'Repair Name': $('#grName').value,  // Excel expects 'Repair Name'
+        name: $('#grName').value,            // Keep for compatibility
+        severity: $('#grSeverity').value,
+        priority: $('#grPriority').value,
+        cost: $('#grCost').value,
+        category: $('#grCategory').value,
+        type: $('#grType').value
+      };
+      
+      if (!location || !assetType || !stationId || !repair.name) {
+        appAlert('Please fill in all required fields');
+        return;
+      }
+      
+      // Validate station exists
+      const stationExists = stationsList.some(s => 
+        s.station_id === stationId && 
+        (s.location_file === location || s.province === location) &&
+        s.asset_type === assetType
+      );
+      
+      if (!stationExists) {
+        appAlert('Invalid Station ID. Please select a valid station.');
+        return;
+      }
+      
+      const result = await window.electronAPI.addRepairToLocation(location, assetType, repair);
+      if (!result.success) {
+        appAlert('Failed to add repair: ' + (result.message || 'Unknown error'));
+        return;
+      }
+      modal.style.display = 'none';
+      await loadRepairsData();
+      // Trigger workplan refresh if it exists
+      if (window.populateWorkplanFromRepairs) window.populateWorkplanFromRepairs();
+    });
+  }
+
+  function getFilteredAssetTypes() {
+    const tree = state.lookupTree;
+    if (!tree) return { companies: [], locationsByCompany: {}, assetTypesByLocation: {} };
+    
+    return {
+      companies: tree.companies || [],
+      locationsByCompany: tree.locationsByCompany || {},
+      assetTypesByLocation: tree.assetsByLocation || {}
+    };
+  }
+
+  async function resolveSelectedRepairs() {
+    if (repairsState.selectedRepairs.size === 0 && repairsState.selectedMaintenance.size === 0) {
+      appAlert('No items selected to resolve');
+      return;
+    }
+    
+    const confirmed = await appConfirm(`Are you sure you want to resolve ${repairsState.selectedRepairs.size + repairsState.selectedMaintenance.size} selected items? This will permanently delete them.`);
+    if (!confirmed) return;
+    
+    // Group by station for efficient deletion
+    const byStation = new Map();
+    [...repairsState.selectedRepairs, ...repairsState.selectedMaintenance].forEach(repair => {
+      const key = `${repair.location}||${repair.assetType}||${repair.station_id}`;
+      if (!byStation.has(key)) byStation.set(key, []);
+      byStation.get(key).push(repair);
+    });
+    
+    // Delete from each station's repairs
+    for (const [key, repairs] of byStation.entries()) {
+      const [location, assetType, stationId] = key.split('||');
+      // Get all repairs for this station
+      const allStationRepairs = repairsState.allRepairs.filter(r => 
+        r.location === location && 
+        r.assetType === assetType && 
+        r.station_id === stationId
+      );
+      // Filter out the selected ones
+      const remaining = allStationRepairs.filter(r => !repairs.includes(r));
+      // Save the remaining repairs
+      await window.electronAPI.saveRepairs('', stationId, remaining);
+    }
+    
+    await loadRepairsData();
+    if (window.populateWorkplanFromRepairs) window.populateWorkplanFromRepairs();
+  }  
+
+  function wireSelectAllCheckboxes() {
+    const selectAllRepairs = $('#selectAllRepairs');
+    const selectAllMaintenance = $('#selectAllMaintenance');
+    
+    if (selectAllRepairs) {
+      selectAllRepairs.addEventListener('change', (e) => {
+        $$('.repair-checkbox').forEach(cb => {
+          cb.checked = e.target.checked;
+          cb.dispatchEvent(new Event('change'));
+        });
+      });
+    }
+    
+    if (selectAllMaintenance) {
+      selectAllMaintenance.addEventListener('change', (e) => {
+        $$('.maintenance-checkbox').forEach(cb => {
+          cb.checked = e.target.checked;
+          cb.dispatchEvent(new Event('change'));
+        });
+      });
+    }
+  }
+
   // ---- Tabs ----------------------------------------------------------------
 
   function bindTabs() {
     const tabOverview = $('#tabOverview');
     const tabAnalytics = $('#tabAnalytics');
+    const tabRepairs = $('#tabRepairs');
     const paneOverview = $('#overviewTab');
     const paneAnalytics = $('#analyticsTab');
+    const paneRepairs = $('#repairsTab');
 
     tabOverview.addEventListener('click', () => {
       tabOverview.classList.add('active');
       tabAnalytics.classList.remove('active');
+      tabRepairs.classList.remove('active');
       paneOverview.style.display = '';
       paneAnalytics.style.display = 'none';
+      paneRepairs.style.display = 'none';
     });
 
     tabAnalytics.addEventListener('click', () => {
       tabAnalytics.classList.add('active');
       tabOverview.classList.remove('active');
+      tabRepairs.classList.remove('active');
       paneAnalytics.style.display = '';
       paneOverview.style.display = 'none';
+      paneRepairs.style.display = 'none';
     });
+
+    tabRepairs.addEventListener('click', async () => {
+      tabRepairs.classList.add('active');
+      tabOverview.classList.remove('active');
+      tabAnalytics.classList.remove('active');
+      paneRepairs.style.display = '';
+      paneOverview.style.display = 'none';
+      paneAnalytics.style.display = 'none';
+      await loadRepairsData();
+      wireSelectAllCheckboxes();
+    });
+
   }
 
   // ---- Initialization -------------------------------------------------------
@@ -484,6 +861,17 @@
     state.initialized = true;
 
     bindTabs();
+
+    // Wire up repairs buttons
+    const btnAddRepair = $('#btnAddGlobalRepair');
+    if (btnAddRepair) {
+      btnAddRepair.addEventListener('click', openGlobalRepairModal);
+    }
+
+    const btnResolve = $('#btnResolveRepairs');
+    if (btnResolve) {
+      btnResolve.addEventListener('click', resolveSelectedRepairs);
+    }
 
     // Wire + Add Statistic
     const addBtn = $('#btnAddStat');

@@ -697,18 +697,21 @@ function prepareStationRowForExcel(station) {
 
 /**
  * Append a repair entry using the new storage model:
- *   data/repairs/<company>/<location>.xlsx  (single "Repairs" sheet)
+ *   data/locations/<location>.xlsx with sheet "{AssetType} {Location} Repairs"
  * If the Station ID already exists in the sheet, the new row is inserted
  * right after the last existing row for that station.
  *
- * @param {Object} payload { company?: string, location: string, repair: Object }
+ * @param {Object} payload { location: string, assetType: string, repair: Object }
  */
 async function appendRepair(payload = {}) {
-  const company  = String(payload.company || 'NHS').trim();
+  const assetType = String(payload.assetType || '').trim();
   const location = String(payload.location || '').trim();
   const repair   = { ...(payload.repair || {}) };
   if (!location) {
     return { success:false, message:'location is required' };
+  }
+  if (!assetType) {
+    return { success:false, message:'assetType is required' };
   }
   // Defaults (worker also enforces these, but this helps callers immediately)
   if (repair.Date === undefined && repair.date === undefined) {
@@ -717,7 +720,7 @@ async function appendRepair(payload = {}) {
   if (repair.Type === undefined && repair.type === undefined) {
     repair.Type = 'Repair';
   }
-  return await excel.appendRepair(company, location, repair);
+  return await excel.appendRepair(location, assetType, repair);
 }
 
 module.exports = {

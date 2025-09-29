@@ -260,6 +260,12 @@
           appAlert(res?.message || 'Failed to save items.');
           return;
         }
+
+        // Refresh dashboard repairs if it exists
+        if (window.loadRepairsData) await window.loadRepairsData();
+        // Refresh workplan if it exists
+        if (window.populateWorkplanFromRepairs) await window.populateWorkplanFromRepairs();
+
         await load(); // reload from disk to be sure
         // stay in view mode after save
         saveBtn.classList.add('btn-success');

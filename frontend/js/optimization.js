@@ -276,7 +276,7 @@ document.addEventListener('DOMContentLoaded', () => {
         applies_to: applies_to_str, parameter, condition, max_weight: maxWeight, options
       }));
       await loadWorkplan();
-      await populateWorkplanFromImport();
+      await populateWorkplanFromRepairs();
       closeAddParamModal();
     });
 
@@ -294,7 +294,7 @@ document.addEventListener('DOMContentLoaded', () => {
       });
       await window.electronAPI.saveAlgorithmParameters(toSave, { replace: true });
       await loadWorkplan();
-      await populateWorkplanFromImport();
+      await populateWorkplanFromRepairs();
       const total = toSave.reduce((s,p)=>s+(p.weight||0),0);
       statsDiv.innerHTML = `<p><strong>Total weight:</strong> ${total}</p>`;
     });
@@ -344,7 +344,7 @@ document.addEventListener('DOMContentLoaded', () => {
       headers.forEach(text => { const th=document.createElement('th'); th.textContent=text; hdrRow.appendChild(th); });
 
       dashPlaceholder.querySelector('#workplanBody').innerHTML = '';
-      await populateWorkplanFromImport();
+      await populateWorkplanFromRepairs();
     }
 
     // ===== Optimization I
@@ -542,32 +542,11 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // ===== Workplan import (bottom of container) =====
-    const importBar = document.createElement('div');
-    importBar.style = 'margin-top:12px; display:flex; gap:10px; align-items:center;';
-    const importBtn = document.createElement('button'); importBtn.id='btnImportRepairs'; importBtn.textContent='Import Repairs'; importBtn.className='btn';
-    const importInfo = document.createElement('span'); importInfo.style='opacity:.75; font-size:12px;'; importInfo.textContent='No file imported';
-    const fileInput = document.createElement('input'); fileInput.type='file';
-    fileInput.accept='.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'; fileInput.style.display='none';
-    importBtn.addEventListener('click', () => fileInput.click());
-    fileInput.addEventListener('change', async (e) => {
-      const f = (e.target.files || [])[0]; if (!f) return;
-      const buf = await f.arrayBuffer(); const bytes = new Uint8Array(buf);
-      let bin=''; for (let b of bytes) bin += String.fromCharCode(b);
-      const b64 = btoa(bin);
-      const res = await window.electronAPI.importRepairsExcel(b64);
-      if (!res || !res.success) { alert('Import failed: ' + (res && res.message ? res.message : 'Unknown error')); return; }
-      window.__repairsImportCache = res.rows || [];
-      importInfo.textContent = `Imported ${window.__repairsImportCache.length} rows`;
-      await loadWorkplan();
-      await populateWorkplanFromImport();
-    });
-    importBar.append(importBtn, importInfo, fileInput);
-    const wpContainerEl = dashPlaceholder.querySelector('#workplanContainer');
-    if (wpContainerEl) wpContainerEl.appendChild(importBar);
+    async function populateWorkplanFromRepairs() {
+      // Get repairs directly from Excel instead of import
+      const allRepairs = await window.electronAPI.getAllRepairs();
+      if (!allRepairs || !allRepairs.length) return;
 
-    async function populateWorkplanFromImport() {
-      const rows = window.__repairsImportCache || []; if (!rows.length) return;
       const hdrRow = dashPlaceholder.querySelector('#workplanHeaders');
       const tbody  = dashPlaceholder.querySelector('#workplanBody'); if (!hdrRow || !tbody) return;
       const headers = Array.from(hdrRow.querySelectorAll('th')).map(th => th.textContent.trim());
@@ -575,20 +554,20 @@ document.addEventListener('DOMContentLoaded', () => {
       const stationList = await window.electronAPI.getStationData();
       const siteByStation = new Map((stationList || []).map(s => [String(s.station_id), String(s.name || '')]));
       tbody.innerHTML = '';
-      rows.forEach(r => {
+      // Group repairs by station and aggregate
+      allRepairs.forEach(repair => {
         const tr = document.createElement('tr');
         headers.forEach(h => {
           const td = document.createElement('td'); let val = '';
           if (h === 'Site Name') {
-            const stn = r['Station Number'] != null ? String(r['Station Number'])
-                       : (r['Station ID'] != null ? String(r['Station ID']) : '');
-            val = siteByStation.get(stn) || '';
+            val = siteByStation.get(repair.station_id) || '';
           } else if (h === 'Station Number') {
-            val = r['Station Number'] != null ? r['Station Number'] : (r['Station ID'] || '');
+            val = repair.station_id || '';
           } else if (h === 'Operation') {
-            val = (r['Operation'] != null) ? r['Operation'] : (r['Repair Name'] != null ? r['Repair Name'] : '');
+            val = repair.name || '';
           } else if (paramSet.has(h)) {
-            val = r.hasOwnProperty(h) && r[h] != null ? r[h] : '';
+            // Leave parameter columns empty for now
+            val = '';
           }
           td.textContent = val == null ? '' : String(val); tr.appendChild(td);
         });
@@ -596,7 +575,11 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
+    // Expose globally for refresh from other views
+    window.populateWorkplanFromRepairs = populateWorkplanFromRepairs;
+
     await loadWorkplan();
+    await populateWorkplanFromRepairs();
     recalcPercentageTotal();
   }
 

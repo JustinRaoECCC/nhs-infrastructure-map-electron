@@ -8,6 +8,7 @@
   <div class="stats-tabs">
     <button id="tabOverview" class="tab-button active" type="button">Overview</button>
     <button id="tabAnalytics" class="tab-button" type="button">Analytics</button>
+    <button id="tabRepairs" class="tab-button" type="button">Repairs and Maintenance</button>
   </div>
 
   <!-- OVERVIEW (always uses ALL data; not affected by filters) -->
@@ -51,6 +52,73 @@
     </div>
 
     <div id="statsCards" class="stats-cards"><!-- dynamic stat cards --></div>
+  </section>
+
+  <!-- REPAIRS AND MAINTENANCE -->
+  <section id="repairsTab" class="stats-tab" style="display:none;">
+    <div class="repairs-toolbar">
+      <button id="btnAddGlobalRepair" class="btn">+ Add Repair/Maintenance</button>
+      <button id="btnResolveRepairs" class="btn btn-ghost">Resolve Selected</button>
+    </div>
+
+    <div class="repairs-tables">
+      <!-- Repairs Table -->
+      <div class="panel">
+        <div class="panel-title">Repairs</div>
+        <div class="table-scroll">
+          <table class="data-table" id="globalRepairsTable">
+            <thead>
+              <tr>
+                <th style="width:40px;">
+                  <input type="checkbox" id="selectAllRepairs" title="Select all" />
+                </th>
+                <th>Date</th>
+                <th>Station ID</th>
+                <th>Location</th>
+                <th>Asset Type</th>
+                <th>Repair Name</th>
+                <th>Severity</th>
+                <th>Priority</th>
+                <th>Cost</th>
+                <th>Category</th>
+              </tr>
+            </thead>
+            <tbody id="globalRepairsBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Maintenance Table -->
+      <div class="panel" style="margin-top:20px;">
+        <div class="panel-title">Maintenance</div>
+        <div class="table-scroll">
+          <table class="data-table" id="globalMaintenanceTable">
+            <thead>
+              <tr>
+                <th style="width:40px;">
+                  <input type="checkbox" id="selectAllMaintenance" />
+                </th>
+                <th>Date</th>
+                <th>Station ID</th>
+                <th>Location</th>
+                <th>Asset Type</th>
+                <th>Item</th>
+                <th>Severity</th>
+                <th>Priority</th>
+                <th>Cost</th>
+                <th>Category</th>
+              </tr>
+            </thead>
+            <tbody id="globalMaintenanceBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Repair Modal (defined in separate file) -->
+    <div id="globalRepairModal" class="modal" style="display:none;">
+      <!-- Content will be added by JS -->
+    </div>
   </section>
 
   <!-- lightweight popup menu for + Add Statistic -->

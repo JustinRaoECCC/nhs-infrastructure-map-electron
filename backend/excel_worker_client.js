@@ -78,9 +78,16 @@ module.exports = {
   setAssetTypeLink: (assetType, company, location, link) =>
     call('setAssetTypeLink', assetType, company, location, link),
   // Repairs (new single-sheet model)
-  appendRepair: (company, location, repair) =>
-    call('appendRepair', company, location, repair),
-  // NEW: Inspection keywords (global list stored in lookups.xlsx)
+  appendRepair: (location, assetType, repair) =>
+    call('appendRepair', location, assetType, repair),
+  listRepairsForStation: (location, assetType, stationId) =>
+    call('listRepairsForStation', location, assetType, stationId),
+  saveStationRepairs: (location, assetType, stationId, repairs) =>
+    call('saveStationRepairs', location, assetType, stationId, repairs),
+  getAllRepairs: () => call('getAllRepairs'),
+  deleteRepair: (location, assetType, stationId, repairIndex) =>
+    call('deleteRepair', location, assetType, stationId, repairIndex),
+  // Inspection keywords (global list stored in lookups.xlsx)
   setInspectionKeywords: (keywords) =>
     call('setInspectionKeywords', Array.isArray(keywords) ? keywords : []),
   // NEW: Algorithm/Workplan

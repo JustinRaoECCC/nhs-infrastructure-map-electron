@@ -102,6 +102,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveRepairs: (siteName, stationId, items) =>
     ipcRenderer.invoke('repairs:save', siteName, stationId, items),
 
+  // Global repairs functions for dashboard
+  getAllRepairs: () =>
+    ipcRenderer.invoke('repairs:getAll'),
+
+  addRepairToLocation: (location, assetType, repair) =>
+    ipcRenderer.invoke('repairs:add', location, assetType, repair),
+
   // Status / Repair settings
   getStatusRepairSettings: () => ipcRenderer.invoke('status:get'),
   setStatusColor:          (statusKey, color) => ipcRenderer.invoke('status:setColor', statusKey, color),

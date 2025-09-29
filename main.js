@@ -1,3 +1,5 @@
+// main.js
+
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const os   = require('os');
@@ -241,6 +243,13 @@ ipcMain.handle('repairs:list', async (_evt, siteName, stationId) =>
 );
 ipcMain.handle('repairs:save', async (_evt, siteName, stationId, items) =>
   repairsBackend.saveRepairs(siteName, stationId, items)
+);
+
+ipcMain.handle('repairs:getAll', async () =>
+  repairsBackend.getAllRepairs()
+);
+ipcMain.handle('repairs:add', async (_evt, location, assetType, repair) =>
+  repairsBackend.addRepair(location, assetType, repair)
 );
 
 // ─── IPC: Nuke (delete .xlsx + cache, then relaunch) ───────────────────────
