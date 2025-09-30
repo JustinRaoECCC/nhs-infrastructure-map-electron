@@ -136,6 +136,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Optimization I / II
   optimizeWorkplan: (payload) => ipcRenderer.invoke('algo:optimizeWorkplan', payload),
   runGeographicalAlgorithm: (payload) => ipcRenderer.invoke('algo:runGeographical', payload),
+
+  // ─── Authentication ──────────────────────────────────────────────────────
+  hasUsers: () => ipcRenderer.invoke('auth:hasUsers'),
+  createUser: (userData) => ipcRenderer.invoke('auth:createUser', userData),
+  loginUser: (name, password) => ipcRenderer.invoke('auth:login', name, password),
+  logoutUser: () => ipcRenderer.invoke('auth:logout'),
+  getCurrentUser: () => ipcRenderer.invoke('auth:getCurrentUser'),
+  getAllUsers: () => ipcRenderer.invoke('auth:getAllUsers'),
+  navigateToMain: () => ipcRenderer.invoke('auth:navigateToMain'),
+
 });
 
 // --- BEGIN: appAlert (custom modal replacement for window.alert) ---

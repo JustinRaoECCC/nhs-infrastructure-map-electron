@@ -3298,3 +3298,359 @@ html.modal-open, body.modal-open { overflow: hidden; }
   color: var(--stats-muted);
   padding: 6px 10px;
 }
+
+/* Add at the end of style.css */
+
+/* ─── Login Page ───────────────────────────────────────────────────────── */
+.login-page {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.login-container {
+  width: 100%;
+  max-width: 450px;
+  padding: 20px;
+}
+
+.login-card {
+  background: white;
+  border-radius: 20px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  padding: 40px;
+}
+
+.login-title {
+  text-align: center;
+  font-size: 28px;
+  margin: 0 0 30px;
+  color: #333;
+  font-weight: 700;
+}
+
+.auth-form h2 {
+  margin: 0 0 20px;
+  font-size: 20px;
+  color: #333;
+}
+
+.btn-block {
+  width: 100%;
+  margin-top: 20px;
+}
+
+.auth-switch {
+  text-align: center;
+  margin-top: 20px;
+  color: #666;
+  font-size: 14px;
+}
+
+.auth-switch a {
+  color: #667eea;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.auth-switch a:hover {
+  text-decoration: underline;
+}
+
+/* ─── Users View ────────────────────────────────────────────────────────── */
+.users-view {
+  padding: 24px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.users-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 30px;
+}
+
+.users-header h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+  color: #333;
+}
+
+.users-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+  gap: 24px;
+}
+
+.user-card {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  padding: 20px;
+  position: relative;
+  transition: all 0.3s ease;
+  border: 2px solid transparent;
+}
+
+.user-card:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  transform: translateY(-2px);
+}
+
+.user-card.admin {
+  border-color: #fbbf24;
+  background: linear-gradient(to bottom, #fffbeb, white);
+}
+
+.user-card.active .user-status {
+  color: #059669;
+}
+
+.user-status {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: #6b7280;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #d1d5db;
+}
+
+.status-active .status-dot {
+  background: #10b981;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2); }
+  50% { box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.1); }
+  100% { box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2); }
+}
+
+.user-avatar {
+  width: 64px;
+  height: 64px;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.user-avatar span {
+  color: white;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.user-info {
+  margin-bottom: 20px;
+}
+
+.user-name {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.user-email {
+  margin: 0;
+  font-size: 14px;
+  color: #6b7280;
+}
+
+.user-details {
+  border-top: 1px solid #e5e7eb;
+  padding-top: 16px;
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  font-size: 14px;
+}
+
+.detail-label {
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.detail-value {
+  color: #111827;
+  font-weight: 600;
+}
+
+.password-masked {
+  font-family: monospace;
+  letter-spacing: 1px;
+}
+
+/* ─── Modal Overlay ─────────────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: white;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 500px;
+  max-height: 80vh;
+  overflow: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: #6b7280;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+
+.modal-close:hover {
+  background: #f3f4f6;
+}
+
+.modal-body {
+  padding: 20px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 20px;
+  border-top: 1px solid #e5e7eb;
+}
+
+/* ─── Confirm Modal Styles ─────────────────────────────────────────────── */
+.app-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 2147483645;
+}
+
+.app-confirm-overlay.show {
+  display: flex;
+}
+
+.app-confirm-modal {
+  max-width: 420px;
+  width: calc(100% - 32px);
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  padding: 20px;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+}
+
+.app-confirm-title {
+  margin: 0 0 12px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.app-confirm-message {
+  margin: 0 0 20px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  line-height: 1.4;
+}
+
+.app-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.app-confirm-btn {
+  appearance: none;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.app-confirm-cancel {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.app-confirm-cancel:hover {
+  background: #e5e7eb;
+}
+
+.app-confirm-ok {
+  background: #111;
+  color: #fff;
+}
+
+.app-confirm-ok:hover {
+  background: #000;
+}
+
+.app-confirm--danger .app-confirm-ok {
+  background: #dc2626;
+}
+
+.app-confirm--danger .app-confirm-ok:hover {
+  background: #b91c1c;
+}

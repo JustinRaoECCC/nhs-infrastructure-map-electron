@@ -97,4 +97,11 @@ module.exports = {
   saveWorkplanConstants: (rows) => call('saveWorkplanConstants', rows),
   getCustomWeights: () => call('getCustomWeights'),
   addCustomWeight: (weight, active) => call('addCustomWeight', weight, !!active),
+  // Auth functions
+  createAuthWorkbook: () => call('createAuthWorkbook'),
+  createAuthUser: (userData) => call('createAuthUser', userData),
+  loginAuthUser: (name, hashedPassword) => call('loginAuthUser', name, hashedPassword),
+  logoutAuthUser: (name) => call('logoutAuthUser', name),
+  getAllAuthUsers: () => call('getAllAuthUsers'),
+  hasAuthUsers: () => call('hasAuthUsers'),
 };

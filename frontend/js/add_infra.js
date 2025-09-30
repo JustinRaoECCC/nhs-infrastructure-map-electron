@@ -169,6 +169,34 @@
     } catch (_) {}
   }
 
+  async function showUsersView() {
+    setActiveNav('navUsers');
+    showViews({ map: false, list: false, docs: false, wizard: false, settings: false, users: true });
+    safeEnableFullWidthMode();
+
+    const container = document.getElementById('usersContainer');
+    if (!container) return;
+
+    if (!container.dataset.loaded) {
+      try {
+        const resp = await fetch('users.html');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        container.innerHTML = await resp.text();
+        container.dataset.loaded = '1';
+        if (window.initUsersView) requestAnimationFrame(() => window.initUsersView());
+      } catch (e) {
+        console.error('[showUsersView] failed to load users.html:', e);
+        container.innerHTML = `
+          <div id="usersPage" class="users-view">
+            <h2>Users</h2>
+            <p>Failed to load users.</p>
+          </div>`;
+      }
+    } else {
+      if (window.initUsersView) window.initUsersView();
+    }
+  }
+
   function showViews({ map = false, list = false, docs = false, wizard = false, settings = false }) {
     const mapEl      = document.getElementById('mapContainer');
     const listEl     = document.getElementById('listContainer');
@@ -179,6 +207,7 @@
     const statsEl    = document.getElementById('statisticsContainer');
     const rightToggleBtn = document.getElementById('toggleRight');
     const rightPanel = document.getElementById('rightPanel');
+    const usersEl    = document.getElementById('usersContainer');
 
     if (mapEl)      mapEl.style.display      = map    ? 'block' : 'none';
     if (listEl)     listEl.style.display     = list   ? 'block' : 'none';
@@ -186,8 +215,9 @@
     if (wizardWrap) wizardWrap.style.display = wizard ? 'block' : 'none';
     if (settingsEl) settingsEl.style.display = settings ? 'block' : 'none';
     if (statsEl)    statsEl.style.display    = arguments[0]?.stats ? 'block' : 'none';
+    if (usersEl)    usersEl.style.display    = arguments[0]?.users ? 'block' : 'none';
 
-    if (stationEl && (map || list || docs || wizard || settings || arguments[0]?.stats))
+    if (stationEl && (map || list || docs || wizard || settings || arguments[0]?.stats || arguments[0]?.users))
       stationEl.style.display = 'none';
 
     // Hide the right toggle while on Optimization (docs), show it otherwise
@@ -1527,6 +1557,27 @@
       navSettings.addEventListener('click', (e) => { e.preventDefault(); showSettingsView(); });
       navSettings.dataset.bound = '1';
     }
+
+    const navUsers = document.getElementById('navUsers');
+    const navLogout = document.getElementById('navLogout');
+    
+    if (navUsers && !navUsers.dataset.bound) {
+      navUsers.addEventListener('click', (e) => { e.preventDefault(); showUsersView(); });
+      navUsers.dataset.bound = '1';
+    }
+    
+    if (navLogout && !navLogout.dataset.bound) {
+      navLogout.addEventListener('click', async (e) => { 
+        e.preventDefault();
+        const confirmed = await appConfirm('Are you sure you want to logout?');
+        if (confirmed) {
+          await window.electronAPI.logoutUser();
+          window.close();
+        }
+      });
+      navLogout.dataset.bound = '1';
+    }
+
   });
 
   // Expose for filters.js [+] actions

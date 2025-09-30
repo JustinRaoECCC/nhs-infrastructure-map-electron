@@ -51,8 +51,8 @@
             <ul class="nav-list">
               <li class="nav-item" id="navNewCompany">＋ New Company</li>
               <li class="nav-item" id="navSettings">⚙ Settings</li>
-              <li class="nav-item">👤 Users</li>
-              <li class="nav-item">⏻ Logout</li>
+              <li class="nav-item" id="navUsers">👤 Users</li>
+              <li class="nav-item" id="navLogout">⏻ Logout</li>
             </ul>
           </div>
         </aside>
@@ -87,6 +87,9 @@
 
         <!-- Settings (content loaded from settings.html) -->
         <div id="settingsContainer" style="display:none;"></div>
+
+        <!-- Users View (content loaded from users.html) -->
+        <div id="usersContainer" class="view" style="display:none;"></div>
 
         <!-- Right Panel -->
         <aside class="right-panel" id="rightPanel">
@@ -129,6 +132,8 @@
   <script defer src="js/repairs.js"></script>
   <script defer src="js/nuke.js"></script>
   <script defer src="js/link_settings.js"></script>
+  <script defer src="js/users.js"></script>
+  <script defer src="js/auth.js"></script>
   <!-- If Leaflet still missing, show banner -->
   <script>
     // gentler warn: give CDN time to load

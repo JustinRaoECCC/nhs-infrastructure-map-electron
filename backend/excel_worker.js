@@ -93,6 +93,7 @@ function ensureTwoRowHeader(ws) {
   ws.getRow(2).values = [, ...fields];
 }
 
+
 // ─── New sheet names ───────────────────────────────────────────────────────
 const ALG_PARAMS_SHEET       = 'Algorithm Parameters';
 const WORKPLAN_CONST_SHEET   = 'Workplan Constants';
@@ -1956,6 +1957,208 @@ async function addCustomWeight(weight, active = true) {
   return { success:true };
 }
 
+// ─── Auth Functions ─────────────────────────────────────────────────────
+async function createAuthWorkbook() {
+  ensureDir(DATA_DIR);
+  const AUTH_FILE = path.join(DATA_DIR, 'Login_Information.xlsx');
+  
+  const _ExcelJS = getExcel();
+  const workbook = new _ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Users');
+  
+  // Add single header row
+  sheet.addRow(['Name','Email','Password','Admin','Permissions','Status','Created','LastLogin']);
+
+  await workbook.xlsx.writeFile(AUTH_FILE);
+  return { success: true };
+}
+
+async function createAuthUser(userData) {
+  const AUTH_FILE = path.join(DATA_DIR, 'Login_Information.xlsx');
+  const _ExcelJS = getExcel();
+  const workbook = new _ExcelJS.Workbook();
+  
+  // Ensure file exists
+  if (!fs.existsSync(AUTH_FILE)) {
+    await createAuthWorkbook();
+    await workbook.xlsx.readFile(AUTH_FILE);
+  } else {
+    await workbook.xlsx.readFile(AUTH_FILE);
+  }
+  
+  const sheet = workbook.getWorksheet('Users');
+  if (!sheet) {
+    return { success: false, message: 'Users sheet not found' };
+  }
+  
+  // Check if user already exists (column indices: 1=Name, 2=Email)
+  let userExists = false;
+  const wantName  = String(userData.name  || '').trim().toLowerCase();
+  const wantEmail = String(userData.email || '').trim().toLowerCase();
+  
+  sheet.eachRow((row, rowNum) => {
+    if (rowNum === 1) return; // skip header
+    const rname  = String(row.getCell(1).value || '').trim().toLowerCase();
+    const remail = String(row.getCell(2).value || '').trim().toLowerCase();
+    if (rname === wantName || (wantEmail && remail === wantEmail)) {
+      userExists = true;
+    }
+  });
+
+  if (userExists) {
+    return { success: false, message: 'User already exists' };
+  }
+
+  // Add new user (columns: Name, Email, Password, Admin, Permissions, Status, Created, LastLogin)
+  sheet.addRow([
+    userData.name,
+    userData.email,
+    userData.password,
+    userData.admin,
+    userData.permissions,
+    userData.status,
+    userData.created,
+    userData.lastLogin || ''
+  ]);
+  
+  await workbook.xlsx.writeFile(AUTH_FILE);
+  return { success: true };
+}
+
+async function loginAuthUser(name, hashedPassword) {
+  const AUTH_FILE = path.join(DATA_DIR, 'Login_Information.xlsx');
+  const _ExcelJS = getExcel();
+  const workbook = new _ExcelJS.Workbook();
+  
+  await workbook.xlsx.readFile(AUTH_FILE);
+  const sheet = workbook.getWorksheet('Users');
+  
+  if (!sheet) {
+    return { success: false, message: 'Users sheet not found' };
+  }
+
+  let foundUser = null;
+  let foundRowNum = 0;
+
+  sheet.eachRow((row, rowNum) => {
+    if (rowNum === 1) return; // skip header
+
+    const rowName = row.getCell(1).value;
+    const rowPassword = row.getCell(3).value;
+    
+    if (rowName === name && rowPassword === hashedPassword) {
+      foundUser = {
+        name: rowName,
+        email: row.getCell(2).value,
+        admin: row.getCell(4).value === 'Yes',
+        permissions: row.getCell(5).value
+      };
+      foundRowNum = rowNum;
+    }
+  });
+
+  if (!foundUser) {
+    return { success: false, message: 'Invalid credentials' };
+  }
+
+  // Update status and last login (columns: 6=Status, 8=LastLogin)
+  const row = sheet.getRow(foundRowNum);
+  row.getCell(6).value = 'Active';
+  row.getCell(8).value = new Date().toISOString();
+  
+  await workbook.xlsx.writeFile(AUTH_FILE);
+  return { success: true, user: foundUser };
+}
+
+async function logoutAuthUser(name) {
+  const AUTH_FILE = path.join(DATA_DIR, 'Login_Information.xlsx');
+  const _ExcelJS = getExcel();
+  const workbook = new _ExcelJS.Workbook();
+  
+  await workbook.xlsx.readFile(AUTH_FILE);
+  const sheet = workbook.getWorksheet('Users');
+  
+  if (!sheet) {
+    return { success: true }; // Silent fail for logout
+  }
+
+  sheet.eachRow((row, rowNum) => {
+    if (rowNum > 1 && row.getCell(1).value === name) {
+      row.getCell(6).value = 'Inactive';
+    }
+  });
+
+  await workbook.xlsx.writeFile(AUTH_FILE);
+  return { success: true };
+}
+
+async function getAllAuthUsers() {
+  const AUTH_FILE = path.join(DATA_DIR, 'Login_Information.xlsx');
+  
+  if (!fs.existsSync(AUTH_FILE)) {
+    return { users: [] };
+  }
+  
+  const _ExcelJS = getExcel();
+  const workbook = new _ExcelJS.Workbook();
+  await workbook.xlsx.readFile(AUTH_FILE);
+  const sheet = workbook.getWorksheet('Users');
+  
+  if (!sheet) {
+    return { users: [] };
+  }
+  
+  const users = [];
+  sheet.eachRow((row, rowNum) => {
+    if (rowNum === 1) return; // skip header
+    users.push({
+      name: row.getCell(1).value,
+      email: row.getCell(2).value,
+      password: row.getCell(3).value,
+      admin: row.getCell(4).value === 'Yes',
+      permissions: row.getCell(5).value,
+      status: row.getCell(6).value,
+      created: row.getCell(7).value,
+      lastLogin: row.getCell(8).value
+    });
+  });
+
+  return { users };
+}
+
+async function hasAuthUsers() {
+  const AUTH_FILE = path.join(DATA_DIR, 'Login_Information.xlsx');
+  
+  if (!fs.existsSync(AUTH_FILE)) {
+    return { hasUsers: false };
+  }
+  
+  const _ExcelJS = getExcel();
+  const workbook = new _ExcelJS.Workbook();
+  await workbook.xlsx.readFile(AUTH_FILE);
+  const sheet = workbook.getWorksheet('Users');
+  
+  if (!sheet) {
+    return { hasUsers: false };
+  }
+  
+  return { hasUsers: sheet.rowCount > 1 };
+}
+async function hasAuthUsers() {
+  const AUTH_FILE = path.join(DATA_DIR, 'Login_Information.xlsx');
+  
+  if (!fs.existsSync(AUTH_FILE)) {
+    return { hasUsers: false };
+  }
+  
+  const _ExcelJS = getExcel();
+  const workbook = new _ExcelJS.Workbook();
+  await workbook.xlsx.readFile(AUTH_FILE);
+  const sheet = workbook.getWorksheet('Users');
+  
+  return { hasUsers: sheet.rowCount > 1 };
+}
+
 // ─── RPC shim ─────────────────────────────────────────────────────────────
 const handlers = {
   ping: async () => 'pong',
@@ -1994,7 +2197,14 @@ const handlers = {
   getWorkplanConstants,
   saveWorkplanConstants,
   getCustomWeights,
-  addCustomWeight
+  addCustomWeight,
+  // Auth handlers
+  createAuthWorkbook,
+  createAuthUser,
+  loginAuthUser,
+  logoutAuthUser,
+  getAllAuthUsers,
+  hasAuthUsers,
 };
 
 parentPort.on('message', async (msg) => {

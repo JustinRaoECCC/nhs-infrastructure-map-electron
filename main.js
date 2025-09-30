@@ -12,11 +12,40 @@ const excelClient = require('./backend/excel_worker_client');
 const nukeBackend = require('./backend/nuke');
 const inspectionHistory = require('./backend/inspection_history');
 const repairsBackend = require('./backend/repairs');
+const auth = require('./backend/auth')
 
 app.disableHardwareAcceleration();
 
+let mainWindow = null;
+let loginWindow = null;
+
+async function createLoginWindow() {
+  loginWindow = new BrowserWindow({
+    width: 500,
+    height: 700,
+    show: false,
+    resizable: false,
+    backgroundColor: '#ffffff',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    }
+  });
+
+  loginWindow.loadFile(path.join(__dirname, 'frontend', 'login.html'));
+  
+  loginWindow.once('ready-to-show', () => {
+    loginWindow.show();
+  });
+
+  loginWindow.on('closed', () => {
+    loginWindow = null;
+  });
+}
+
 async function createWindow () {
-  const win = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
     show: false,
@@ -29,9 +58,9 @@ async function createWindow () {
   });
 
   // Load UI immediately; heavy I/O happens after first paint
-  win.loadFile(path.join(__dirname, 'frontend', 'index.html'));
-  win.once('ready-to-show', () => {
-    win.show();
+  mainWindow.loadFile(path.join(__dirname, 'frontend', 'index.html'));
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
 
     // Kick off Excel load immediately after paint; progress goes to renderer
     setTimeout(() => {
@@ -41,6 +70,13 @@ async function createWindow () {
       lookups.primeAllCaches?.().catch(err => console.error('[prime caches @show] failed:', err));
     }, 40);
   });
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+    auth.logoutUser();
+    app.quit();
+  });
+
 }
 
 // Boot-time lookups bootstrap (runs as soon as the app is ready)
@@ -69,7 +105,11 @@ app.whenReady().then(() => {
     lookups.ensureDataFoldersSync();
   }
   bootstrapLookupsAtBoot();
-  createWindow();
+
+  // Initialize auth and show login window
+  auth.initAuthWorkbook()
+    .catch(e => console.error('[auth.initAuthWorkbook] failed:', e))
+    .finally(() => createLoginWindow());
 
   // Forward worker progress to all windows
   excelClient.onProgress((data) => {
@@ -83,7 +123,7 @@ app.whenReady().then(() => {
   });
 
   app.on('activate', function () {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) createLoginWindow();
   });
 
   // Warm the color cache ASAP without blocking the UI
@@ -347,3 +387,18 @@ ipcMain.handle('excel:addCustomWeight', async (_e, weight, active) =>
 // Optimization I / II (now call the dedicated algorithms module)
 ipcMain.handle('algo:optimizeWorkplan', async (_e, payload) => algorithms.optimizeWorkplan(payload));
 ipcMain.handle('algo:runGeographical', async (_e, payload) => algorithms.runGeographicalAlgorithm(payload));
+
+// ─── IPC: Authentication ───────────────────────────────────────────────────
+ipcMain.handle('auth:hasUsers', async () => auth.hasUsers());
+ipcMain.handle('auth:createUser', async (_evt, userData) => auth.createUser(userData));
+ipcMain.handle('auth:login', async (_evt, name, password) => auth.loginUser(name, password));
+ipcMain.handle('auth:logout', async () => auth.logoutUser());
+ipcMain.handle('auth:getCurrentUser', async () => auth.getCurrentUser());
+ipcMain.handle('auth:getAllUsers', async () => auth.getAllUsers());
+
+ipcMain.handle('auth:navigateToMain', async () => {
+  if (loginWindow) {
+    loginWindow.close();
+  }
+  createWindow();
+});
