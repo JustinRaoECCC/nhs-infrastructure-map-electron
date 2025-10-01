@@ -19,7 +19,11 @@
     return ('#' + padded).toLowerCase();
   }
   function rowKey(assetType, company, location) {
-    return `${assetType}@@${company}@@${location}`;
+    // Normalize to lowercase to match backend storage
+    const at = String(assetType || '').trim().toLowerCase();
+    const co = String(company || '').trim().toLowerCase();
+    const loc = String(location || '').trim().toLowerCase();
+    return `${at}@@${co}@@${loc}`;
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -47,14 +51,14 @@
   }
   async function getLookupTreeSafe() {
     const api = window.electronAPI || {};
-    const empty = { companies: [], locationsByCompany: {}, assetsByLocation: {} };
+    const empty = { companies: [], locationsByCompany: {}, assetsByCompanyLocation: {} };
     if (typeof api.getLookupTree !== 'function') return empty;
     try {
       const t = await api.getLookupTree();
       if (t && Array.isArray(t.companies)) return {
         companies: t.companies || [],
         locationsByCompany: t.locationsByCompany || {},
-        assetsByLocation: t.assetsByLocation || {}
+        assetsByCompanyLocation: t.assetsByCompanyLocation || {}
       };
     } catch (e) { console.error('[settings] getLookupTree failed:', e); }
     return empty;
@@ -123,7 +127,7 @@
         <td>${r.asset_type}</td>
         <td>${r.location}</td>
         <td>
-          <input type="color" value="${r.color}" data-asset="${r.asset_type}" data-location="${r.location}" style="width:42px;height:28px;border:0;background:transparent;cursor:pointer;" />
+          <input type="color" value="${r.color}" data-asset="${r.asset_type}" data-company="${r.company}" data-location="${r.location}" style="width:42px;height:28px;border:0;background:transparent;cursor:pointer;" />
           <code style="margin-left:.5rem;opacity:.8;">${r.color}</code>
         </td>
       `;
@@ -136,8 +140,8 @@
       const inp = e.target;
       if (!(inp instanceof HTMLInputElement) || inp.type !== 'color') return;
       const at  = inp.dataset.asset || '';
+      const co  = inp.dataset.company || '';
       const loc = inp.dataset.location || '';
-      const co  = inp.closest('tr')?.children?.[0]?.textContent?.trim() || '';
       const val = normalizeHex(inp.value);
       const code = inp.parentElement?.querySelector('code');
       if (code) code.textContent = val;
@@ -426,7 +430,9 @@
     const byCo = lookups.locationsByCompany || {};
     Object.keys(byCo).sort().forEach(company => {
       (byCo[company] || []).slice().sort().forEach(loc => {
-        const ats = (lookups.assetsByLocation?.[loc] || []).slice().sort();
+        // Use company-scoped assets
+        const companyAssets = lookups.assetsByCompanyLocation?.[company] || {};
+        const ats = (companyAssets[loc] || []).slice().sort();
         ats.forEach(at => {
           const c = colorMap[rowKey(at, company, loc)];
           const color = normalizeHex(c || HEX_DEFAULT);

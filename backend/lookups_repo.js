@@ -9,7 +9,7 @@ const excel = require('./excel_worker_client');
 // ─── Paths ─────────────────────────────────────────────────────────────────
 const DATA_DIR      = process.env.NHS_DATA_DIR || path.join(__dirname, '..', 'data');
 const LOOKUPS_PATH  = path.join(DATA_DIR, 'lookups.xlsx');
-const LOCATIONS_DIR = path.join(DATA_DIR, 'locations');
+const COMPANIES_DIR = path.join(DATA_DIR, 'companies');
 const CACHE_PATH    = path.join(DATA_DIR, '.lookups_cache.json');
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -32,7 +32,7 @@ function ensureDataFoldersSync() {
   try {
     // Create required directories
     ensureDir(DATA_DIR);
-    ensureDir(LOCATIONS_DIR);
+    ensureDir(COMPANIES_DIR);
   } catch (e) { /* swallow — better to not crash on first run */ }
 }
 
@@ -46,6 +46,7 @@ let _cache = {
   companies: [],
   locsByCompany: {},               // { [company]: string[] }
   assetsByLocation: {},            // { [location]: string[] }
+  assetsByCompanyLocation: {},     // { [company]: { [location]: string[] } }
   // NEW: status/repair settings
   statusColors: new Map(),         // Map<statusKey, color> (keys lowercased: inactive, mothballed, unknown)
   applyStatusColorsOnMap: false,
@@ -83,8 +84,7 @@ function _loadJsonCache(mtimeMs) {
       ),
       companies: raw.companies || [],
       locsByCompany: raw.locsByCompany || {},
-      assetsByLocation: raw.assetsByLocation || {},
-      assetsByLocation: raw.assetsByLocation || {},
+      assetsByCompanyLocation: raw.assetsByCompanyLocation || {},
       // NEW
       statusColors: new Map(Object.entries(raw.statusColors || {})),
       applyStatusColorsOnMap: !!raw.applyStatusColorsOnMap,
@@ -140,7 +140,7 @@ function _saveJsonCache() {
       ),
       companies: _cache.companies,
       locsByCompany: _cache.locsByCompany,
-      assetsByLocation: _cache.assetsByLocation,
+      assetsByCompanyLocation: _cache.assetsByCompanyLocation,
       // NEW
       statusColors: Object.fromEntries(_cache.statusColors),
       applyStatusColorsOnMap: _cache.applyStatusColorsOnMap,
@@ -192,7 +192,7 @@ async function _primeAllCaches() {
 
   // Locations + assets relations
   const locsByCompany = snap.locsByCompany || {};
-  const assetsByLocation = snap.assetsByLocation || {};
+  const assetsByCompanyLocation = snap.assetsByCompanyLocation || {};
 
   // NEW: status/repair settings from snapshot
   const statusColors = new Map(Object.entries(snap.statusColors || {}));
@@ -227,7 +227,7 @@ async function _primeAllCaches() {
     colorsByCompanyLoc: byCoLoc,
     companies: uniqSorted(companies),
     locsByCompany,
-    assetsByLocation,
+    assetsByCompanyLocation,
     // NEW
     statusColors,
     applyStatusColorsOnMap,
@@ -284,9 +284,10 @@ async function getLocationsForCompany(company) {
   return Array.from(arr);
 }
 
-async function getAssetTypesForLocation(location) {
+async function getAssetTypesForCompanyLocation(company, location) {
   await _primeAllCaches();
-  const arr = _cache.assetsByLocation[normStr(location)] || [];
+  const companyAssets = _cache.assetsByCompanyLocation[normStr(company)] || {};
+  const arr = companyAssets[normStr(location)] || [];
   return Array.from(arr);
 }
 
@@ -462,13 +463,13 @@ module.exports = {
     return {
       companies: _cache.companies,
       locationsByCompany: _cache.locsByCompany,
-      assetsByLocation: _cache.assetsByLocation,
+      assetsByCompanyLocation: _cache.assetsByCompanyLocation,
     };
   },
   // reads
   getActiveCompanies,
   getLocationsForCompany,
-  getAssetTypesForLocation,
+  getAssetTypesForCompanyLocation,
   getAssetTypeColor,
   getAssetTypeColorForLocation,
   getAssetTypeColorForCompanyLocation,
@@ -479,7 +480,7 @@ module.exports = {
   // writes
   upsertCompany,
   upsertLocation,
-  upsertAssetType,
+  upsertAssetType: (assetType, company, location) => excel.upsertAssetType(assetType, company, location),
   setAssetTypeColor,
   setAssetTypeColorForLocation,
   setAssetTypeColorForCompanyLocation,
@@ -494,5 +495,5 @@ module.exports = {
   setInspectionKeywords,
   // paths
   LOOKUPS_PATH, 
-  DATA_DIR, LOCATIONS_DIR,
+  DATA_DIR, COMPANIES_DIR,
 };

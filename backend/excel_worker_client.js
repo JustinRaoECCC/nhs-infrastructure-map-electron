@@ -50,15 +50,15 @@ module.exports = {
   listSheets: (b64) => call('listSheets', b64),
   parseRows:  (b64) => call('parseRows',  b64),
   parseRowsFromSheet: (b64, sheetName) => call('parseRowsFromSheet', b64, sheetName),
-  writeLocationRows: (location, sheetName, sections, headers, rows) =>
-    call('writeLocationRows', location, sheetName, sections, headers, rows),
+  writeLocationRows: (company, location, sheetName, sections, headers, rows) =>
+    call('writeLocationRows', company, location, sheetName, sections, headers, rows),
   readStationsAggregate: () => call('readStationsAggregate'),
   // Lookups workbook
   ensureLookupsReady:   () => call('ensureLookupsReady'),
   readLookupsSnapshot:  () => call('readLookupsSnapshot'),
   upsertCompany:        (name, active) => call('upsertCompany', name, !!active),
   upsertLocation:       (location, company) => call('upsertLocation', location, company),
-  upsertAssetType:      (assetType, location) => call('upsertAssetType', assetType, location),
+  upsertAssetType:      (assetType, company, location) => call('upsertAssetType', assetType, company, location),
   setAssetTypeColor:    (assetType, color) => call('setAssetTypeColor', assetType, color),
   setAssetTypeColorForLocation: (assetType, location, color) =>
     call('setAssetTypeColorForLocation', assetType, location, color),

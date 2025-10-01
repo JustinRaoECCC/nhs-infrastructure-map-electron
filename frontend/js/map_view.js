@@ -288,8 +288,9 @@ function getActiveLocationAssetCombos() {
     if (cb.checked) {
       const assetType = _norm(cb.value);
       const location = cb.dataset.location ? _norm(cb.dataset.location) : '';
-      if (assetType && location) {
-        combos.add(`${location}|${assetType}`);
+      const company = cb.dataset.company ? _norm(cb.dataset.company) : '';
+      if (assetType && location && company) {
+        combos.add(`${company}|${location}|${assetType}`);
       }
     }
   });
@@ -632,6 +633,7 @@ async function refreshMarkers() {
       if (combos.size === 0) return false; // No combos selected = show nothing
       
       const stnAssetType = _norm(stn.asset_type);
+      const stnCompany = _norm(stn.company);
       const stnLocCandidates = [
         _norm(stn.province),
         _norm(stn.location),
@@ -640,7 +642,7 @@ async function refreshMarkers() {
       
       // Check if any station location + asset type combination is allowed
       return stnLocCandidates.some(loc => {
-        const combo = `${loc}|${stnAssetType}`;
+        const combo = `${stnCompany}|${loc}|${stnAssetType}`;
         return combos.has(combo);
       });
     });

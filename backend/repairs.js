@@ -52,8 +52,9 @@ async function resolveStationInfo(stationId) {
   
   const location = String(st.location_file || st.province || 'Unknown').trim();
   const assetType = String(st.asset_type || 'Unknown').trim();
+  const company = String(st.company || 'Unknown').trim();
   
-  return { location, assetType, station: st };
+  return { company, location, assetType, station: st };
 }
 
 /**
@@ -64,8 +65,8 @@ async function resolveStationInfo(stationId) {
  */
 async function listRepairs(siteName, stationId) {
   try {
-    const { location, assetType } = await resolveStationInfo(stationId);
-    const repairs = await excel.listRepairsForStation(location, assetType, stationId);
+    const { company, location, assetType } = await resolveStationInfo(stationId);
+    const repairs = await excel.listRepairsForStation(company, location, assetType, stationId);
     
     // Normalize and return
     return (repairs || []).map(r => normalizeItem({
@@ -88,7 +89,7 @@ async function listRepairs(siteName, stationId) {
  */
 async function saveRepairs(siteName, stationId, items) {
   try {
-    const { location, assetType } = await resolveStationInfo(stationId);
+    const { company, location, assetType } = await resolveStationInfo(stationId);
     
     // Normalize items
     const normalizedItems = Array.isArray(items) 
@@ -97,7 +98,7 @@ async function saveRepairs(siteName, stationId, items) {
     
     // Save to Excel
     const result = await excel.saveStationRepairs(
-      location, 
+      company, location, 
       assetType, 
       stationId, 
       normalizedItems
@@ -112,14 +113,17 @@ async function saveRepairs(siteName, stationId, items) {
 
 /**
  * Add a single repair to a location/asset type
+ * @param {string} company - Company (e.g., "NHS")
  * @param {string} location - Location (e.g., "BC")
  * @param {string} assetType - Asset type (e.g., "Cableway")
  * @param {Object} repair - Repair data including Station ID
  * @returns {Object} Success status and details
  */
-async function addRepair(location, assetType, repair) {
+async function addRepair(company, location, assetType, repair) {
   try {
-    // Ensure required fields
+    if (!company) {
+      throw new Error('Company is required');
+    }
     if (!location) {
       throw new Error('Location is required');
     }
@@ -139,7 +143,7 @@ async function addRepair(location, assetType, repair) {
     
     // Call Excel worker to append the repair
     const result = await excel.appendRepair(
-      location, 
+      company, location, 
       assetType, 
       normalizedRepair
     );
@@ -169,16 +173,17 @@ async function getAllRepairs() {
 
 /**
  * Delete a specific repair by index
+ * @param {string} company - Company
  * @param {string} location - Location
  * @param {string} assetType - Asset type
  * @param {string} stationId - Station ID
  * @param {number} repairIndex - Index of repair to delete
  * @returns {Object} Success status
  */
-async function deleteRepair(location, assetType, stationId, repairIndex) {
+async function deleteRepair(company, location, assetType, stationId, repairIndex) {
   try {
-    if (!location || !assetType || !stationId) {
-      throw new Error('Location, asset type, and station ID are required');
+    if (!company || !location || !assetType || !stationId) {
+      throw new Error('Company, location, asset type, and station ID are required');
     }
     
     if (!Number.isInteger(repairIndex) || repairIndex < 0) {
@@ -186,7 +191,7 @@ async function deleteRepair(location, assetType, stationId, repairIndex) {
     }
     
     const result = await excel.deleteRepair(
-      location, 
+      company, location, 
       assetType, 
       stationId, 
       repairIndex
@@ -309,7 +314,7 @@ async function bulkAddRepairs(repairs) {
     // Group repairs by location and asset type for efficiency
     const grouped = {};
     repairs.forEach(repair => {
-      const key = `${repair.location}||${repair.assetType}`;
+      const key = `${repair.company}||${repair.location}||${repair.assetType}`;
       if (!grouped[key]) {
         grouped[key] = [];
       }
@@ -318,11 +323,11 @@ async function bulkAddRepairs(repairs) {
     
     // Process each group
     for (const [key, groupRepairs] of Object.entries(grouped)) {
-      const [location, assetType] = key.split('||');
+      const [company, location, assetType] = key.split('||');
       
       for (const repair of groupRepairs) {
         try {
-          const result = await addRepair(location, assetType, repair);
+          const result = await addRepair(company, location, assetType, repair);
           if (result.success) {
             results.success++;
           } else {

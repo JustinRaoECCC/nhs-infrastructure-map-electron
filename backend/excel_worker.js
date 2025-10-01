@@ -18,9 +18,16 @@ function getExcel() {
 // ─── Paths ────────────────────────────────────────────────────────────────
 const DATA_DIR      = process.env.NHS_DATA_DIR || path.join(__dirname, '..', 'data');
 const LOOKUPS_PATH  = path.join(DATA_DIR, 'lookups.xlsx');
-const LOCATIONS_DIR = path.join(DATA_DIR, 'locations');
+const COMPANIES_DIR = path.join(DATA_DIR, 'companies');
 const SEED_PATH     = path.join(__dirname, 'templates', 'lookups.template.xlsx');
 
+// Helper to get company directory
+function getCompanyDir(company) {
+  return path.join(COMPANIES_DIR, normStr(company));
+}
+function getLocationFilePath(company, location) {
+  return path.join(getCompanyDir(company), `${normStr(location)}.xlsx`);
+}
 
 const IH_KEYWORDS_SHEET = 'Inspection History Keywords';
 
@@ -102,7 +109,7 @@ const CUSTOM_WEIGHTS_SHEET   = 'Custom Weights';
 // ─── Ensure workbook exists with canonical sheets ─────────────────────────
 async function ensureLookupsReady() {
   progress('ensure', 40, 'Ensuring data folders…');
-  ensureDir(DATA_DIR); ensureDir(LOCATIONS_DIR);
+  ensureDir(DATA_DIR); ensureDir(COMPANIES_DIR);
   if (!fs.existsSync(LOOKUPS_PATH)) {
     if (fs.existsSync(SEED_PATH)) {
       progress('ensure', 45, 'Copying seed workbook…');
@@ -248,7 +255,7 @@ async function readLookupsSnapshot() {
   }
 
   const locsByCompany = {};  // { company: [locations] }
-  const assetsByLocation = {}; // { location: [assetTypes] }
+  const assetsByCompanyLocation = {}; // { company: { location: [assetTypes] } }
   if (wsL) {
     wsL.eachRow({ includeEmpty:false }, (row, i) => {
       if (i === 1) return;
@@ -269,8 +276,9 @@ async function readLookupsSnapshot() {
       const loc = normStr(row.getCell(2)?.text);
       const co  = normStr(row.getCell(3)?.text);
       const link = normStr(row.getCell(5)?.text); // 5th column = link
-      if (!at || !loc) return;
-      (assetsByLocation[loc] ||= new Set()).add(at);
+      if (!at || !loc || !co) return;
+      // Scope by company AND location
+      ((assetsByCompanyLocation[co] ||= {})[loc] ||= new Set()).add(at);
       if (at && loc && co && link) {
         (((assetTypeLinks[co] ||= {})[loc] ||= {}))[at] = link;
       }
@@ -302,11 +310,17 @@ async function readLookupsSnapshot() {
   }
 
   Object.keys(locsByCompany).forEach(k => { locsByCompany[k] = Array.from(locsByCompany[k]).sort((a,b)=>a.localeCompare(b)); });
-  Object.keys(assetsByLocation).forEach(k => { assetsByLocation[k] = Array.from(assetsByLocation[k]).sort((a,b)=>a.localeCompare(b)); });
+  Object.keys(assetsByCompanyLocation).forEach(co => {
+    Object.keys(assetsByCompanyLocation[co]).forEach(loc => {
+      assetsByCompanyLocation[co][loc] = Array.from(assetsByCompanyLocation[co][loc]).sort((a,b)=>a.localeCompare(b));
+    });
+  });
 
   const payload = {
     mtimeMs, colorsGlobal, colorsByLoc, colorsByCompanyLoc,
-    companies: uniqSorted(companies), locsByCompany, assetsByLocation,
+    companies: uniqSorted(companies), 
+    locsByCompany, 
+    assetsByCompanyLocation,
     statusColors,
     applyStatusColorsOnMap,
     applyRepairColorsOnMap,
@@ -492,10 +506,11 @@ async function setSettingBoolean(key, flag) {
  * Get or create a repairs sheet in the location workbook
  * Sheet naming: "{AssetType} {Location} Repairs"
  */
-async function _ensureRepairsSheet(location, assetType) {
+async function _ensureRepairsSheet(company, location, assetType) {
   const _ExcelJS = getExcel();
-  ensureDir(LOCATIONS_DIR);
-  const filePath = path.join(LOCATIONS_DIR, `${normStr(location)}.xlsx`);
+  const companyDir = getCompanyDir(company);
+  ensureDir(companyDir);
+  const filePath = getLocationFilePath(company, location);
 
   const wb = new _ExcelJS.Workbook();
   if (fs.existsSync(filePath)) {
@@ -527,8 +542,8 @@ async function _ensureRepairsSheet(location, assetType) {
 /**
  * List all repairs for a specific station from location workbook
  */
-async function listRepairsForStation(location, assetType, stationId) {
-  const filePath = path.join(LOCATIONS_DIR, `${normStr(location)}.xlsx`);
+async function listRepairsForStation(company, location, assetType, stationId) {
+  const filePath = getLocationFilePath(company, location);
   if (!fs.existsSync(filePath)) return [];
   
   const _ExcelJS = getExcel();
@@ -565,9 +580,9 @@ async function listRepairsForStation(location, assetType, stationId) {
 /**
  * Append a repair row to location workbook
  */
-async function appendRepair(location, assetType, repair = {}) {
+async function appendRepair(company, location, assetType, repair = {}) {
   await ensureLookupsReady();
-  const { wb, ws, filePath, sheetName } = await _ensureRepairsSheet(location, assetType);
+  const { wb, ws, filePath, sheetName } = await _ensureRepairsSheet(company, location, assetType);
 
   const stationId = normStr(repair['Station ID'] || repair['station_id'] || repair['StationID'] || repair['ID']);
   if (!stationId) {
@@ -651,47 +666,64 @@ async function appendRepair(location, assetType, repair = {}) {
  * Get all repairs across all locations and asset types
  */
 async function getAllRepairs() {
-  ensureDir(LOCATIONS_DIR);
-  const files = listExcelFiles(LOCATIONS_DIR);
+  ensureDir(COMPANIES_DIR);
   const _ExcelJS = getExcel();
   const allRepairs = [];
   
-  for (const filePath of files) {
-    const location = path.basename(filePath, '.xlsx');
-    const wb = new _ExcelJS.Workbook();
-    try {
-      await wb.xlsx.readFile(filePath);
-    } catch (e) {
-      continue;
-    }
+  // Traverse companies/*/
+  const companies = fs.readdirSync(COMPANIES_DIR, { withFileTypes: true })
+    .filter(d => d.isDirectory())
+    .map(d => d.name);
+  
+  for (const company of companies) {
+    const companyDir = getCompanyDir(company);
+    if (!fs.existsSync(companyDir)) continue;
     
-    // Look for repair sheets (ending with "Repairs")
-    for (const ws of wb.worksheets) {
-      if (!ws.name.endsWith('Repairs')) continue;
+    const locationFiles = fs.readdirSync(companyDir)
+      .filter(f => f.endsWith('.xlsx') && !f.startsWith('~$'))
+      .map(f => path.join(companyDir, f));
+    
+    for (const filePath of locationFiles) {
+      const location = path.basename(filePath, '.xlsx');
+
+
+      const wb = new _ExcelJS.Workbook();
+      try {
+        await wb.xlsx.readFile(filePath);
+      } catch (e) {
+        continue;
+      }
+    
+      // Look for repair sheets (ending with "Repairs")
+      for (const ws of wb.worksheets) {
+        if (!ws.name.endsWith('Repairs')) continue;
       
-      // Extract asset type from sheet name
-      const match = ws.name.match(/^(.+)\s+\w+\s+Repairs$/);
-      if (!match) continue;
-      const assetType = match[1];
+        // Extract asset type from sheet name
+        const match = ws.name.match(/^(.+)\s+\w+\s+Repairs$/);
+        if (!match) continue;
+        const assetType = match[1];
       
-      const maxRow = ws.actualRowCount || ws.rowCount || 1;
-      for (let r = 2; r <= maxRow; r++) {
-        const row = ws.getRow(r);
-        const stationId = takeText(row.getCell(2));
-        if (!stationId) continue;
+        const maxRow = ws.actualRowCount || ws.rowCount || 1;
+        for (let r = 2; r <= maxRow; r++) {
+
+          const row = ws.getRow(r);
+          const stationId = takeText(row.getCell(2));
+          if (!stationId) continue;
         
-        allRepairs.push({
-          date: takeText(row.getCell(1)),
-          station_id: stationId,
-          name: takeText(row.getCell(3)),
-          severity: takeText(row.getCell(4)),
-          priority: takeText(row.getCell(5)),
-          cost: takeText(row.getCell(6)),
-          category: takeText(row.getCell(7)),
-          type: takeText(row.getCell(8)),
-          location,
-          assetType
-        });
+          allRepairs.push({
+            date: takeText(row.getCell(1)),
+            station_id: stationId,
+            name: takeText(row.getCell(3)),
+            severity: takeText(row.getCell(4)),
+            priority: takeText(row.getCell(5)),
+            cost: takeText(row.getCell(6)),
+            category: takeText(row.getCell(7)),
+            type: takeText(row.getCell(8)),
+            location,
+            assetType,
+            company
+          });
+        }
       }
     }
   }
@@ -702,9 +734,9 @@ async function getAllRepairs() {
 /**
  * Save repairs for a station (replaces all repairs for that station)
  */
-async function saveStationRepairs(location, assetType, stationId, repairs = []) {
+async function saveStationRepairs(company, location, assetType, stationId, repairs = []) {
   await ensureLookupsReady();
-  const { wb, ws, filePath, sheetName } = await _ensureRepairsSheet(location, assetType);
+  const { wb, ws, filePath, sheetName } = await _ensureRepairsSheet(company, location, assetType);
   
   // Find and remove existing rows for this station
   const maxRow = ws.actualRowCount || ws.rowCount || 1;
@@ -746,11 +778,11 @@ async function saveStationRepairs(location, assetType, stationId, repairs = []) 
 /**
  * Delete a repair by station ID and repair index
  */
-async function deleteRepair(location, assetType, stationId, repairIndex) {
-  const repairs = await listRepairsForStation(location, assetType, stationId);
+async function deleteRepair(company, location, assetType, stationId, repairIndex) {
+  const repairs = await listRepairsForStation(company, location, assetType, stationId);
   if (repairIndex >= 0 && repairIndex < repairs.length) {
     repairs.splice(repairIndex, 1);
-    return await saveStationRepairs(location, assetType, stationId, repairs);
+    return await saveStationRepairs(company, location, assetType, stationId, repairs);
   }
   return { success: false, message: 'Invalid repair index' };
 }
@@ -808,8 +840,9 @@ async function upsertLocation(location, company) {
   if (!exists) ws.addRow([normStr(location), normStr(company)]); // link column (3) optional on insert
   await wb.xlsx.writeFile(LOOKUPS_PATH);
   // create the location workbook if missing
-  ensureDir(LOCATIONS_DIR);
-  const locPath = path.join(LOCATIONS_DIR, `${normStr(location)}.xlsx`);
+  const companyDir = getCompanyDir(company);
+  ensureDir(companyDir);
+  const locPath = getLocationFilePath(company, location);
   if (!fs.existsSync(locPath)) {
     const nb = new ExcelJS.Workbook();
     await nb.xlsx.writeFile(locPath);
@@ -817,41 +850,34 @@ async function upsertLocation(location, company) {
   return { success: true };
 }
 
-async function upsertAssetType(assetType, location) {
+async function upsertAssetType(assetType, company, location) {
   await ensureLookupsReady();
   const _ExcelJS = getExcel();
   const wb = new _ExcelJS.Workbook();
   await wb.xlsx.readFile(LOOKUPS_PATH);
   const ws = getSheet(wb, 'AssetTypes');
-  const wsL = getSheet(wb, 'Locations');
-  let companyForLoc = '';
-  if (wsL) {
-    wsL.eachRow({ includeEmpty:false }, (row, idx) => {
-      if (idx === 1) return;
-      const loc = lc(row.getCell(1)?.text);
-      const comp= normStr(row.getCell(2)?.text);
-      if (loc === lc(location)) companyForLoc = comp;
-    });
-  }
-  const tgtAt = lc(assetType), tgtLoc = lc(location || '');
-  let match = null, blank = null;
+  
+  const tgtAt = lc(assetType);
+  const tgtLoc = lc(location || '');
+  const tgtCo = lc(company || '');  let match = null, blank = null;
+  
   ws.eachRow({ includeEmpty:false }, (row, idx) => {
     if (idx === 1) return;
     const at  = lc(row.getCell(1)?.text);
     const loc = lc(row.getCell(2)?.text);
     const co  = normStr(row.getCell(3)?.text);
-    if (at === tgtAt && loc === tgtLoc && co === companyForLoc) match = row;
+    if (at === tgtAt && loc === tgtLoc && lc(co) === tgtCo) match = row;
     if (at === tgtAt && !normStr(row.getCell(2)?.text) && !normStr(row.getCell(3)?.text)) blank = row;
   });
   if (match) return { success:true, added:false };
   if (blank) {
     blank.getCell(2).value = normStr(location || '');
-    blank.getCell(3).value = companyForLoc;
+    blank.getCell(3).value = normStr(company);
     if (!normStr(blank.getCell(4)?.text)) blank.getCell(4).value = randHexColor();
     await wb.xlsx.writeFile(LOOKUPS_PATH);
     return { success:true, added:true };
   }
-  ws.addRow([normStr(assetType), normStr(location || ''), companyForLoc, randHexColor()]);
+  ws.addRow([normStr(assetType), normStr(location || ''), normStr(company), randHexColor()]);
   await wb.xlsx.writeFile(LOOKUPS_PATH);
   return { success:true, added:true };
 }
@@ -1008,7 +1034,8 @@ async function parseRowsFromSheet(b64, sheetName) {
 }
 
 // Write rows preserving TWO-ROW headers (sections + fields)
-async function writeLocationRows(location, sheetName, sections, headers, rows) {
+async function writeLocationRows(company, location, sheetName, sections, headers, rows) {
+  if (!company) throw new Error('Company is required');
   if (!location) throw new Error('Location is required');
   if (!Array.isArray(headers) || !headers.length) throw new Error('Headers are required');
   if (!Array.isArray(sections) || sections.length !== headers.length)
@@ -1016,7 +1043,9 @@ async function writeLocationRows(location, sheetName, sections, headers, rows) {
   const _ExcelJS = getExcel();
   await ensureLookupsReady(); // guarantees DATA_DIR etc.
 
-  const locPath = path.join(LOCATIONS_DIR, `${normStr(location)}.xlsx`);
+  const companyDir = getCompanyDir(company);
+  ensureDir(companyDir);
+  const locPath = getLocationFilePath(company, location);
   const wb = new _ExcelJS.Workbook();
   if (fs.existsSync(locPath)) {
     await wb.xlsx.readFile(locPath);
@@ -1273,52 +1302,65 @@ function pickOne(obj, candidates) {
 // Aggregate stations from all location files for map pins
 async function readStationsAggregate() {
   await ensureLookupsReady();
-  ensureDir(LOCATIONS_DIR);
-  const files = listExcelFiles(LOCATIONS_DIR);
+  ensureDir(COMPANIES_DIR);
   const _ExcelJS = getExcel();
   const out = [];
   let totalFiles = 0, totalSheets = 0, totalRows = 0, totalValid = 0;
-  // Helpful diagnostics on startup
-  for (const fn of files) {
-    totalFiles++;
-    const full = fn; // already absolute
-    // Normalize now so downstream exact matching is trivial
-    const locationFile = String(path.basename(full, path.extname(full))).trim(); // "BC"
-    const wb = new _ExcelJS.Workbook();
-    try { await wb.xlsx.readFile(full); }
-    catch (e) {
-      continue;
-    }
-    for (const ws of wb.worksheets) {
-      if (!ws || ws.rowCount < 2) continue;
-      const twoRow = (ws.getRow(2)?.actualCellCount || 0) > 0;
-      let rows = [];
-      if (twoRow) {
-        rows = sheetToObjectsTwoRow(ws).rows;
-      } else {
-        rows = sheetToObjectsOneRow(ws);
+  // Traverse companies/*/
+  const companies = fs.readdirSync(COMPANIES_DIR, { withFileTypes: true })
+    .filter(d => d.isDirectory())
+    .map(d => d.name);
+  
+  for (const companyName of companies) {
+    const companyDir = getCompanyDir(companyName);
+    if (!fs.existsSync(companyDir)) continue;
+    
+    const locationFiles = fs.readdirSync(companyDir)
+      .filter(f => f.endsWith('.xlsx') && !f.startsWith('~$'))
+      .map(f => path.join(companyDir, f));
+    
+    for (const fn of locationFiles) {
+      totalFiles++;
+      const full = fn; // already absolute
+      // Normalize now so downstream exact matching is trivial
+      const locationFile = String(path.basename(full, path.extname(full))).trim(); // "BC"
+      const wb = new _ExcelJS.Workbook();
+      try { await wb.xlsx.readFile(full); }
+      catch (e) {
+        console.error(`[readStationsAggregate] Failed to read ${full}:`, e.message);
+        continue;
       }
-      totalSheets++;
-      for (const r of rows) {
-        totalRows++;
-        const st = {
-          station_id: pickOne(r, ['Station ID','StationID','ID']),
-          asset_type: pickOne(r, ['Category','Asset Type','Type']), // do NOT conflate "Structure Type"
-          name:       pickOne(r, ['Site Name','Name','Station Name']),
-          province:   pickOne(r, ['Province','Location','State','Region','General Information - Province','General Information – Province']),
-          lat:        pickOne(r, ['Latitude','Lat','Y']),
-          lon:        pickOne(r, ['Longitude','Long','Lng','X']),
-          status:     pickOne(r, ['Status']),
-        };
-        const latOk = String(st.lat).trim() !== '' && !isNaN(Number(st.lat));
-        const lonOk = String(st.lon).trim() !== '' && !isNaN(Number(st.lon));
-        if (latOk && lonOk) totalValid++;
-        // attach all original fields too, plus the file-derived location tag
-        out.push({ ...r, ...st, location_file: locationFile });
+      for (const ws of wb.worksheets) {
+        if (!ws || ws.rowCount < 2) continue;
+        const twoRow = (ws.getRow(2)?.actualCellCount || 0) > 0;
+        let rows = [];
+        if (twoRow) {
+          rows = sheetToObjectsTwoRow(ws).rows;
+        } else {
+          rows = sheetToObjectsOneRow(ws);
+        }
+        totalSheets++;
+        for (const r of rows) {
+          totalRows++;
+          const st = {
+            station_id: pickOne(r, ['Station ID','StationID','ID']),
+            asset_type: pickOne(r, ['Category','Asset Type','Type']), // do NOT conflate "Structure Type"
+            name:       pickOne(r, ['Site Name','Name','Station Name']),
+            province:   pickOne(r, ['Province','Location','State','Region','General Information - Province','General Information – Province']),
+            lat:        pickOne(r, ['Latitude','Lat','Y']),
+            lon:        pickOne(r, ['Longitude','Long','Lng','X']),
+            status:     pickOne(r, ['Status']),
+          };
+          const latOk = String(st.lat).trim() !== '' && !isNaN(Number(st.lat));
+          const lonOk = String(st.lon).trim() !== '' && !isNaN(Number(st.lon));
+          if (latOk && lonOk) totalValid++;
+          // attach all original fields too, plus the file-derived location tag and company
+          out.push({ ...r, ...st, location_file: locationFile, company: companyName });
+        }
       }
     }
   }
-
+  console.log(`[readStationsAggregate] Stats: ${totalFiles} files, ${totalSheets} sheets, ${totalRows} rows, ${totalValid} valid stations`);
   return { success:true, rows: out };
 }
 
@@ -1344,12 +1386,13 @@ async function setAssetTypeColorForCompanyLocation(assetType, company, location,
   return { success: true };
 }
 
-async function updateStationInLocationFile(locationName, stationId, updatedRowData) {
+async function updateStationInLocationFile(company, locationName, stationId, updatedRowData) {
   try {
     await ensureLookupsReady();
-    ensureDir(LOCATIONS_DIR);
+    const companyDir = getCompanyDir(company);
+    ensureDir(companyDir);
     
-    const locPath = path.join(LOCATIONS_DIR, `${normStr(locationName)}.xlsx`);
+    const locPath = getLocationFilePath(company, locationName);
     
     if (!fs.existsSync(locPath)) {
       return { success: false, message: `Location file not found: ${locationName}.xlsx` };
@@ -1540,10 +1583,11 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
 }
 
 // Read all sheets from a location workbook
-async function readLocationWorkbook(locationName) {
+async function readLocationWorkbook(company, locationName) {
   try {
     const _ExcelJS = getExcel();
-    const locPath = path.join(LOCATIONS_DIR, `${normStr(locationName)}.xlsx`);
+    const companyDir = getCompanyDir(company);
+    const locPath = getLocationFilePath(company, locationName);
     
     if (!fs.existsSync(locPath)) {
       return { success: false, message: `Location file not found: ${locationName}.xlsx` };
@@ -1562,10 +1606,11 @@ async function readLocationWorkbook(locationName) {
 }
 
 // Read data from a specific sheet in a location workbook
-async function readSheetData(locationName, sheetName) {
+async function readSheetData(company, locationName, sheetName) {
   try {
     const _ExcelJS = getExcel();
-    const locPath = path.join(LOCATIONS_DIR, `${normStr(locationName)}.xlsx`);
+    const companyDir = getCompanyDir(company);
+    const locPath = getLocationFilePath(company, locationName);
     
     if (!fs.existsSync(locPath)) {
       return { success: false, message: `Location file not found: ${locationName}.xlsx` };
@@ -1605,101 +1650,115 @@ async function readSheetData(locationName, sheetName) {
 async function updateAssetTypeSchema(assetType, schema, excludeStationId) {
   try {
     await ensureLookupsReady();
-    ensureDir(LOCATIONS_DIR);
+    ensureDir(COMPANIES_DIR);
     
-    const files = listExcelFiles(LOCATIONS_DIR);
     const _ExcelJS = getExcel();
     
     let totalUpdated = 0;
     const results = [];
     
-    for (const filePath of files) {
-      const locationName = path.basename(filePath, '.xlsx');
-      const wb = new _ExcelJS.Workbook();
+    // Traverse companies/*/
+    const companies = fs.readdirSync(COMPANIES_DIR, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+      .map(d => d.name);
+    
+    for (const companyName of companies) {
+      const companyDir = getCompanyDir(companyName);
+      if (!fs.existsSync(companyDir)) continue;
       
-      try {
-        await wb.xlsx.readFile(filePath);
-      } catch (e) {
-        console.error(`[updateAssetTypeSchema] Failed to read ${filePath}:`, e);
-        continue;
-      }
+      const locationFiles = fs.readdirSync(companyDir)
+        .filter(f => f.endsWith('.xlsx') && !f.startsWith('~$'));
       
-      let workbookModified = false;
-      
-      for (const ws of wb.worksheets) {
-        if (!ws || ws.rowCount < 2) continue;
+      for (const fileName of locationFiles) {
+        const locationName = path.basename(fileName, '.xlsx');
+        const filePath = path.join(companyDir, fileName);
+
+        const wb = new _ExcelJS.Workbook();
         
-        // Check if this sheet contains the asset type we're looking for
-        // Sheet names are like "Cableway BC" - we need to match the asset type part
-        const sheetName = ws.name;
-        const sheetParts = sheetName.split(' ');
-        if (sheetParts.length < 2) continue;
-        
-        // Extract asset type from sheet name (everything except last word which is location)
-        const sheetAssetType = sheetParts.slice(0, -1).join(' ');
-        
-        // Also check the actual data for Category field
-        const twoRowHeader = (ws.getRow(2)?.actualCellCount || 0) > 0;
-        const headerRowNum = twoRowHeader ? 2 : 1;
-        const dataStartRow = headerRowNum + 1;
-        
-        // Find Category/Asset Type column
-        let categoryColIndex = -1;
-        const headerRow = ws.getRow(headerRowNum);
-        const maxCol = ws.actualColumnCount || headerRow.cellCount || 0;
-        
-        for (let c = 1; c <= maxCol; c++) {
-          const cellText = takeText(headerRow.getCell(c)).toLowerCase();
-          if (cellText === 'category' || cellText === 'asset type' || cellText === 'type') {
-            categoryColIndex = c;
-            break;
-          }
+        try {
+          await wb.xlsx.readFile(filePath);
+        } catch (e) {
+          console.error(`[updateAssetTypeSchema] Failed to read ${filePath}:`, e.message);
+          continue;
         }
-        
-        // Process rows if this sheet might contain our asset type
-        const lastRow = ws.actualRowCount || ws.rowCount || headerRowNum;
-        
-        for (let r = dataStartRow; r <= lastRow; r++) {
-          const row = ws.getRow(r);
+      
+        let workbookModified = false;
+      
+        for (const ws of wb.worksheets) {
+          if (!ws || ws.rowCount < 2) continue;
           
-          // Check if this row is for our asset type
-          let rowAssetType = '';
-          if (categoryColIndex > 0) {
-            rowAssetType = takeText(row.getCell(categoryColIndex));
-          }
+          // Check if this sheet contains the asset type we're looking for
+          // Sheet names are like "Cableway BC" - we need to match the asset type part
+          const sheetName = ws.name;
+          const sheetParts = sheetName.split(' ');
+          if (sheetParts.length < 2) continue;
           
-          // Also check by sheet name
-          const matchesByCategory = rowAssetType.toLowerCase() === assetType.toLowerCase();
-          const matchesBySheetName = sheetAssetType.toLowerCase() === assetType.toLowerCase();
+          // Extract asset type from sheet name (everything except last word which is location)
+          const sheetAssetType = sheetParts.slice(0, -1).join(' ');
           
-          if (!matchesByCategory && !matchesBySheetName) continue;
+          // Also check the actual data for Category field
+          const twoRowHeader = (ws.getRow(2)?.actualCellCount || 0) > 0;
+          const headerRowNum = twoRowHeader ? 2 : 1;
+          const dataStartRow = headerRowNum + 1;
           
-          // Get Station ID to check if we should skip this one
-          let stationId = '';
+          // Find Category/Asset Type column
+          let categoryColIndex = -1;
+          const headerRow = ws.getRow(headerRowNum);
+          const maxCol = ws.actualColumnCount || headerRow.cellCount || 0;
+          
           for (let c = 1; c <= maxCol; c++) {
             const cellText = takeText(headerRow.getCell(c)).toLowerCase();
-            if (cellText === 'station id' || cellText === 'stationid' || cellText === 'id') {
-              stationId = takeText(row.getCell(c));
+            if (cellText === 'category' || cellText === 'asset type' || cellText === 'type') {
+              categoryColIndex = c;
               break;
             }
           }
+        
+          // Process rows if this sheet might contain our asset type
+          const lastRow = ws.actualRowCount || ws.rowCount || headerRowNum;
+        
+          for (let r = dataStartRow; r <= lastRow; r++) {
+            const row = ws.getRow(r);
           
-          // Skip the station that triggered this update
-          if (String(stationId) === String(excludeStationId)) continue;
+            // Check if this row is for our asset type
+            let rowAssetType = '';
+            if (categoryColIndex > 0) {
+              rowAssetType = takeText(row.getCell(categoryColIndex));
+            }
           
-          // Apply schema update to this row
-          await applySchemaToRow(ws, row, r, schema, twoRowHeader);
-          workbookModified = true;
-          totalUpdated++;
+            // Also check by sheet name
+            const matchesByCategory = rowAssetType.toLowerCase() === assetType.toLowerCase();
+            const matchesBySheetName = sheetAssetType.toLowerCase() === assetType.toLowerCase();
+          
+            if (!matchesByCategory && !matchesBySheetName) continue;
+          
+            // Get Station ID to check if we should skip this one
+            let stationId = '';
+            for (let c = 1; c <= maxCol; c++) {
+              const cellText = takeText(headerRow.getCell(c)).toLowerCase();
+              if (cellText === 'station id' || cellText === 'stationid' || cellText === 'id') {
+                stationId = takeText(row.getCell(c));
+                break;
+              }
+            }
+          
+            // Skip the station that triggered this update
+            if (String(stationId) === String(excludeStationId)) continue;
+          
+            // Apply schema update to this row
+            await applySchemaToRow(ws, row, r, schema, twoRowHeader);
+            workbookModified = true;
+            totalUpdated++;
+          }
+        }
+      
+        if (workbookModified) {
+          await wb.xlsx.writeFile(filePath);
+          results.push({ location: locationName, updated: true });
         }
       }
-      
-      if (workbookModified) {
-        await wb.xlsx.writeFile(filePath);
-        results.push({ location: locationName, updated: true });
-      }
     }
-    
+
     return { 
       success: true, 
       totalUpdated, 

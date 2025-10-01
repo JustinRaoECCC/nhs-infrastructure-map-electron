@@ -32,7 +32,6 @@ async function getStationData(opts = {}) {
 
   // Build normalized color maps (case-insensitive) — only company→location→assetType
   let byCoLocN = new Map();
-  let companyByLocN = new Map();
 
   if (!skipColors) {
     try {
@@ -73,20 +72,6 @@ async function getStationData(opts = {}) {
           byCoLocN.set(companyNorm, nLocMap);
         }
       }
-
-      // Build location → company map from the lookup tree
-      const tree = await lookupsRepo.getLookupTree();
-      const lbc = tree?.locationsByCompany || {};
-      
-      for (const [company, locs] of Object.entries(lbc)) {
-        const coN = norm(company);
-        for (const loc of locs || []) {
-          const L = normLoc(loc);  // Use normLoc consistently
-          if (!companyByLocN.has(L)) {
-            companyByLocN.set(L, coN);
-          }
-        }
-      }
     } catch (e) {
       console.error('[DEBUG] Error building color maps:', e);
     }
@@ -106,27 +91,18 @@ async function getStationData(opts = {}) {
   // Continue with the rest of the function...
   for (let i = 0; i < rows.length; i++) {
     const st = rows[i];
+    const co = norm(st.company); // Use station's company directly!
     const L = normLoc(st.location_file || st.location || st.province);
     const atRaw = st.asset_type || 'Unknown';
     const atKey = norm(atRaw);
 
     let color = null;
     if (!skipColors) {
-      const co = L ? companyByLocN.get(L) : null;
-      
-      // Debug only for first station
-      if (i === 0) {
-        console.log('[DEBUG] companyByLocN keys:', Array.from(companyByLocN.keys()));
-        console.log('[DEBUG] byCoLocN keys:', Array.from(byCoLocN.keys()));
-      }
-      console.log(`[DEBUG] Station ${st.station_id}: L="${L}", co="${co}", atKey="${atKey}"`);
-      
-      if (co && byCoLocN.has(co)) {
+      if (co && L && byCoLocN.has(co)) {
         const locMap = byCoLocN.get(co);
         const m = locMap && locMap.get(L);
         if (m && m.has(atKey)) {
           color = m.get(atKey);
-          console.log(`[DEBUG] Found color for ${st.station_id}: ${color}`);
         }
       }
     }
@@ -175,12 +151,12 @@ async function getLocationsForCompany(_company) {
   return []; // lookups workbook is source of truth; no state fallback
 }
 
-async function getAssetTypesForLocation(_company, loc) {
+async function getAssetTypesForLocation(company, loc) {
   try {
-    const fromXlsx = await lookupsRepo.getAssetTypesForLocation(loc);
+    const fromXlsx = await lookupsRepo.getAssetTypesForCompanyLocation(company, loc);
     if (fromXlsx && fromXlsx.length) return fromXlsx;
   } catch (e) {
-    console.error('[lookups] getAssetTypesForLocation failed:', e);
+    console.error('[lookups] getAssetTypesForCompanyLocation failed:', e);
   }
   return []; // lookups workbook is source of truth; no state fallback
 }
@@ -228,16 +204,19 @@ function normalizeRow(r) {
  * - Forces Category to the selected asset type.
  */
 async function addStationsFromSelection(payload) {
-  const { location, company, sheetName, sections, headers, rows, assetType } = payload || {};
+  const { company, location, sheetName, sections, headers, rows, assetType } = payload || {};
   if (!Array.isArray(rows) || !rows.length) {
     return { success:false, message:'No rows selected.' };
   }
+  if (!company) return { success:false, message:'Company is required.' };
   
   // 0) Make sure the location exists (creates workbook too)
   try {
+    if (company) await lookupsRepo.upsertCompany(company, true);
     if (location && company && lookupsRepo?.upsertLocation) {
       await lookupsRepo.upsertLocation(location, company);
     }
+    await lookupsRepo.upsertAssetType(assetType, company, location);
   } catch (e) {
     console.warn('[importSelection] upsertLocation failed (continuing):', e?.message || e);
   }
@@ -277,7 +256,7 @@ async function addStationsFromSelection(payload) {
 
     // Write to Excel using the proper sheet naming convention
     const targetSheetName = `${at} ${location}`; // e.g., "Cableway AB"
-    await excel.writeLocationRows(location, targetSheetName, secs, hdrs, rowsStamped);
+    await excel.writeLocationRows(company, location, targetSheetName, secs, hdrs, rowsStamped);
     
     console.log(`[importSelection] Successfully imported ${rowsStamped.length} rows to ${targetSheetName}`);
     
@@ -294,7 +273,7 @@ async function addStationsFromSelection(payload) {
     const existingSchema = await schemaSync.getExistingSchemaForAssetType(assetType);
     
     if (existingSchema && existingSchema.sections && existingSchema.sections.length > 0) {
-      console.log(`[importSelection] Found existing schema for ${assetType}, syncing...`);
+      console.log(`[importSelection] Found existing schema for ${assetType} in other locations, syncing...`);
       
       // Get all station IDs we just imported (to exclude them from getting their data overwritten)
       const importedStationIds = rows.map(r => 
@@ -304,7 +283,7 @@ async function addStationsFromSelection(payload) {
       // Apply the existing schema to the newly imported stations
       const syncResult = await schemaSync.syncNewlyImportedStations(
         assetType, 
-        location, 
+        company, location, 
         existingSchema,
         importedStationIds
       );
@@ -362,7 +341,7 @@ async function manualAddInstance(payload = {}) {
     try {
       if (company) await lookupsRepo.upsertCompany(company, true);
       if (location && company) await lookupsRepo.upsertLocation(location, company);
-      await lookupsRepo.upsertAssetType(assetType, location);
+      await lookupsRepo.upsertAssetType(assetType, company, location);
     } catch (e) {
       // non-fatal
       console.warn('[manualAddInstance] upserts (lookups) failed:', e?.message || e);
@@ -400,7 +379,7 @@ async function manualAddInstance(payload = {}) {
     }
 
     const sheetName = `${assetType} ${location}`;
-    await excel.writeLocationRows(location, sheetName, sections, headers, [row]);
+    await excel.writeLocationRows(company, location, sheetName, sections, headers, [row]);
     return { success:true, added:1, sheet: sheetName };
   } catch (e) {
     console.error('[manualAddInstance] failed:', e);
@@ -640,6 +619,14 @@ async function updateStationData(updatedStation) {
       return { success: false, message: 'Station not found' };
     }
 
+    // Get company from station
+    const company = String(currentStation.company || '').trim();
+    if (!company) {
+      console.warn('[updateStationData] Station missing company, attempting to derive...');
+      // Could add lookup logic here if needed
+      return { success: false, message: 'Could not determine company for station' };
+    }
+
     // Determine the location file (Excel file to update)
     const locationFile = currentStation.location_file || 
                         updatedStation.province || 
@@ -651,7 +638,7 @@ async function updateStationData(updatedStation) {
     
     // Update the station in the appropriate Excel file
     const result = await excel.updateStationInLocationFile(
-      locationFile, 
+      company, locationFile, 
       updatedStation.station_id, 
       rowData
     );
@@ -697,16 +684,20 @@ function prepareStationRowForExcel(station) {
 
 /**
  * Append a repair entry using the new storage model:
- *   data/locations/<location>.xlsx with sheet "{AssetType} {Location} Repairs"
+ *   data/companies/<company>/<location>.xlsx with sheet "{AssetType} {Location} Repairs"
  * If the Station ID already exists in the sheet, the new row is inserted
  * right after the last existing row for that station.
  *
- * @param {Object} payload { location: string, assetType: string, repair: Object }
+ * @param {Object} payload { company: string, location: string, assetType: string, repair: Object }
  */
 async function appendRepair(payload = {}) {
+  const company = String(payload.company || '').trim();
   const assetType = String(payload.assetType || '').trim();
   const location = String(payload.location || '').trim();
   const repair   = { ...(payload.repair || {}) };
+  if (!company) {
+    return { success:false, message:'company is required' };
+  }
   if (!location) {
     return { success:false, message:'location is required' };
   }
@@ -720,7 +711,7 @@ async function appendRepair(payload = {}) {
   if (repair.Type === undefined && repair.type === undefined) {
     repair.Type = 'Repair';
   }
-  return await excel.appendRepair(location, assetType, repair);
+  return await excel.appendRepair(company, location, assetType, repair);
 }
 
 module.exports = {

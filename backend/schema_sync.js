@@ -1,9 +1,9 @@
-// backend/schema_sync.js - COMPLETE FIXED VERSION
+// backend/schema_sync.js
 const path = require('path');
 const fs = require('fs');
 
 const DATA_DIR = process.env.NHS_DATA_DIR || path.join(__dirname, '..', 'data');
-const LOCATIONS_DIR = path.join(DATA_DIR, 'locations');
+const COMPANIES_DIR = path.join(DATA_DIR, 'companies');
 
 /**
  * Extract schema (sections and fields) from station data
@@ -44,15 +44,31 @@ function extractSchema(stationData) {
  */
 function getLocationFiles() {
   try {
-    if (!fs.existsSync(LOCATIONS_DIR)) return [];
+    if (!fs.existsSync(COMPANIES_DIR)) return [];
     
-    return fs.readdirSync(LOCATIONS_DIR)
-      .filter(f => f.endsWith('.xlsx') && !f.startsWith('~$'))
-      .map(f => ({
-        fileName: f,
-        locationName: f.replace('.xlsx', ''),
-        fullPath: path.join(LOCATIONS_DIR, f)
-      }));
+    const result = [];
+    
+    // Traverse companies directory
+    const companies = fs.readdirSync(COMPANIES_DIR, { withFileTypes: true })
+      .filter(d => d.isDirectory());
+    
+    for (const companyDir of companies) {
+      const companyPath = path.join(COMPANIES_DIR, companyDir.name);
+      const locationFiles = fs.readdirSync(companyPath)
+        .filter(f => f.endsWith('.xlsx') && !f.startsWith('~$'));
+      
+      for (const file of locationFiles) {
+        result.push({
+
+          fileName: file,
+          locationName: file.replace('.xlsx', ''),
+          company: companyDir.name,
+          fullPath: path.join(companyPath, file)
+        });
+      }
+    }
+    
+    return result;
   } catch (e) {
     console.error('[getLocationFiles] Error:', e);
     return [];
@@ -79,20 +95,20 @@ async function syncAssetTypeSchema(assetType, updatedSchema, sourceStationId) {
   try {
     // Get ALL location files
     const locationFiles = getLocationFiles();
-    console.log(`[syncAssetTypeSchema] Found ${locationFiles.length} location files:`, locationFiles.map(f => f.fileName));
+    console.log(`[syncAssetTypeSchema] Found ${locationFiles.length} location files across all companies`);
     
     for (const locFile of locationFiles) {
       try {
-        console.log(`[syncAssetTypeSchema] Processing location: ${locFile.locationName}`);
+        console.log(`[syncAssetTypeSchema] Processing: ${locFile.company}/${locFile.locationName}`);
         
         // Read the entire workbook to get all sheets
-        const wb = await excel.readLocationWorkbook(locFile.locationName);
+        const wb = await excel.readLocationWorkbook(locFile.company, locFile.locationName);
         if (!wb.success || !wb.sheets) {
-          console.log(`[syncAssetTypeSchema] Could not read workbook for ${locFile.locationName}`);
+          console.log(`[syncAssetTypeSchema] Could not read workbook for ${locFile.company}/${locFile.locationName}`);
           continue;
         }
         
-        console.log(`[syncAssetTypeSchema] Sheets in ${locFile.fileName}:`, wb.sheets);
+        console.log(`[syncAssetTypeSchema] Sheets in ${locFile.company}/${locFile.fileName}:`, wb.sheets);
         
         // Process each sheet that might contain our asset type
         for (const sheetName of wb.sheets) {
@@ -110,7 +126,7 @@ async function syncAssetTypeSchema(assetType, updatedSchema, sourceStationId) {
           console.log(`[syncAssetTypeSchema] Processing sheet: ${sheetName}`);
           
           // Read all stations from this sheet
-          const sheetData = await excel.readSheetData(locFile.locationName, sheetName);
+          const sheetData = await excel.readSheetData(locFile.company, locFile.locationName, sheetName);
           if (!sheetData.success || !sheetData.rows || sheetData.rows.length === 0) {
             console.log(`[syncAssetTypeSchema] No data in sheet ${sheetName}`);
             continue;
@@ -135,7 +151,7 @@ async function syncAssetTypeSchema(assetType, updatedSchema, sourceStationId) {
             
             // Save the updated station back to Excel
             const updateResult = await excel.updateStationInLocationFile(
-              locFile.locationName,
+              locFile.company, locFile.locationName,
               stationId,
               updatedStation
             );
@@ -148,7 +164,7 @@ async function syncAssetTypeSchema(assetType, updatedSchema, sourceStationId) {
             }
           }
           
-          results.sheetsProcessed.push(`${locFile.locationName}/${sheetName}`);
+          results.sheetsProcessed.push(`${locFile.company}/${locFile.locationName}/${sheetName}`);
         }
         
         if (results.sheetsProcessed.length > 0) {
@@ -156,9 +172,9 @@ async function syncAssetTypeSchema(assetType, updatedSchema, sourceStationId) {
         }
         
       } catch (locError) {
-        console.error(`[syncAssetTypeSchema] Error processing ${locFile.fileName}:`, locError);
+        console.error(`[syncAssetTypeSchema] Error processing ${locFile.company}/${locFile.fileName}:`, locError);
         results.errors.push({
-          location: locFile.locationName,
+          location: `${locFile.company}/${locFile.locationName}`,
           error: String(locError)
         });
       }
@@ -248,7 +264,7 @@ async function getExistingSchemaForAssetType(assetType) {
     console.log(`[getExistingSchemaForAssetType] Searching in ${locationFiles.length} location files`);
     
     for (const locFile of locationFiles) {
-      const wb = await excel.readLocationWorkbook(locFile.locationName);
+      const wb = await excel.readLocationWorkbook(locFile.company, locFile.locationName);
       if (!wb.success || !wb.sheets) continue;
       
       for (const sheetName of wb.sheets) {
@@ -261,7 +277,7 @@ async function getExistingSchemaForAssetType(assetType) {
         console.log(`[getExistingSchemaForAssetType] Found matching sheet: ${sheetName} in ${locFile.locationName}`);
         
         // Read the first station from this sheet
-        const sheetData = await excel.readSheetData(locFile.locationName, sheetName);
+        const sheetData = await excel.readSheetData(locFile.company, locFile.locationName, sheetName);
         if (sheetData.success && sheetData.rows && sheetData.rows.length > 0) {
           // Extract and return the schema from the first station
           const schema = extractSchema(sheetData.rows[0]);
@@ -284,7 +300,7 @@ async function getExistingSchemaForAssetType(assetType) {
  * Sync schema to newly imported stations AFTER they've been written to Excel
  * This is for Functionality B - when importing new data
  */
-async function syncNewlyImportedStations(assetType, locationName, existingSchema, importedStationIds) {
+async function syncNewlyImportedStations(assetType, company, locationName, existingSchema, importedStationIds) {
   const excel = require('./excel_worker_client');
   const results = {
     success: true,
@@ -302,7 +318,7 @@ async function syncNewlyImportedStations(assetType, locationName, existingSchema
     console.log(`[syncNewlyImportedStations] Reading from sheet: ${sheetName}`);
     
     // Read the just-imported data
-    const sheetData = await excel.readSheetData(locationName, sheetName);
+    const sheetData = await excel.readSheetData(company, locationName, sheetName);
     if (!sheetData.success || !sheetData.rows || sheetData.rows.length === 0) {
       return { 
         success: false, 
@@ -329,6 +345,7 @@ async function syncNewlyImportedStations(assetType, locationName, existingSchema
       
       // Write back to Excel
       const updateResult = await excel.updateStationInLocationFile(
+        company,
         locationName,
         stationId,
         updatedStation

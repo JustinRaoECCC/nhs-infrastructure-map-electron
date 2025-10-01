@@ -72,21 +72,8 @@
       const tree = {
         companies: [...treeFromLookups.companies],
         locationsByCompany: { ...(treeFromLookups.locationsByCompany || {}) },
-        assetsByLocation:   { ...(treeFromLookups.assetsByLocation   || {}) },
+        assetsByCompanyLocation: { ...(treeFromLookups.assetsByCompanyLocation || {}) },
       };
-
-      // Only update assets for locations that already exist in the lookup mapping.
-      const knownLocations = new Set(
-        Object.values(tree.locationsByCompany || {})
-          .flat()
-          .filter(Boolean)
-      );
-
-      knownLocations.forEach(loc => {
-        if (assetsByLocData[loc] && !tree.assetsByLocation[loc]) {
-          tree.assetsByLocation[loc] = assetsByLocData[loc];
-        }
-      });
 
       return tree;
     }
@@ -95,7 +82,7 @@
     return {
       companies: [],
       locationsByCompany: {},
-      assetsByLocation: {}, // or use assetsByLocData if you want assets without company mapping
+      assetsByCompanyLocation: {},
     };
   }
 
@@ -128,7 +115,7 @@
     const frag = document.createDocumentFragment();
     const companies     = tree.companies || [];
     const locsByCompany = tree.locationsByCompany || {};
-    const assetsByLoc   = tree.assetsByLocation || {};
+    const assetsByCoLoc = tree.assetsByCompanyLocation || {};
 
     companies.forEach(company => {
       const co = el('details', { class: 'ft-company', open: '' });
@@ -176,7 +163,8 @@
         locDet.appendChild(locSum);
 
         const atWrap = el('div', { class: 'ft-children' });
-        (assetsByLoc[loc] || []).forEach(at => {
+        const companyAssets = assetsByCoLoc[company] || {};
+        (companyAssets[loc] || []).forEach(at => {
           const atCb = el('input', {
             type: 'checkbox',
             class: 'filter-checkbox asset-type',
