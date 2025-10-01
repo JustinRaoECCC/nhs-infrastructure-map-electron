@@ -6,7 +6,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const rightPanel         = document.getElementById('rightPanel');
   const stationPlaceholder = document.getElementById('stationContentContainer');
 
-  // optional left-nav hook (if your nav has an item with this id)
   const navOpt = document.getElementById('navOpt');
   if (navOpt && !navOpt._wired) {
     navOpt.addEventListener('click', (e) => {
@@ -16,36 +15,24 @@ document.addEventListener('DOMContentLoaded', () => {
     navOpt._wired = true;
   }
 
-  // Utilities
   function resetOptimizationViews() {
     if (!dashPlaceholder || !dashPlaceholder.innerHTML.trim()) return;
-    const optRoot  = dashPlaceholder.querySelector('#optimization');
-    const optPane  = optRoot && (optRoot.querySelector('.opt-container') || optRoot);
-    const opt2Pane = dashPlaceholder.querySelector('#optimization2 .opt2-container')
-                   || dashPlaceholder.querySelector('#optimization2');
-    const optBtn = dashPlaceholder.querySelector('#optimizeBtn');
-    const geoBtn = dashPlaceholder.querySelector('#optimizeGeoBtn');
-    const hero   = dashPlaceholder.querySelector('#optimization2 .opt2-hero');
-    if (optBtn) optBtn.style.display = '';
-    if (geoBtn) geoBtn.style.display = '';
-    if (hero) hero.style.display = '';
-    if (optPane)  optPane.querySelectorAll('pre, ol, table.opt-table').forEach(el => el.remove());
-    if (opt2Pane) opt2Pane.innerHTML = '';
+    const filterResults = document.getElementById('filteringResults');
+    const scoringResults = document.getElementById('scoringResults');
+    if (filterResults) filterResults.innerHTML = '';
+    if (scoringResults) scoringResults.innerHTML = '';
   }
 
   async function showOptimization() {
-    // hide map/right/station, show our docs area
     if (mapContainer)       mapContainer.style.display = 'none';
     if (rightPanel)         rightPanel.style.display   = 'none';
     if (stationPlaceholder) stationPlaceholder.style.display = 'none';
-    // Prevent any external observer from reviving the RHS while in docs
     if (document && document.body) document.body.dataset.suppressRhs = '1';
     const filtersPanel = document.querySelector('.left-panel');
     if (filtersPanel) filtersPanel.style.display = '';
     const rightToggleBtn = document.getElementById('toggleRight');
     if (rightToggleBtn) rightToggleBtn.style.display = 'none';
 
-    // lazy inject HTML once
     if (!dashPlaceholder.innerHTML.trim()) {
       const html = await fetch('optimization.html').then(r => r.text());
       dashPlaceholder.innerHTML = html;
@@ -57,8 +44,204 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ──────────────────────────────────────────────────────────────────────────
   async function initDashboardUI() {
-    const tabs               = document.querySelectorAll('.dashboard-tab');
-    const contents           = document.querySelectorAll('.dashboard-content');
+    const tabs     = document.querySelectorAll('.dashboard-tab');
+    const contents = document.querySelectorAll('.dashboard-content');
+
+    // Tab switching
+    tabs.forEach(tab => {
+      tab.addEventListener('click', async () => {
+        tabs.forEach(t => t.classList.remove('active'));
+        contents.forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById(tab.dataset.target).classList.add('active');
+        if (tab.dataset.target === 'workplan') await loadWorkplan();
+      });
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // FIXED PARAMETERS (NEW)
+    // ═══════════════════════════════════════════════════════════════════════
+    const fixedParamContainer = document.getElementById('fixedParamContainer');
+    const addFixedParamBtn = document.getElementById('addFixedParamBtn');
+    const saveFixedParamsBtn = document.getElementById('saveFixedParamsBtn');
+    const addFixedParamModal = document.getElementById('addFixedParamModal');
+    const closeAddFixedParamModal = document.getElementById('closeAddFixedParamModal');
+    const cancelFixedParamBtn = document.getElementById('cancelFixedParamBtn');
+    const saveFixedParamBtn = document.getElementById('saveFixedParamBtn');
+    const fixedParamNameInput = document.getElementById('fixedParamNameInput');
+    const fixedParamTypeSelect = document.getElementById('fixedParamTypeSelect');
+
+    // Constraint-specific fields
+    const geographicalFields = document.getElementById('geographicalFields');
+    const temporalFields = document.getElementById('temporalFields');
+    const monetaryFields = document.getElementById('monetaryFields');
+    const designationFields = document.getElementById('designationFields');
+    const geoValuesList = document.getElementById('geoValuesList');
+    const addGeoValueBtn = document.getElementById('addGeoValueBtn');
+
+    // Toggle constraint fields based on type
+    fixedParamTypeSelect.addEventListener('change', () => {
+      document.querySelectorAll('.constraint-fields').forEach(el => el.style.display = 'none');
+      const type = fixedParamTypeSelect.value;
+      if (type === 'geographical') geographicalFields.style.display = 'block';
+      if (type === 'temporal') temporalFields.style.display = 'block';
+      if (type === 'monetary') monetaryFields.style.display = 'block';
+      if (type === 'designation') designationFields.style.display = 'block';
+    });
+
+    function makeGeoValueRow(value = '') {
+      const row = document.createElement('div');
+      row.className = 'geo-value-row';
+      row.style = 'display:flex; align-items:center; gap:0.5em; margin-bottom:0.5em;';
+      row.innerHTML = `
+        <input type="text" class="geo-value" placeholder="Enter value" 
+               style="flex:1; padding:0.5em;" value="${value}" />
+        <button class="deleteGeoValueBtn" style="color:red;">×</button>
+      `;
+      row.querySelector('.deleteGeoValueBtn').addEventListener('click', () => row.remove());
+      return row;
+    }
+
+    addGeoValueBtn.addEventListener('click', () => {
+      geoValuesList.appendChild(makeGeoValueRow());
+    });
+
+    function makeFixedParamDisplayRow(param) {
+      const row = document.createElement('div');
+      row.className = 'fixed-param-row';
+      row.style = 'border:1px solid #ddd; padding:1em; margin-bottom:1em; border-radius:4px; background:#f9f9f9;';
+      
+      let detailsHTML = '';
+      if (param.type === 'geographical') {
+        detailsHTML = `<div><strong>Type:</strong> Geographical</div>
+                       <div><strong>Allowed Values:</strong> ${param.values.join(', ')}</div>`;
+      } else if (param.type === 'temporal') {
+        detailsHTML = `<div><strong>Type:</strong> Temporal</div>
+                       <div><strong>Scope:</strong> ${param.scope}</div>
+                       <div><strong>Value:</strong> ${param.value}</div>
+                       <div><strong>Unit:</strong> ${param.unit}</div>`;
+      } else if (param.type === 'monetary') {
+        detailsHTML = `<div><strong>Type:</strong> Monetary</div>
+                       <div><strong>Field:</strong> ${param.field_name}</div>
+                       <div><strong>Condition:</strong> ${param.conditional} ${param.value} ${param.unit}</div>`;
+      } else if (param.type === 'designation') {
+        detailsHTML = `<div><strong>Type:</strong> Designation</div>
+                       <div><strong>Condition:</strong> ${param.condition}</div>
+                       <div><strong>Field:</strong> ${param.field_name}</div>`;
+      }
+
+      row.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:start;">
+          <div>
+            <h4 style="margin:0 0 0.5em 0;">${param.name}</h4>
+            ${detailsHTML}
+          </div>
+          <button class="deleteFixedParamBtn" style="color:red; font-size:1.5em; border:none; background:none; cursor:pointer;">×</button>
+        </div>
+      `;
+
+      row.querySelector('.deleteFixedParamBtn').addEventListener('click', () => row.remove());
+      row.dataset.paramData = JSON.stringify(param);
+      return row;
+    }
+
+    // Load existing fixed parameters
+    async function loadFixedParameters() {
+      const existing = await window.electronAPI.getFixedParameters();
+      fixedParamContainer.innerHTML = '';
+      (existing || []).forEach(param => {
+        fixedParamContainer.appendChild(makeFixedParamDisplayRow(param));
+      });
+    }
+
+    // Open add fixed parameter modal
+    addFixedParamBtn.addEventListener('click', () => {
+      fixedParamNameInput.value = '';
+      fixedParamTypeSelect.value = 'geographical';
+      geoValuesList.innerHTML = '';
+      geoValuesList.appendChild(makeGeoValueRow());
+      document.getElementById('temporalScope').value = 'per_day';
+      document.getElementById('temporalValue').value = '';
+      document.getElementById('temporalUnit').value = 'hours';
+      document.getElementById('monetaryFieldName').value = '';
+      document.getElementById('monetaryConditional').value = '<';
+      document.getElementById('monetaryValue').value = '';
+      document.getElementById('monetaryUnit').value = '';
+      document.getElementById('designationCondition').value = 'None';
+      document.getElementById('designationFieldName').value = '';
+      document.querySelectorAll('.constraint-fields').forEach(el => el.style.display = 'none');
+      geographicalFields.style.display = 'block';
+      addFixedParamModal.style.display = 'flex';
+    });
+
+    closeAddFixedParamModal.addEventListener('click', () => addFixedParamModal.style.display = 'none');
+    cancelFixedParamBtn.addEventListener('click', () => addFixedParamModal.style.display = 'none');
+    addFixedParamModal.addEventListener('click', e => {
+      if (e.target === addFixedParamModal) addFixedParamModal.style.display = 'none';
+    });
+
+    // Save new fixed parameter
+    saveFixedParamBtn.addEventListener('click', () => {
+      const name = fixedParamNameInput.value.trim();
+      const type = fixedParamTypeSelect.value;
+      
+      if (!name) {
+        alert('Please enter a parameter name');
+        return;
+      }
+
+      const param = { name, type };
+
+      if (type === 'geographical') {
+        const values = Array.from(geoValuesList.querySelectorAll('.geo-value'))
+          .map(input => input.value.trim())
+          .filter(v => v);
+        if (!values.length) {
+          alert('Please add at least one geographical value');
+          return;
+        }
+        param.values = values;
+      } else if (type === 'temporal') {
+        param.scope = document.getElementById('temporalScope').value;
+        param.value = document.getElementById('temporalValue').value;
+        param.unit = document.getElementById('temporalUnit').value;
+        if (!param.value) {
+          alert('Please enter a temporal value');
+          return;
+        }
+      } else if (type === 'monetary') {
+        param.field_name = document.getElementById('monetaryFieldName').value.trim();
+        param.conditional = document.getElementById('monetaryConditional').value;
+        param.value = document.getElementById('monetaryValue').value;
+        param.unit = document.getElementById('monetaryUnit').value.trim();
+        if (!param.field_name || !param.value) {
+          alert('Please fill in all monetary constraint fields');
+          return;
+        }
+      } else if (type === 'designation') {
+        param.condition = document.getElementById('designationCondition').value;
+        param.field_name = document.getElementById('designationFieldName').value.trim();
+        if (!param.field_name) {
+          alert('Please enter a field name for the designation constraint');
+          return;
+        }
+      }
+
+      fixedParamContainer.appendChild(makeFixedParamDisplayRow(param));
+      addFixedParamModal.style.display = 'none';
+    });
+
+    // Save all fixed parameters
+    saveFixedParamsBtn.addEventListener('click', async () => {
+      const params = Array.from(fixedParamContainer.querySelectorAll('.fixed-param-row'))
+        .map(row => JSON.parse(row.dataset.paramData));
+      await window.electronAPI.saveFixedParameters(params);
+      appAlert('Fixed parameters saved successfully');
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // SOFT PARAMETERS (RENAMED FROM PARAMETERS)
+    // ═══════════════════════════════════════════════════════════════════════
     const paramContainer     = document.querySelector('#paramContainer');
     const statsDiv           = document.querySelector('#paramStats');
     const addBtn             = document.querySelector('#addParamBtn');
@@ -74,18 +257,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const optionsList        = document.querySelector('#optionsList');
     const paramAssetFilter   = document.querySelector('#paramAssetFilter');
 
-    // tabs
-    tabs.forEach(tab => {
-      tab.addEventListener('click', async () => {
-        tabs.forEach(t => t.classList.remove('active'));
-        contents.forEach(c => c.classList.remove('active'));
-        tab.classList.add('active');
-        document.getElementById(tab.dataset.target).classList.add('active');
-        if (tab.dataset.target === 'workplan') await loadWorkplan();
-      });
-    });
-
-    // ─── Helpers
     function recalcPercentageTotal() {
       const all = document.querySelectorAll('.param-percentage');
       let sum = 0; all.forEach(inp => sum += parseInt(inp.value,10) || 0);
@@ -94,6 +265,7 @@ document.addEventListener('DOMContentLoaded', () => {
       el.textContent = sum;
       el.style.color = sum === 100 ? '' : 'red';
     }
+
     function makeDisplayRow({ applies_to, parameter, condition, max_weight, options }) {
       const row = document.createElement('div');
       row.className = 'param-row';
@@ -159,7 +331,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return row;
     }
 
-    // ===== Load existing parameters (from lookups.xlsx) =====
+    // Load existing soft parameters
     const existing = await window.electronAPI.getAlgorithmParameters();
     statsDiv.innerHTML = ''; paramContainer.innerHTML = '';
     const grouped = {};
@@ -175,7 +347,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     Object.values(grouped).forEach(grp => paramContainer.appendChild(makeDisplayRow(grp)));
 
-    // ===== Applies-To (clone filter tree if present) =====
     function populateParamAssetFilter() {
       paramAssetFilter.innerHTML = '';
       const filterTree = document.getElementById('filterTree');
@@ -194,7 +365,6 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
-    // ===== Modal wiring =====
     addOptionBtn.addEventListener('click', () => optionsList.appendChild(makeOptionRow()));
     function closeAddParamModal(){ addParamModal.style.display='none'; }
     addBtn.addEventListener('click', () => {
@@ -280,7 +450,7 @@ document.addEventListener('DOMContentLoaded', () => {
       closeAddParamModal();
     });
 
-    // save edited parameter selections (Selected flag)
+    // save edited parameter selections
     saveParamsBtn.addEventListener('click', async () => {
       const toSave = Array.from(paramContainer.querySelectorAll('.param-row')).flatMap(r => {
         const applies = r.dataset.appliesto;
@@ -299,7 +469,9 @@ document.addEventListener('DOMContentLoaded', () => {
       statsDiv.innerHTML = `<p><strong>Total weight:</strong> ${total}</p>`;
     });
 
-    // ===== Workplan =====
+    // ═══════════════════════════════════════════════════════════════════════
+    // WORKPLAN
+    // ═══════════════════════════════════════════════════════════════════════
     const wpContainer        = dashPlaceholder.querySelector('#workplanContainer');
     const constantsContainer = wpContainer.querySelector('#constantsContainer');
     const saveWPBtn          = dashPlaceholder.querySelector('#saveWorkplanBtn');
@@ -329,12 +501,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function loadWorkplan() {
-      // constants
       const consts = await window.electronAPI.getWorkplanConstants();
       constantsContainer.innerHTML = '';
       (consts || []).forEach(c => constantsContainer.append(makeConstantRow(c.field, c.value||'')));
 
-      // params → unique list for columns
       const params = await window.electronAPI.getAlgorithmParameters();
       const uniqueParams = [...new Set((params||[]).map(p => p.parameter))];
 
@@ -347,203 +517,7 @@ document.addEventListener('DOMContentLoaded', () => {
       await populateWorkplanFromRepairs();
     }
 
-    // ===== Optimization I
-    const optimizeBtn = document.getElementById('optimizeBtn');
-    if (optimizeBtn) {
-      optimizeBtn.addEventListener('click', async () => {
-        const hdrRow = document.querySelector('#workplanHeaders');
-        const body   = document.querySelector('#workplanBody');
-        const headers = Array.from(hdrRow.querySelectorAll('th')).map(th => th.textContent.trim());
-        const workplanRows = Array.from(body.querySelectorAll('tr')).map(tr => {
-          const cells = Array.from(tr.querySelectorAll('td')); const rec = {};
-          headers.forEach((h, i) => { rec[h] = (cells[i] ? cells[i].textContent : '') || ''; });
-          return rec;
-        });
-        const overall = {};
-        document.querySelectorAll('.param-row').forEach(row => {
-          const pname = row.querySelector('.param-name')?.value?.trim();
-          const pct   = parseFloat(row.querySelector('.param-percentage')?.value || '0');
-          if (pname) overall[pname] = isFinite(pct) ? pct : 0;
-        });
-
-        // Pass the same parameter rows the UI is using, so backend can’t miss them
-        const params = await window.electronAPI.getAlgorithmParameters();
-        const result = await window.electronAPI.optimizeWorkplan({
-          workplan_rows: workplanRows,
-          param_overall: overall,
-          parameters: params
-        });
-        optimizeBtn.style.display = 'none';
-
-        const optPane = document.querySelector('#optimization .opt-container');
-        // Clear any previous output (including earlier table renders)
-        optPane.querySelectorAll('pre, ol, table.opt-table').forEach(el => el.remove());
-        // (Numbered list removed — we render only the nice table below)
-
-        // Add a minimal table that Opt II expects to read
-        const tbl = document.createElement('table');
-        tbl.className = 'opt-table';
-        tbl.innerHTML = `
-          <thead>
-            <tr>
-              <th>Station ID</th>
-              <th>Operation</th>
-              <th>Summed Value</th>
-            </tr>
-          </thead>
-          <tbody></tbody>`;
-        (result?.ranking || []).forEach(item => {
-          const tr = document.createElement('tr');
-          tr.innerHTML = `
-            <td>${item.station_number ?? ''}</td>
-            <td>${item.operation ?? ''}</td>
-            <td>${Number(item.score).toFixed(2)}%</td>`;
-          tbl.querySelector('tbody').appendChild(tr);
-        });
-        optPane.appendChild(tbl);
-      });
-    }
-
-    // ===== Optimization II (geographical)
-    const geoBtn = dashPlaceholder.querySelector('#optimizeGeoBtn');
-    if (geoBtn && !geoBtn._wired) {
-      geoBtn.addEventListener('click', async () => {
-        geoBtn.style.display = 'none';
-        const hero = dashPlaceholder.querySelector('#optimization2 .opt2-hero'); if (hero) hero.style.display = 'none';
-        const optRoot = dashPlaceholder.querySelector('#optimization');
-        const optPane = optRoot && (optRoot.querySelector('.opt-container') || optRoot);
-        const opt2Pane = dashPlaceholder.querySelector('#optimization2 .opt2-container')
-                       || dashPlaceholder.querySelector('#optimization2');
-        const table = optPane && optPane.querySelector('table.opt-table');
-        if (!table) { opt2Pane.innerHTML = `<div class="opt2-note">Run Optimization I first, then click Optimization II.</div>`; return; }
-
-        const headers = [...table.querySelectorAll('thead th')].map(th => th.textContent.trim());
-        const idxStation = headers.findIndex(h => /Station ID/i.test(h));
-        const idxOp      = headers.findIndex(h => /Operation/i.test(h));
-        const idxScore   = headers.findIndex(h => /Summed Value/i.test(h));
-
-        const wpHdrs = [...(document.querySelectorAll('#workplanHeaders th') || [])].map(th => th.textContent.trim());
-        const wpIdxStation = wpHdrs.findIndex(h => /Station Number/i.test(h));
-        const wpIdxOp      = wpHdrs.findIndex(h => /Operation/i.test(h));
-        const wpIdxDays    = wpHdrs.findIndex(h => /^Days$/i.test(h));
-        const wpRows = [...(document.querySelectorAll('#workplanBody tr') || [])];
-        const wpDaysByKey = new Map();
-        if (wpIdxStation >= 0 && wpIdxOp >= 0 && wpIdxDays >= 0) {
-          wpRows.forEach(tr => {
-            const tds = [...tr.querySelectorAll('td')];
-            const sid = (tds[wpIdxStation]?.textContent || '').trim();
-            const op  = (tds[wpIdxOp]?.textContent || '').trim();
-            const daysRaw = (tds[wpIdxDays]?.textContent || '').trim();
-            const key = sid + '||' + op;
-            const val = Number.parseFloat(daysRaw);
-            if (sid && op && Number.isFinite(val)) wpDaysByKey.set(key, Math.max(1, Math.ceil(val)));
-          });
-        }
-
-        const items = [...table.querySelectorAll('tbody tr')].map(tr => {
-          const tds = [...tr.querySelectorAll('td')];
-          const sid = (tds[idxStation]?.textContent || '').trim();
-          const op  = (tds[idxOp]?.textContent || '').trim();
-          const sc  = parseFloat((tds[idxScore]?.textContent || '').replace('%','')) || 0;
-          const key = sid + '||' + op;
-          const out = { station_id: sid, operation: op, score: sc };
-          if (wpDaysByKey.has(key)) out.days = wpDaysByKey.get(key);
-          return out;
-        }).filter(x => x.station_id);
-
-        const stationList = await window.electronAPI.getStationData();
-        const nameById = new Map((stationList || []).map(s => [String(s.station_id), String(s.name || '')]));
-        opt2Pane.innerHTML = `<div class="opt2-note">Planning…</div>`;
-
-        let res;
-        try { res = await window.electronAPI.runGeographicalAlgorithm({ items }); }
-        catch { opt2Pane.innerHTML = `<div class="opt2-error">Optimization II failed.</div>`; return; }
-        if (!res || !res.success) {
-          opt2Pane.innerHTML = `<div class="opt2-error">${(res && res.message) || 'Optimization II failed.'}</div>`;
-          return;
-        }
-        renderGeoPlan(opt2Pane, res, nameById);
-      });
-      geoBtn._wired = true;
-    }
-
-    function renderGeoPlan(root, data, nameById) {
-      root.innerHTML = '';
-      const hdr = document.createElement('div');
-      hdr.className = 'opt2-header';
-      hdr.innerHTML = `
-        <div class="opt2-title">${data.plan_name || 'Geographical Plan'}</div>
-        <div class="opt2-summary">
-          <span class="chip">Trips: ${data.totals.trip_count}</span>
-          <span class="chip">Planned items: ${data.totals.planned}</span>
-          <span class="chip">Unplanned: ${data.totals.unplanned}</span>
-        </div>`;
-      root.appendChild(hdr);
-
-      (data.trips || []).forEach(trip => {
-        const sec = document.createElement('section'); sec.className = 'opt2-trip';
-        sec.innerHTML = `
-          <div class="opt2-trip-head">
-            <div class="trip-title">${trip.trip_name}</div>
-            <div class="trip-meta">
-              <span class="pill">Days: ${trip.days}</span>
-              <span class="pill">Items: ${trip.count}</span>
-              <span class="pill">Drive: ${trip.drive_count}</span>
-              <span class="pill">Heli: ${trip.helicopter_count}</span>
-            </div>
-          </div>`;
-        const table = document.createElement('table'); table.className = 'opt2-table';
-        table.innerHTML = `
-          <thead>
-            <tr>
-              <th>#</th><th>Day</th><th>Station Name</th>
-              <th class="station-id">Station ID</th><th>Operation</th>
-              <th class="num">Score</th><th>Mode</th>
-            </tr>
-          </thead><tbody></tbody>`;
-        const tbody = table.querySelector('tbody');
-        trip.schedule.forEach((r, i) => {
-          const tr = document.createElement('tr');
-          tr.innerHTML = `
-            <td class="rank">${i+1}</td>
-            <td>${r.day}</td>
-            <td>${nameById.get(String(r.station_id)) || ''}</td>
-            <td class="station-id">${r.station_id}</td>
-            <td>${r.operation || ''}</td>
-            <td class="num">${Number.isFinite(r.score) ? r.score.toFixed(2) + '%' : ''}</td>
-            <td>${r.mode === 'helicopter' ? '🚁 helicopter' : '🚗 drive'}</td>`;
-          tbody.appendChild(tr);
-        });
-        sec.appendChild(table); root.appendChild(sec);
-      });
-
-      if ((data.unplanned || []).length) {
-        const sec = document.createElement('section'); sec.className = 'opt2-trip';
-        const title = document.createElement('div'); title.className='trip-title'; title.textContent = 'Unplanned / Not In Trip Plan';
-        sec.appendChild(title);
-        const table = document.createElement('table'); table.className='opt2-table';
-        table.innerHTML = `
-          <thead>
-            <tr><th>#</th><th>Station Name</th><th class="station-id">Station ID</th>
-                <th>Operation</th><th class="num">Score</th></tr>
-          </thead><tbody></tbody>`;
-        const tbody = table.querySelector('tbody');
-        data.unplanned.forEach((r,i) => {
-          const tr = document.createElement('tr');
-          tr.innerHTML = `
-            <td class="rank">${i+1}</td>
-            <td>${nameById.get(String(r.station_id)) || ''}</td>
-            <td class="station-id">${r.station_id}</td>
-            <td>${r.operation || ''}</td>
-            <td class="num">${Number.isFinite(r.score) ? r.score.toFixed(2) + '%' : ''}</td>`;
-          tbody.appendChild(tr);
-        });
-        sec.appendChild(table); root.appendChild(sec);
-      }
-    }
-
     async function populateWorkplanFromRepairs() {
-      // Get repairs directly from Excel instead of import
       const allRepairs = await window.electronAPI.getAllRepairs();
       if (!allRepairs || !allRepairs.length) return;
 
@@ -554,7 +528,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const stationList = await window.electronAPI.getStationData();
       const siteByStation = new Map((stationList || []).map(s => [String(s.station_id), String(s.name || '')]));
       tbody.innerHTML = '';
-      // Group repairs by station and aggregate
+      
       allRepairs.forEach(repair => {
         const tr = document.createElement('tr');
         headers.forEach(h => {
@@ -566,7 +540,6 @@ document.addEventListener('DOMContentLoaded', () => {
           } else if (h === 'Operation') {
             val = repair.name || '';
           } else if (paramSet.has(h)) {
-            // Leave parameter columns empty for now
             val = '';
           }
           td.textContent = val == null ? '' : String(val); tr.appendChild(td);
@@ -575,14 +548,203 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
-    // Expose globally for refresh from other views
-    window.populateWorkplanFromRepairs = populateWorkplanFromRepairs;
+    // ═══════════════════════════════════════════════════════════════════════
+    // OPTIMIZATION I (NEW - CONSTRAINT FILTERING)
+    // ═══════════════════════════════════════════════════════════════════════
+    const runFilteringBtn = document.getElementById('runFilteringBtn');
+    const filteringResults = document.getElementById('filteringResults');
 
+    if (runFilteringBtn) {
+      runFilteringBtn.addEventListener('click', async () => {
+        const fixedParams = Array.from(fixedParamContainer.querySelectorAll('.fixed-param-row'))
+          .map(row => JSON.parse(row.dataset.paramData));
+        
+        const allRepairs = await window.electronAPI.getAllRepairs();
+        if (!allRepairs || !allRepairs.length) {
+          filteringResults.innerHTML = '<div class="opt2-note">No repairs found to filter.</div>';
+          return;
+        }
+
+        filteringResults.innerHTML = '<div class="opt2-note">Filtering repairs...</div>';
+
+        const result = await window.electronAPI.runConstraintFiltering({
+          repairs: allRepairs,
+          fixed_parameters: fixedParams
+        });
+
+        if (!result.success) {
+          filteringResults.innerHTML = `<div class="opt2-error">${result.message || 'Filtering failed'}</div>`;
+          return;
+        }
+
+        renderFilteringResults(result);
+      });
+    }
+
+    function renderFilteringResults(result) {
+      filteringResults.innerHTML = '';
+
+      const summary = document.createElement('div');
+      summary.className = 'opt2-header';
+      summary.innerHTML = `
+        <div class="opt2-title">Constraint Filtering Results</div>
+        <div class="opt2-summary">
+          <span class="chip">Total: ${result.total_repairs}</span>
+          <span class="chip" style="background:#4CAF50;">Kept: ${result.kept.length}</span>
+          <span class="chip" style="background:#f44336;">Filtered Out: ${result.filtered_out.length}</span>
+        </div>
+      `;
+      filteringResults.appendChild(summary);
+
+      // Kept repairs table
+      const keptSection = document.createElement('section');
+      keptSection.className = 'opt2-trip';
+      keptSection.innerHTML = `
+        <div class="trip-title" style="background:#4CAF50; color:white;">✓ Repairs Meeting All Constraints</div>
+      `;
+      const keptTable = makeRepairTable(result.kept);
+      keptSection.appendChild(keptTable);
+      filteringResults.appendChild(keptSection);
+
+      // Filtered out repairs table
+      const filteredSection = document.createElement('section');
+      filteredSection.className = 'opt2-trip';
+      filteredSection.innerHTML = `
+        <div class="trip-title" style="background:#f44336; color:white;">✗ Repairs Filtered Out</div>
+      `;
+      const filteredTable = makeRepairTable(result.filtered_out, true);
+      filteredSection.appendChild(filteredTable);
+      filteringResults.appendChild(filteredSection);
+    }
+
+    function makeRepairTable(repairs, showReasons = false) {
+      const table = document.createElement('table');
+      table.className = 'opt2-table';
+      
+      let headers = '<th>#</th><th>Station ID</th><th>Operation</th><th>Type</th><th>Cost</th>';
+      if (showReasons) headers += '<th>Reason Filtered</th>';
+      
+      table.innerHTML = `<thead><tr>${headers}</tr></thead><tbody></tbody>`;
+      const tbody = table.querySelector('tbody');
+
+      repairs.forEach((repair, i) => {
+        const tr = document.createElement('tr');
+        let cells = `
+          <td class="rank">${i + 1}</td>
+          <td>${repair.station_id || ''}</td>
+          <td>${repair.name || ''}</td>
+          <td>${repair.type || ''}</td>
+          <td>${repair.cost || ''}</td>
+        `;
+        if (showReasons) {
+          cells += `<td>${repair.filter_reason || 'Did not meet constraints'}</td>`;
+        }
+        tr.innerHTML = cells;
+        tbody.appendChild(tr);
+      });
+
+      return table;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // OPTIMIZATION II (OLD OPTIMIZATION I - SCORING)
+    // ═══════════════════════════════════════════════════════════════════════
+    const optimizeBtn = document.getElementById('optimizeBtn');
+    const scoringResults = document.getElementById('scoringResults');
+
+    if (optimizeBtn) {
+      optimizeBtn.addEventListener('click', async () => {
+        const hdrRow = document.querySelector('#workplanHeaders');
+        const body   = document.querySelector('#workplanBody');
+        const headers = Array.from(hdrRow.querySelectorAll('th')).map(th => th.textContent.trim());
+        const workplanRows = Array.from(body.querySelectorAll('tr')).map(tr => {
+          const cells = Array.from(tr.querySelectorAll('td')); const rec = {};
+          headers.forEach((h, i) => { rec[h] = (cells[i] ? cells[i].textContent : '') || ''; });
+          return rec;
+        });
+        
+        const overall = {};
+        document.querySelectorAll('.param-row').forEach(row => {
+          const pname = row.querySelector('.param-name')?.value?.trim();
+          const pct   = parseFloat(row.querySelector('.param-percentage')?.value || '0');
+          if (pname) overall[pname] = isFinite(pct) ? pct : 0;
+        });
+
+        const params = await window.electronAPI.getAlgorithmParameters();
+        
+        scoringResults.innerHTML = '<div class="opt2-note">Scoring repairs...</div>';
+        
+        const result = await window.electronAPI.optimizeWorkplan({
+          workplan_rows: workplanRows,
+          param_overall: overall,
+          parameters: params
+        });
+
+        if (!result.success) {
+          scoringResults.innerHTML = `<div class="opt2-error">${result.notes || 'Scoring failed'}</div>`;
+          return;
+        }
+
+        renderScoringResults(result);
+      });
+    }
+
+    function renderScoringResults(result) {
+      scoringResults.innerHTML = '';
+
+      const summary = document.createElement('div');
+      summary.className = 'opt2-header';
+      summary.innerHTML = `
+        <div class="opt2-title">Scoring & Ranking Results</div>
+        <div class="opt2-summary">
+          <span class="chip">Total Repairs: ${result.optimized_count}</span>
+        </div>
+      `;
+      scoringResults.appendChild(summary);
+
+      const section = document.createElement('section');
+      section.className = 'opt2-trip';
+      
+      const table = document.createElement('table');
+      table.className = 'opt2-table';
+      table.innerHTML = `
+        <thead>
+          <tr>
+            <th>Rank</th>
+            <th>Station ID</th>
+            <th>Site Name</th>
+            <th>Operation</th>
+            <th>Score</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      `;
+      
+      const tbody = table.querySelector('tbody');
+      (result.ranking || []).forEach(item => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="rank">${item.rank}</td>
+          <td>${item.station_number || ''}</td>
+          <td>${item.site_name || ''}</td>
+          <td>${item.operation || ''}</td>
+          <td class="num">${Number(item.score).toFixed(2)}%</td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      section.appendChild(table);
+      scoringResults.appendChild(section);
+    }
+
+    // Initialize
+    await loadFixedParameters();
     await loadWorkplan();
     await populateWorkplanFromRepairs();
     recalcPercentageTotal();
+
+    window.populateWorkplanFromRepairs = populateWorkplanFromRepairs;
   }
 
-  // expose a quick global opener if you want to call from HTML
   window.__openOptimization = showOptimization;
 });

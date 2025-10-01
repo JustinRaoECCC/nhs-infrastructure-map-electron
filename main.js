@@ -384,9 +384,18 @@ ipcMain.handle('excel:addCustomWeight', async (_e, weight, active) =>
   backend.addCustomWeight(weight, active)
 );
 
+// Fixed Parameters (for Optimization I constraint filtering)
+ipcMain.handle('excel:getFixedParameters', async () =>
+  backend.getFixedParameters()
+);
+ipcMain.handle('excel:saveFixedParameters', async (_e, params) =>
+  backend.saveFixedParameters(params)
+);
+
 // Optimization I / II (now call the dedicated algorithms module)
 ipcMain.handle('algo:optimizeWorkplan', async (_e, payload) => algorithms.optimizeWorkplan(payload));
 ipcMain.handle('algo:runGeographical', async (_e, payload) => algorithms.runGeographicalAlgorithm(payload));
+ipcMain.handle('algo:runConstraintFiltering', async (_e, payload) => algorithms.runConstraintFiltering(payload));
 
 // ─── IPC: Authentication ───────────────────────────────────────────────────
 ipcMain.handle('auth:hasUsers', async () => auth.hasUsers());

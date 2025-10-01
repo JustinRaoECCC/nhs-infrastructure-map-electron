@@ -105,6 +105,7 @@ function ensureTwoRowHeader(ws) {
 const ALG_PARAMS_SHEET       = 'Algorithm Parameters';
 const WORKPLAN_CONST_SHEET   = 'Workplan Constants';
 const CUSTOM_WEIGHTS_SHEET   = 'Custom Weights';
+const FIXED_PARAMS_SHEET     = 'Fixed Parameters';
 
 // ─── Ensure workbook exists with canonical sheets ─────────────────────────
 async function ensureLookupsReady() {
@@ -137,6 +138,11 @@ async function ensureLookupsReady() {
     if (need('Workplan Constants')) { wb.addWorksheet('Workplan Constants').addRow(['Field','Value']); changed = true; }
     if (need('Algorithm Parameters')) {
       wb.addWorksheet('Algorithm Parameters').addRow(['Applies To','Parameter','Condition','MaxWeight','Option','Weight','Selected']); changed = true;
+    }
+    if (need('Fixed Parameters')) {
+      const ws = wb.addWorksheet('Fixed Parameters');
+      ws.addRow(['Name', 'Type', 'Configuration']);
+      changed = true;
     }
 
     // NEW sheets
@@ -175,6 +181,9 @@ async function ensureLookupsReady() {
     wb.addWorksheet('Custom Weights').addRow(['weight','active']);
     wb.addWorksheet('Workplan Constants').addRow(['Field','Value']);
     wb.addWorksheet('Algorithm Parameters').addRow(['Applies To','Parameter','Condition','MaxWeight','Option','Weight','Selected']);
+   
+    const wsFP = wb.addWorksheet('Fixed Parameters');
+    wsFP.addRow(['Name', 'Type', 'Configuration']);
 
     // NEW: default Status Colors & Settings
     const wsS = wb.addWorksheet('Status Colors');
@@ -2016,6 +2025,66 @@ async function addCustomWeight(weight, active = true) {
   return { success:true };
 }
 
+// ─── Fixed Parameters (read/write) ─────────────────────────────────────────
+async function getFixedParameters() {
+  await ensureLookupsReady();
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(LOOKUPS_PATH);
+  const ws = getSheet(wb, FIXED_PARAMS_SHEET);
+  const out = [];
+  if (!ws) return out;
+  
+  ws.eachRow({ includeEmpty: false }, (row, i) => {
+    if (i === 1) return; // skip header
+    
+   const name = normStr(row.getCell(1)?.text);
+    const type = normStr(row.getCell(2)?.text);
+    const configJSON = normStr(row.getCell(3)?.text);
+    
+    if (!name || !type) return;
+    
+    try {
+      const config = configJSON ? JSON.parse(configJSON) : {};
+      out.push({
+        name,
+        type,
+        ...config
+      });
+    } catch (e) {
+     console.error('[getFixedParameters] Failed to parse config for', name, ':', e);
+    }
+  });
+  
+  return out;
+}
+
+async function saveFixedParameters(params = []) {
+  await ensureLookupsReady();
+  const list = Array.isArray(params) ? params : [];
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(LOOKUPS_PATH);
+  
+  const existing = getSheet(wb, FIXED_PARAMS_SHEET);
+  if (existing) wb.removeWorksheet(existing.id);
+  
+  const ws = wb.addWorksheet(FIXED_PARAMS_SHEET);
+  ws.addRow(['Name', 'Type', 'Configuration']);
+  
+  for (const param of list) {
+    const { name, type, ...config } = param;
+    if (!name || !type) continue;
+    
+    // Store the config as JSON (everything except name and type)
+    const configJSON = JSON.stringify(config);
+    ws.addRow([name, type, configJSON]);
+  }
+  
+  await wb.xlsx.writeFile(LOOKUPS_PATH);
+  return { success: true, count: list.length };
+}
+
 // ─── Auth Functions ─────────────────────────────────────────────────────
 async function createAuthWorkbook() {
   ensureDir(DATA_DIR);
@@ -2258,6 +2327,8 @@ const handlers = {
   getCustomWeights,
   addCustomWeight,
   // Auth handlers
+  getFixedParameters,
+  saveFixedParameters,
   createAuthWorkbook,
   createAuthUser,
   loginAuthUser,

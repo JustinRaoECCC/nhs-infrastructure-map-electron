@@ -97,6 +97,9 @@ module.exports = {
   saveWorkplanConstants: (rows) => call('saveWorkplanConstants', rows),
   getCustomWeights: () => call('getCustomWeights'),
   addCustomWeight: (weight, active) => call('addCustomWeight', weight, !!active),
+  // Fixed parameters (for Optimization I constraint filtering)
+  getFixedParameters: () => call('getFixedParameters'),
+  saveFixedParameters: (params) => call('saveFixedParameters', params),
   // Auth functions
   createAuthWorkbook: () => call('createAuthWorkbook'),
   createAuthUser: (userData) => call('createAuthUser', userData),

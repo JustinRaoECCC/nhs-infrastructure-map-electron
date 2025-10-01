@@ -135,9 +135,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveWorkplanConstants: (rows) => ipcRenderer.invoke('excel:saveWorkplanConstants', rows),
   getCustomWeights: () => ipcRenderer.invoke('excel:getCustomWeights'),
   addCustomWeight: (weight, active=true) => ipcRenderer.invoke('excel:addCustomWeight', weight, !!active),
+  // Fixed parameters (for Optimization I constraint filtering)
+  getFixedParameters: () => ipcRenderer.invoke('excel:getFixedParameters'),
+  saveFixedParameters: (params) => ipcRenderer.invoke('excel:saveFixedParameters', params),
   // Optimization I / II
   optimizeWorkplan: (payload) => ipcRenderer.invoke('algo:optimizeWorkplan', payload),
   runGeographicalAlgorithm: (payload) => ipcRenderer.invoke('algo:runGeographical', payload),
+  runConstraintFiltering: (payload) => ipcRenderer.invoke('algo:runConstraintFiltering', payload),
 
   // ─── Authentication ──────────────────────────────────────────────────────
   hasUsers: () => ipcRenderer.invoke('auth:hasUsers'),

@@ -1,15 +1,31 @@
 <!-- frontend/optimization.html -->
 <div id="dashboardContainer" class="nhs-dashboard">
   <div class="dashboard-tabs">
-    <button class="dashboard-tab active" data-target="parameters">Parameters</button>
+    <button class="dashboard-tab active" data-target="fixedParameters">Fixed Parameters</button>
+    <button class="dashboard-tab" data-target="softParameters">Soft Parameters</button>
     <button class="dashboard-tab" data-target="workplan">Workplan</button>
-    <button class="dashboard-tab" data-target="optimization">Optimization I</button>
+    <button class="dashboard-tab" data-target="optimization1">Optimization I</button>
     <button class="dashboard-tab" data-target="optimization2">Optimization II</button>
   </div>
 
-  <!-- 1) Interactive Parameters editor -->
-  <div id="parameters" class="dashboard-content active">
+  <!-- 1) Fixed Parameters (NEW) -->
+  <div id="fixedParameters" class="dashboard-content active">
     <div class="top-pane">
+      <h2>Fixed Parameters - Constraint Filtering</h2>
+      <p class="section-description">Define constraints to filter repairs. Repairs not meeting all constraints will be filtered out.</p>
+      <div id="fixedParamContainer"></div>
+      <div class="actions">
+        <button id="addFixedParamBtn" class="btn">+ Add Fixed Parameter</button>
+        <button id="saveFixedParamsBtn" class="btn btn-primary">💾 Save Changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2) Soft Parameters (RENAMED from Parameters) -->
+  <div id="softParameters" class="dashboard-content">
+    <div class="top-pane">
+      <h2>Soft Parameters - Scoring Weights</h2>
+      <p class="section-description">Define weighted parameters for ranking repairs in Optimization II.</p>
       <div id="paramContainer"></div>
       <div class="actions">
         <button id="addParamBtn" class="btn">+ Add Parameter</button>
@@ -28,7 +44,7 @@
     </div>
   </div>
 
-  <!-- 2) Workplan -->
+  <!-- 3) Workplan -->
   <div id="workplan" class="dashboard-content">
     <div class="top-pane">
       <div id="workplanContainer">
@@ -50,24 +66,133 @@
     </div>
   </div>
 
-  <!-- 3) Optimization I -->
-  <div id="optimization" class="dashboard-content">
+  <!-- 4) Optimization I (NEW - Constraint Filtering) -->
+  <div id="optimization1" class="dashboard-content">
     <div class="opt-container">
-      <button id="optimizeBtn" class="btn btn-primary">Optimize Workplan</button>
+      <h2>Optimization I - Constraint-Based Filtering</h2>
+      <p class="section-description">Apply fixed parameter constraints to filter repairs.</p>
+      <button id="runFilteringBtn" class="btn btn-primary">Run Constraint Filtering</button>
+      
+      <div id="filteringResults" style="margin-top: 2em;"></div>
     </div>
   </div>
 
-  <!-- 4) Optimization II -->
+  <!-- 5) Optimization II (OLD Optimization I - Scoring) -->
   <div id="optimization2" class="dashboard-content">
-    <div class="opt2-hero">
-      <button id="optimizeGeoBtn" class="btn btn-primary" style="padding:12px 18px; font-weight:600;">
-        Geographically Order Workplan
-      </button>
+    <div class="opt-container">
+      <h2>Optimization II - Weighted Scoring & Ranking</h2>
+      <p class="section-description">Score and rank filtered repairs using soft parameter weights.</p>
+      <button id="optimizeBtn" class="btn btn-primary">Run Scoring Algorithm</button>
+      
+      <div id="scoringResults" style="margin-top: 2em;"></div>
     </div>
-    <div class="opt2-container"></div>
   </div>
 
-  <!-- Add Parameter Modal -->
+  <!-- Add Fixed Parameter Modal -->
+  <div id="addFixedParamModal" class="modal" style="display:none;">
+    <div class="modal-content" style="width:500px; max-width:90%;">
+      <span class="close-modal" id="closeAddFixedParamModal">&times;</span>
+      <h2 class="modal-header">Add Fixed Parameter</h2>
+
+      <div style="margin-top:1em;">
+        <label>Fixed Parameter Name</label><br/>
+        <input type="text" id="fixedParamNameInput" placeholder="Enter parameter name" style="width:100%; padding:0.5em;"/>
+      </div>
+
+      <div style="margin-top:1em;">
+        <label>Constraint Type</label><br/>
+        <select id="fixedParamTypeSelect" style="width:100%; padding:0.5em;">
+          <option value="geographical">Geographical</option>
+          <option value="temporal">Temporal</option>
+          <option value="monetary">Monetary</option>
+          <option value="designation">Designation</option>
+        </select>
+      </div>
+
+      <!-- Geographical Fields -->
+      <div id="geographicalFields" class="constraint-fields" style="display:none; margin-top:1em;">
+        <label>Allowed Values</label>
+        <div id="geoValuesList" style="margin-top:0.5em;"></div>
+        <button type="button" id="addGeoValueBtn" class="btn" style="margin-top:0.5em;">+ Add Value</button>
+      </div>
+
+      <!-- Temporal Fields -->
+      <div id="temporalFields" class="constraint-fields" style="display:none; margin-top:1em;">
+        <div style="margin-bottom:0.5em;">
+          <label>Scope</label><br/>
+          <select id="temporalScope" style="width:100%; padding:0.5em;">
+            <option value="per_day">Per Day</option>
+            <option value="per_week">Per Week</option>
+            <option value="per_month">Per Month</option>
+            <option value="per_year">Per Year</option>
+          </select>
+        </div>
+        <div style="margin-bottom:0.5em;">
+          <label>Value</label><br/>
+          <input type="number" id="temporalValue" placeholder="Enter value" style="width:100%; padding:0.5em;"/>
+        </div>
+        <div>
+          <label>Unit</label><br/>
+          <select id="temporalUnit" style="width:100%; padding:0.5em;">
+            <option value="hours">Hours</option>
+            <option value="days">Days</option>
+            <option value="weeks">Weeks</option>
+            <option value="months">Months</option>
+            <option value="years">Years</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Monetary Fields -->
+      <div id="monetaryFields" class="constraint-fields" style="display:none; margin-top:1em;">
+        <div style="margin-bottom:0.5em;">
+          <label>Field Name</label><br/>
+          <input type="text" id="monetaryFieldName" placeholder="e.g., Cost, Budget" style="width:100%; padding:0.5em;"/>
+        </div>
+        <div style="margin-bottom:0.5em;">
+          <label>Conditional</label><br/>
+          <select id="monetaryConditional" style="width:100%; padding:0.5em;">
+            <option value="<">Less than (<)</option>
+            <option value="<=">Less than or equal (<=)</option>
+            <option value=">">Greater than (>)</option>
+            <option value=">=">Greater than or equal (>=)</option>
+            <option value="=">Equal (=)</option>
+            <option value="!=">Not equal (!=)</option>
+          </select>
+        </div>
+        <div style="margin-bottom:0.5em;">
+          <label>Value</label><br/>
+          <input type="number" id="monetaryValue" placeholder="Enter numeric value" style="width:100%; padding:0.5em;"/>
+        </div>
+        <div>
+          <label>Unit</label><br/>
+          <input type="text" id="monetaryUnit" placeholder="e.g., $, CAD, USD" style="width:100%; padding:0.5em;"/>
+        </div>
+      </div>
+
+      <!-- Designation Fields -->
+      <div id="designationFields" class="constraint-fields" style="display:none; margin-top:1em;">
+        <div style="margin-bottom:0.5em;">
+          <label>Condition</label><br/>
+          <select id="designationCondition" style="width:100%; padding:0.5em;">
+            <option value="None">None (filter out if present)</option>
+            <option value="Only">Only (keep only if present)</option>
+          </select>
+        </div>
+        <div>
+          <label>Field Name</label><br/>
+          <input type="text" id="designationFieldName" placeholder="e.g., Status, Category" style="width:100%; padding:0.5em;"/>
+        </div>
+      </div>
+
+      <div style="margin-top:1.5em; text-align:right;">
+        <button id="saveFixedParamBtn" class="btn btn-primary">Save Fixed Parameter</button>
+        <button id="cancelFixedParamBtn" class="btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Soft Parameter Modal (same as old Add Parameter Modal) -->
   <div id="addParamModal" class="modal" style="display:none;">
     <div class="modal-content" style="width:400px; max-width:90%;">
       <span class="close-modal" id="closeAddParamModal">&times;</span>

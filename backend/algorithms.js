@@ -1,25 +1,292 @@
 // backend/algorithms.js
-// - optimize_workplan (per-row re-normalization over matched parameters)
-// - run_geographical_algorithm (uses data/algorithm_data/longterm_inspection_plan.json)
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
 const lookupsRepo = require('./lookups_repo');
 
-// ───────── helpers (Python parity) ─────────
+// ───────── helpers ─────────
 const _norm = (x) => (x == null ? '' : String(x).trim());
 const _canon = (s) => String(s ?? '')
   .trim()
-  .replace(/[\u2013\u2014]/g, '-')  // en/em dash -> hyphen
+  .replace(/[\u2013\u2014]/g, '-')
   .toLowerCase();
 const _tryFloat = (s) => {
   const v = Number(String(s ?? '').replace(/,/g, '').trim());
   return Number.isFinite(v) ? v : null;
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// OPTIMIZATION I - CONSTRAINT-BASED FILTERING (NEW)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Filter repairs based on fixed parameter constraints
+ * @param {{repairs: Array, fixed_parameters: Array}} payload
+ * @returns {{success: boolean, kept: Array, filtered_out: Array, total_repairs: number}}
+ */
+async function runConstraintFiltering({ repairs = [], fixed_parameters = [] } = {}) {
+  console.log('[runConstraintFiltering] repairs=', repairs.length, 'fixed_parameters=', fixed_parameters.length);
+
+  if (!repairs.length) {
+    return {
+      success: false,
+      message: 'No repairs provided for filtering',
+      kept: [],
+      filtered_out: [],
+      total_repairs: 0
+    };
+  }
+
+  if (!fixed_parameters.length) {
+    // No constraints means all repairs pass
+    return {
+      success: true,
+      kept: repairs,
+      filtered_out: [],
+      total_repairs: repairs.length
+    };
+  }
+
+  const kept = [];
+  const filtered_out = [];
+
+  for (const repair of repairs) {
+    let passes = true;
+    let filter_reason = '';
+
+    for (const param of fixed_parameters) {
+      const result = checkConstraint(repair, param);
+      if (!result.passes) {
+        passes = false;
+        filter_reason = result.reason;
+        break;
+      }
+    }
+
+    if (passes) {
+      kept.push(repair);
+    } else {
+      filtered_out.push({ ...repair, filter_reason });
+    }
+  }
+
+  return {
+    success: true,
+    kept,
+    filtered_out,
+    total_repairs: repairs.length
+  };
+}
+
+function checkConstraint(repair, param) {
+  const type = param.type;
+
+  if (type === 'geographical') {
+    return checkGeographicalConstraint(repair, param);
+  } else if (type === 'temporal') {
+    return checkTemporalConstraint(repair, param);
+  } else if (type === 'monetary') {
+    return checkMonetaryConstraint(repair, param);
+  } else if (type === 'designation') {
+    return checkDesignationConstraint(repair, param);
+  }
+
+  return { passes: true };
+}
+
+function checkGeographicalConstraint(repair, param) {
+  // Check if repair's field value is in the allowed values list
+  const paramName = _canon(param.name);
+  const allowedValues = (param.values || []).map(v => _canon(v));
+
+  // Look for matching field in repair data
+  const repairValue = findRepairField(repair, paramName);
+  
+  if (!repairValue) {
+    return {
+      passes: false,
+      reason: `Missing geographical parameter: ${param.name}`
+    };
+  }
+
+  const canonValue = _canon(repairValue);
+  if (!allowedValues.includes(canonValue)) {
+    return {
+      passes: false,
+      reason: `${param.name} value "${repairValue}" not in allowed list: ${param.values.join(', ')}`
+    };
+  }
+
+  return { passes: true };
+}
+
+function checkTemporalConstraint(repair, param) {
+  // Check if repair meets temporal constraint
+  // scope: per_day, per_week, per_month, per_year
+  // value: numeric value
+  // unit: hours, days, weeks, months, years
+  
+  const paramName = _canon(param.name);
+  const repairValue = findRepairField(repair, paramName);
+  
+  if (!repairValue) {
+    return {
+      passes: false,
+      reason: `Missing temporal parameter: ${param.name}`
+    };
+  }
+
+  const repairNum = _tryFloat(repairValue);
+  const constraintValue = _tryFloat(param.value);
+
+  if (repairNum === null || constraintValue === null) {
+    return {
+      passes: false,
+      reason: `Invalid numeric value for temporal constraint: ${param.name}`
+    };
+  }
+
+  // Convert both to same unit for comparison
+  const normalizedRepair = normalizeTemporalValue(repairNum, param.unit);
+  const normalizedConstraint = normalizeTemporalValue(constraintValue, param.unit);
+
+  // Check based on scope
+  if (normalizedRepair > normalizedConstraint) {
+    return {
+      passes: false,
+      reason: `${param.name} exceeds ${param.scope} limit: ${repairValue} > ${param.value} ${param.unit}`
+    };
+  }
+
+  return { passes: true };
+}
+
+function checkMonetaryConstraint(repair, param) {
+  // Check if repair's field meets monetary conditional
+  // field_name: the field to check
+  // conditional: <, <=, >, >=, =, !=
+  // value: numeric value to compare against
+  
+  const fieldName = _canon(param.field_name);
+  const repairValue = findRepairField(repair, fieldName);
+  
+  if (!repairValue) {
+    return {
+      passes: false,
+      reason: `Missing monetary field: ${param.field_name}`
+    };
+  }
+
+  const repairNum = _tryFloat(repairValue);
+  const constraintValue = _tryFloat(param.value);
+
+  if (repairNum === null || constraintValue === null) {
+    return {
+      passes: false,
+      reason: `Invalid numeric value for monetary constraint: ${param.field_name}`
+    };
+  }
+
+  const conditional = param.conditional;
+  let passes = false;
+
+  switch (conditional) {
+    case '<':
+      passes = repairNum < constraintValue;
+      break;
+    case '<=':
+      passes = repairNum <= constraintValue;
+      break;
+    case '>':
+      passes = repairNum > constraintValue;
+      break;
+    case '>=':
+      passes = repairNum >= constraintValue;
+      break;
+    case '=':
+      passes = repairNum === constraintValue;
+      break;
+    case '!=':
+      passes = repairNum !== constraintValue;
+      break;
+    default:
+      passes = true;
+  }
+
+  if (!passes) {
+    return {
+      passes: false,
+      reason: `${param.field_name} (${repairValue}) does not meet condition: ${conditional} ${param.value} ${param.unit || ''}`
+    };
+  }
+
+  return { passes: true };
+}
+
+function checkDesignationConstraint(repair, param) {
+  // condition: "None" or "Only"
+  // field_name: the field to check
+  
+  const fieldName = _canon(param.field_name);
+  const repairValue = findRepairField(repair, fieldName);
+  const hasValue = repairValue !== null && repairValue !== '';
+
+  if (param.condition === 'None') {
+    // Filter out if field is present
+    if (hasValue) {
+      return {
+        passes: false,
+        reason: `${param.field_name} should not be present (condition: None)`
+      };
+    }
+  } else if (param.condition === 'Only') {
+    // Keep only if field is present
+    if (!hasValue) {
+      return {
+        passes: false,
+        reason: `${param.field_name} must be present (condition: Only)`
+      };
+    }
+  }
+
+  return { passes: true };
+}
+
+function findRepairField(repair, fieldName) {
+  // Case-insensitive field lookup
+  const canon = _canon(fieldName);
+  for (const [key, value] of Object.entries(repair)) {
+    if (_canon(key) === canon) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function normalizeTemporalValue(value, unit) {
+  // Normalize all temporal values to hours for comparison
+  switch (unit) {
+    case 'hours':
+      return value;
+    case 'days':
+      return value * 24;
+    case 'weeks':
+      return value * 24 * 7;
+    case 'months':
+      return value * 24 * 30; // approximation
+    case 'years':
+      return value * 24 * 365; // approximation
+    default:
+      return value;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// OPTIMIZATION II - SCORING & RANKING (OLD OPTIMIZATION I)
+// ═══════════════════════════════════════════════════════════════════════════
+
 function _buildParamIndex(parameters = []) {
-  // { pname: { max_weight, options:{label->weight}, condition } }
   const out = Object.create(null);
   for (const row of parameters || []) {
     const pname = _norm(row?.parameter);
@@ -40,7 +307,6 @@ function _buildParamIndex(parameters = []) {
       grp.options[optLabel] = wnum == null ? 0 : wnum;
     }
   }
-  // default max_weight to largest option (or 1)
   for (const [pname, grp] of Object.entries(out)) {
     if (grp.max_weight == null) {
       const vals = Object.values(grp.options);
@@ -51,7 +317,6 @@ function _buildParamIndex(parameters = []) {
 }
 
 function _normalizeOverallWeights(rawMap, paramIndex) {
-  // rawMap: {pname: 0..100}. Return fractions that sum to 1. If all 0, fall back to equal.
   const cleaned = Object.create(null);
   for (const pname of Object.keys(paramIndex)) {
     const v = (rawMap && Object.prototype.hasOwnProperty.call(rawMap, pname)) ? rawMap[pname] : 0;
@@ -64,7 +329,7 @@ function _normalizeOverallWeights(rawMap, paramIndex) {
     for (const [k, v] of Object.entries(cleaned)) out[k] = v / total;
     return out;
   }
- const n = Math.max(1, Object.keys(paramIndex).length);
+  const n = Math.max(1, Object.keys(paramIndex).length);
   const eq = 1 / n;
   const out = Object.create(null);
   for (const k of Object.keys(paramIndex)) out[k] = eq;
@@ -72,18 +337,16 @@ function _normalizeOverallWeights(rawMap, paramIndex) {
 }
 
 function _matchOptionWeight(paramCfg, value) {
-  // Returns { matched:boolean, weight:number }
   const options = paramCfg?.options || {};
   const v = _canon(value);
 
-  // Case/whitespace/dash-insensitive label match
   for (const [label, w] of Object.entries(options)) {
     if (_canon(label) === v) {
       const wn = _tryFloat(w);
       return { matched: true, weight: wn == null ? 0 : wn };
     }
   }
-  // Numeric label match still supported (e.g., "1", 1)
+  
   const vnum = _tryFloat(v);
   if (vnum != null) {
     for (const [label, w] of Object.entries(options)) {
@@ -107,25 +370,26 @@ async function _loadParams() {
   return [];
 }
 
-// ───────── Optimization I ─────────
 /**
- * @param {{workplan_rows?: Array<Object>, param_overall?: Object}} payload
+ * Score and rank repairs using soft parameters (old Algorithm I)
+ * @param {{workplan_rows?: Array<Object>, param_overall?: Object, parameters?: Array}} payload
  * @returns {{success: boolean, optimized_count: number, ranking: Array<Object>, notes: string}}
  */
 async function optimizeWorkplan({ workplan_rows = [], param_overall = {}, parameters: paramsFromUI } = {}) {
-  // Prefer params passed from the UI (same source as the Parameters tab). Fallback to repo load.
   const parameters = Array.isArray(paramsFromUI) ? paramsFromUI : await _loadParams();
   console.log('[optimizeWorkplan] workplan_rows=', workplan_rows.length, 'parameters=', (parameters || []).length);
+  
   const pindex = _buildParamIndex(parameters || []);
   if (!Object.keys(pindex).length) {
     return {
       success: false,
       optimized_count: 0,
       ranking: [],
-      notes: 'No algorithm parameters loaded. Ensure Parameters are saved and passed in.'
+      notes: 'No algorithm parameters loaded. Ensure Soft Parameters are saved and passed in.'
     };
   }
- const overallFrac = _normalizeOverallWeights(param_overall || {}, pindex);
+  
+  const overallFrac = _normalizeOverallWeights(param_overall || {}, pindex);
   const paramNames = Object.keys(pindex);
 
   const results = [];
@@ -135,7 +399,6 @@ async function optimizeWorkplan({ workplan_rows = [], param_overall = {}, parame
     const operation = row['Operation'] ?? row['Repair Name'] ?? '';
     const siteName  = row['Site Name'] ?? '';
 
-    // which params matched?
     const perParam = Object.create(null);
     let presentSum = 0;
     for (const pname of paramNames) {
@@ -176,7 +439,7 @@ async function optimizeWorkplan({ workplan_rows = [], param_overall = {}, parame
       station_number: stationNo,
       site_name: siteName,
       operation,
-      score: Math.round(score * 10000) / 100, // percent, 2dp
+      score: Math.round(score * 10000) / 100,
       details: breakdown,
     });
   }
@@ -202,155 +465,7 @@ async function optimizeWorkplan({ workplan_rows = [], param_overall = {}, parame
   };
 }
 
-// ───────── Optimization II (plan-based) ─────────
-const PLAN_PATH = path.resolve(__dirname, '..', 'data', 'algorithm_data', 'longterm_inspection_plan.json');
-
-function _loadPlan() {
-  if (!fs.existsSync(PLAN_PATH)) {
-    throw new Error(`Plan file not found: ${PLAN_PATH}`);
-  }
-  return JSON.parse(fs.readFileSync(PLAN_PATH, 'utf-8'));
-}
-
-function _normalizeItem(x) {
-  const sid =
-    x.station_id ?? x.stationId ?? x.station_number ?? x['Station Number'] ?? x.station ?? x.id ?? '';
-  const op = x.operation ?? x.Operation ?? x.task ?? '';
-  let raw = x.score ?? x['Summed Value'] ?? x.value ?? x.percent ?? x.Score ?? 0;
-  let score = _tryFloat(String(raw).toString().replace('%', ''));
-  if (score == null) score = 0;
-  const out = { station_id: _norm(sid), operation: _norm(op), score: score };
-  if (x.days != null || x.Days != null) {
-    const d = _tryFloat(x.days ?? x.Days);
-    if (d != null) out.days = Math.max(1, Math.ceil(d));
-  }
-  return out;
-}
-
-function _distributeAcrossDays(items, days) {
-  days = Math.max(1, parseInt(days || 1, 10));
-  const n = items.length;
-  if (!n) return [];
-  const base = Math.floor(n / days);
-  const rem = n % days;
-  const out = [];
-  let idx = 0;
-  for (let d = 1; d <= days; d++) {
-    const take = base + (d <= rem ? 1 : 0);
-    for (let i = 0; i < take && idx < n; i++) {
-      const row = { ...items[idx++], day: d };
-      out.push(row);
-    }
-  }
-  while (idx < n) out.push({ ...items[idx++], day: days });
-  return out;
-}
-
-function _scheduleByItemDuration(items) {
-  let current = 1;
-  const out = [];
-  let used = 0;
-  for (const it of items) {
-    const d = Math.max(1, parseInt(it.days || 1, 10));
-    out.push({ ...it, day: current });
-    current += d;
-    used += d;
-  }
-  return [out, Math.max(used, 1)];
-}
-
-/**
- * @param {{items?: Array<Object>}} payload
- * @returns {{success:boolean, plan_name:string, trips:Array, unplanned:Array, totals:Object}}
- */
-async function runGeographicalAlgorithm(payload = {}) {
-  let plan;
-  try {
-    plan = _loadPlan();
-  } catch (e) {
-    return { success: false, message: String(e && e.message ? e.message : e) };
-  }
-  const itemsIn = Array.isArray(payload.items) ? payload.items : [];
-  if (!itemsIn.length) {
-    return { success: false, message: 'No Optimization I results provided. Run Optimization I first, then click Optimization II.' };
-  }
-  const items = itemsIn.map(_normalizeItem).filter(it => it.station_id);
-
-  const stationToTrip = Object.create(null);
-  const tripsMeta = Object.create(null);
-  for (const t of plan.trips || []) {
-    const tname = _norm(t.trip_name);
-   if (!tname) continue;
-    const days = Math.max(1, parseInt(t.days || 1, 10));
-    tripsMeta[tname] = { days };
-    for (const s of t.stations || []) {
-      const sid = _norm(s.id);
-      if (!sid) continue;
-      const mode = _norm(s.transportation || 'drive').toLowerCase() || 'drive';
-      stationToTrip[sid] = [tname, mode, days];
-    }
-  }
-
-  const grouped = Object.create(null);
-  const unplanned = [];
-  for (const it of items) {
-    const map = stationToTrip[it.station_id];
-    if (map) {
-     const [tname, mode] = map;
-      grouped[tname] ||= [];
-      grouped[tname].push({ ...it, mode });
-    } else {
-      unplanned.push({ ...it });
-    }
-  }
-
-  const tripsOut = [];
-  for (const [tname, rows] of Object.entries(grouped)) {
-    const planDays = Math.max(1, parseInt(tripsMeta[tname]?.days || 1, 10));
-    let scheduled, daysEffective;
-    if (rows.some(r => r.days != null)) {
-      [scheduled, daysEffective] = _scheduleByItemDuration(rows);
-    } else {
-      daysEffective = planDays;
-      scheduled = _distributeAcrossDays(rows, planDays);
-    }
-    const driveCt = rows.filter(r => r.mode === 'drive').length;
-    const heliCt  = rows.filter(r => r.mode === 'helicopter').length;
-    tripsOut.push({
-      trip_name: tname,
-      days: daysEffective,
-      count: rows.length,
-      drive_count: driveCt,
-      helicopter_count: heliCt,
-      schedule: scheduled, // each: {day, station_id, operation, score, mode}
-    });
-  }
-
-  // Sort trips by first appearance in the Opt I list
-  const firstIndex = Object.create(null);
-  let pos = 0;
-  for (const it of items) {
-    const map = stationToTrip[it.station_id];
-    if (map) {
-      const tname = map[0];
-      if (!(tname in firstIndex)) firstIndex[tname] = pos;
-    }
-    pos++;
-  }
-  tripsOut.sort((a, b) => (firstIndex[a.trip_name] ?? 1e9) - (firstIndex[b.trip_name] ?? 1e9));
-
-  return {
-    success: true,
-    plan_name: plan.plan_name || 'Long-Term Inspection Plan',
-    trips: tripsOut,
-    unplanned,
-    totals: {
-      items_in: items.length,
-      planned: tripsOut.reduce((s, t) => s + t.count, 0),
-      unplanned: unplanned.length,
-      trip_count: tripsOut.length,
-    },
-  };
-}
-
-module.exports = { optimizeWorkplan, runGeographicalAlgorithm };
+module.exports = { 
+  runConstraintFiltering,
+  optimizeWorkplan
+};

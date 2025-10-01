@@ -750,4 +750,8 @@ module.exports = {
   saveWorkplanConstants: (rows) => excel.saveWorkplanConstants(rows),
   getCustomWeights: () => excel.getCustomWeights(),
   addCustomWeight: (w, a) => excel.addCustomWeight(w, !!a),
+
+  // Fixed parameters (for Optimization I constraint filtering)
+  getFixedParameters: () => excel.getFixedParameters(),
+  saveFixedParameters: (params) => excel.saveFixedParameters(params),
 };
