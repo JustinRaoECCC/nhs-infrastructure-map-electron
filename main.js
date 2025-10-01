@@ -402,3 +402,7 @@ ipcMain.handle('auth:navigateToMain', async () => {
   }
   createWindow();
 });
+
+ipcMain.handle('append-repair', async (event, payload) => {
+  return await backend.appendRepair(payload);
+});

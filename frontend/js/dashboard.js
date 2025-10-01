@@ -704,7 +704,12 @@
         return;
       }
       
-      const result = await window.electronAPI.addRepairToLocation(location, assetType, repair);
+      // Get company from the selected company dropdown
+      const company = $('#grCompany').value;
+      
+      // Call the correct IPC function with proper structure
+      const result = await window.electronAPI.appendRepair({ company, location, assetType, repair });
+
       if (!result.success) {
         appAlert('Failed to add repair: ' + (result.message || 'Unknown error'));
         return;
@@ -719,11 +724,29 @@
   function getFilteredAssetTypes() {
     const tree = state.lookupTree;
     if (!tree) return { companies: [], locationsByCompany: {}, assetTypesByLocation: {} };
+
+    // Build assetTypesByLocation from the company-scoped structure
+    const assetTypesByLocation = {};
+    const assetsByCoLoc = tree.assetsByCompanyLocation || {};
+    
+    for (const [company, locMap] of Object.entries(assetsByCoLoc)) {
+      for (const [location, assetTypes] of Object.entries(locMap)) {
+        if (!assetTypesByLocation[location]) {
+          assetTypesByLocation[location] = new Set();
+        }
+        assetTypes.forEach(at => assetTypesByLocation[location].add(at));
+      }
+    }
+    
+    // Convert sets to arrays
+    Object.keys(assetTypesByLocation).forEach(loc => {
+      assetTypesByLocation[loc] = Array.from(assetTypesByLocation[loc]);
+    });
     
     return {
       companies: tree.companies || [],
       locationsByCompany: tree.locationsByCompany || {},
-      assetTypesByLocation: tree.assetsByLocation || {}
+      assetTypesByLocation
     };
   }
 

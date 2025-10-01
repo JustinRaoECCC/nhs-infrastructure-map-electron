@@ -102,6 +102,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveRepairs: (siteName, stationId, items) =>
     ipcRenderer.invoke('repairs:save', siteName, stationId, items),
 
+  appendRepair: (payload) => ipcRenderer.invoke('append-repair', payload),
+
   // Global repairs functions for dashboard
   getAllRepairs: () =>
     ipcRenderer.invoke('repairs:getAll'),
