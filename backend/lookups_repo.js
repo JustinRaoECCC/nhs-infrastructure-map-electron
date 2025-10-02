@@ -349,12 +349,6 @@ async function upsertLocation(location, company) {
   return res;
 }
 
-async function upsertAssetType(assetType, location) {
-  const res = await excel.upsertAssetType(assetType, location);
-  _invalidateAllCaches();
-  return res;
-}
-
 // ─── Links / Photos Base Resolver ─────────────────────────────────────────
 async function getPhotosBase({ company, location, assetType } = {}) {
   console.log(`[DEBUG getPhotosBase] Input: company="${company}", location="${location}", assetType="${assetType}"`);
@@ -480,7 +474,11 @@ module.exports = {
   // writes
   upsertCompany,
   upsertLocation,
-  upsertAssetType: (assetType, company, location) => excel.upsertAssetType(assetType, company, location),
+  upsertAssetType: async (assetType, company, location) => {
+    const res = await excel.upsertAssetType(assetType, company, location);
+    _invalidateAllCaches();
+    return res;
+  },
   setAssetTypeColor,
   setAssetTypeColorForLocation,
   setAssetTypeColorForCompanyLocation,

@@ -27,7 +27,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ─── Lookups (writes only — used by Add Infrastructure wizard) ──────────
   upsertCompany:   (name, active = true) => ipcRenderer.invoke('lookups:upsertCompany', name, !!active),
   upsertLocation:  (location, company)   => ipcRenderer.invoke('lookups:upsertLocation', location, company),
-  upsertAssetType: (assetType, location) => ipcRenderer.invoke('lookups:upsertAssetType', assetType, location),
+  upsertAssetType: (assetType, company, location) => ipcRenderer.invoke('lookups:upsertAssetType', assetType, company, location),
 
   setLocationLink:  (company, location, link) =>
     ipcRenderer.invoke('lookups:setLocationLink', company, location, link),

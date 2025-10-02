@@ -1432,7 +1432,7 @@
         // Persist optional per-asset-type link before creating/upserting type
         await saveAssetTypeLinkIfAny(assetName);
 
-        const up = await window.electronAPI.upsertAssetType(assetName, location);
+        const up = await window.electronAPI.upsertAssetType(assetName, company, location);
         if (!up || up.success === false) return appAlert('Failed to create asset type.');
 
         const selectedRowsRaw = idxs.map(i => state.rows[i]).filter(Boolean);

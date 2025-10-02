@@ -153,7 +153,7 @@ ipcMain.handle('lookups:getTree', async () => backend.getLookupTree());
 // ─── IPC: Lookups (writes) ─────────────────────────────────────────────────
 ipcMain.handle('lookups:upsertCompany', async (_evt, name, active) => backend.upsertCompany(name, !!active));
 ipcMain.handle('lookups:upsertLocation', async (_evt, location, company) => backend.upsertLocation(location, company));
-ipcMain.handle('lookups:upsertAssetType', async (_evt, assetType, location) => backend.upsertAssetType(assetType, location));
+ipcMain.handle('lookups:upsertAssetType', async (_evt, assetType, company, location) => backend.upsertAssetType(assetType, company, location));
 
 // Colors
 ipcMain.handle('getColorMaps', async () => {
