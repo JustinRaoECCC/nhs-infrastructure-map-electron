@@ -479,6 +479,7 @@
         <td>${esc(repair.priority || '')}</td>
         <td>${formatCost(repair.cost)}</td>
         <td>${esc(repair.category || '')}</td>
+        <td>${esc(repair.days || '')}</td>
       `;
       const checkbox = tr.querySelector('.repair-checkbox');
       checkbox.addEventListener('change', (e) => {
@@ -501,6 +502,7 @@
         <td>${esc(item.priority || '')}</td>
         <td>${formatCost(item.cost)}</td>
         <td>${esc(item.category || '')}</td>
+        <td>${esc(item.days || '')}</td>
       `;
       const checkbox = tr.querySelector('.maintenance-checkbox');
       checkbox.addEventListener('change', (e) => {
@@ -572,6 +574,10 @@
           <div class="form-row">
             <label>Cost</label>
             <input id="grCost" type="text" placeholder="15000" />
+          </div>
+          <div class="form-row">
+            <label>Days</label>
+            <input id="grDays" type="text" placeholder="5" />
           </div>
           <div class="form-row">
             <label>Category</label>
@@ -684,7 +690,8 @@
         priority: $('#grPriority').value,
         cost: $('#grCost').value,
         category: $('#grCategory').value,
-        type: $('#grType').value
+        type: $('#grType').value,
+        days: $('#grDays').value
       };
       
       if (!location || !assetType || !stationId || !repair.name) {

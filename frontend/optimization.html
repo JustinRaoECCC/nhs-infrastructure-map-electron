@@ -100,6 +100,22 @@
       </div>
 
       <div style="margin-top:1em;">
+        <label>Data Source</label><br/>
+        <select id="fixedParamDataSource" style="width:100%; padding:0.5em;">
+          <option value="repair">Repair Fields</option>
+          <option value="station">Station Data (from location Excel)</option>
+        </select>
+      </div>
+
+      <div id="matchUsingContainer" style="margin-top:1em; display:none;">
+        <label>Match Using</label><br/>
+        <select id="fixedParamMatchUsing" style="width:100%; padding:0.5em;">
+          <option value="parameter_name">Fixed Parameter Name</option>
+          <option value="field_name">Field Name</option>
+        </select>
+      </div>
+
+      <div style="margin-top:1em;">
         <label>Constraint Type</label><br/>
         <select id="fixedParamTypeSelect" style="width:100%; padding:0.5em;">
           <option value="geographical">Geographical</option>

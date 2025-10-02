@@ -41,8 +41,10 @@
       const c3 = document.createElement('td'); c3.textContent = it.priority || '—';
       const c4 = document.createElement('td'); c4.textContent = fmtCost(it.cost);
       const c5 = document.createElement('td'); c5.textContent = it.category || '—';
+      const c6 = document.createElement('td'); c6.textContent = it.days || '—';
 
       tr.appendChild(c0); tr.appendChild(c1); tr.appendChild(c2); tr.appendChild(c3); tr.appendChild(c4); tr.appendChild(c5);
+      tr.appendChild(c6);
 
       if (state.resolveMode) {
         tr.classList.add('resolve-selectable');
@@ -92,11 +94,16 @@
     const costRaw = String(document.querySelector('#repCost')?.value || '').trim();
     const category = String(document.querySelector('#repCategory')?.value || 'Capital');
     const type = String(document.querySelector('#repType')?.value || 'Repair');
+    const daysRaw = String(document.querySelector('#repDays')?.value || '').trim();
     let cost = costRaw ? Number(costRaw.replace(/[, ]/g, '')) : '';
     if (!Number.isFinite(cost)) cost = costRaw; // keep as string if not numeric
+
+    let days = daysRaw ? Number(daysRaw.replace(/[, ]/g, '')) : '';
+    if (!Number.isFinite(days)) days = daysRaw;
+
     // date is auto-added on create
     const date = new Date().toISOString().slice(0, 10);
-    return { date, name, severity, priority, cost, category, type };
+    return { date, name, severity, priority, cost, category, type, days };
   }
 
   function validateForm(data) {
@@ -159,6 +166,7 @@
           cost: x.cost,
           category: x.category || 'Capital',
           type: /^monitor/i.test(x.type) ? 'Monitoring' : 'Repair',
+          days: x.days || ''
         })) : [];
       } catch (e) {
         console.warn('[repairs:list] failed', e);
@@ -204,6 +212,7 @@
       document.querySelector('#repCost').value = '';
       document.querySelector('#repCategory').value = 'Capital';
       document.querySelector('#repType').value = 'Repair';
+      document.querySelector('#repDays').value = '';
       openModal();
     });
 

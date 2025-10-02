@@ -14,6 +14,15 @@ function normalizeItem(raw) {
     const num = Number(String(cost ?? '').replace(/[, $]/g, ''));
     cost = Number.isFinite(num) ? num : String(cost ?? '').trim();
   }
+
+  // Days: numeric if possible; else keep as string
+  let days = item.days;
+  if (days !== undefined && days !== null && days !== '') {
+    const numDays = Number(String(days).replace(/[, ]/g, ''));
+    days = Number.isFinite(numDays) ? numDays : String(days).trim();
+  } else {
+    days = '';
+  }
   
   // Normalize category
   const category = /^o&?m$/i.test(item.category) ? 'O&M' : 'Capital';
@@ -34,6 +43,7 @@ function normalizeItem(raw) {
     cost,
     category,
     type,
+    days,
     location: String(item.location ?? '').trim(),
     assetType: String(item.assetType ?? '').trim()
   };

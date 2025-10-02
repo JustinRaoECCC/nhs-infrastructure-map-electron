@@ -22,11 +22,12 @@ const _tryFloat = (s) => {
 
 /**
  * Filter repairs based on fixed parameter constraints
- * @param {{repairs: Array, fixed_parameters: Array}} payload
+ * @param {{repairs: Array, fixed_parameters: Array, station_data: Object}} payload
  * @returns {{success: boolean, kept: Array, filtered_out: Array, total_repairs: number}}
  */
-async function runConstraintFiltering({ repairs = [], fixed_parameters = [] } = {}) {
+async function runConstraintFiltering({ repairs = [], fixed_parameters = [], station_data = {} } = {}) {
   console.log('[runConstraintFiltering] repairs=', repairs.length, 'fixed_parameters=', fixed_parameters.length);
+  console.log('[runConstraintFiltering] station_data keys=', Object.keys(station_data).length);
 
   if (!repairs.length) {
     return {
@@ -56,7 +57,7 @@ async function runConstraintFiltering({ repairs = [], fixed_parameters = [] } = 
     let filter_reason = '';
 
     for (const param of fixed_parameters) {
-      const result = checkConstraint(repair, param);
+      const result = checkConstraint(repair, param, station_data);
       if (!result.passes) {
         passes = false;
         filter_reason = result.reason;
@@ -79,65 +80,76 @@ async function runConstraintFiltering({ repairs = [], fixed_parameters = [] } = 
   };
 }
 
-function checkConstraint(repair, param) {
+function checkConstraint(repair, param, station_data) {
   const type = param.type;
 
   if (type === 'geographical') {
-    return checkGeographicalConstraint(repair, param);
+    return checkGeographicalConstraint(repair, param, station_data);
   } else if (type === 'temporal') {
-    return checkTemporalConstraint(repair, param);
+    return checkTemporalConstraint(repair, param, station_data);
   } else if (type === 'monetary') {
-    return checkMonetaryConstraint(repair, param);
+    return checkMonetaryConstraint(repair, param, station_data);
   } else if (type === 'designation') {
-    return checkDesignationConstraint(repair, param);
+    return checkDesignationConstraint(repair, param, station_data);
   }
 
   return { passes: true };
 }
 
-function checkGeographicalConstraint(repair, param) {
+function checkGeographicalConstraint(repair, param, station_data) {
   // Check if repair's field value is in the allowed values list
   const paramName = _canon(param.name);
   const allowedValues = (param.values || []).map(v => _canon(v));
 
-  // Look for matching field in repair data
-  const repairValue = findRepairField(repair, paramName);
+  // Determine data source
+  const dataSource = param.data_source || 'repair';
+  const station = station_data[repair.station_id] || {};
   
-  if (!repairValue) {
+  // Look for matching field in the appropriate data source
+  const value = dataSource === 'station' 
+    ? findField(station, paramName)
+    : findField(repair, paramName);
+  
+  if (!value) {
     return {
       passes: false,
-      reason: `Missing geographical parameter: ${param.name}`
+      reason: `Missing geographical parameter: ${param.name} in ${dataSource} data`
     };
   }
 
-  const canonValue = _canon(repairValue);
+  const canonValue = _canon(value);
   if (!allowedValues.includes(canonValue)) {
     return {
       passes: false,
-      reason: `${param.name} value "${repairValue}" not in allowed list: ${param.values.join(', ')}`
+      reason: `${param.name} value "${value}" not in allowed list: ${param.values.join(', ')}`
     };
   }
 
   return { passes: true };
 }
 
-function checkTemporalConstraint(repair, param) {
+function checkTemporalConstraint(repair, param, station_data) {
   // Check if repair meets temporal constraint
   // scope: per_day, per_week, per_month, per_year
   // value: numeric value
   // unit: hours, days, weeks, months, years
   
   const paramName = _canon(param.name);
-  const repairValue = findRepairField(repair, paramName);
+  const dataSource = param.data_source || 'repair';
+  const station = station_data[repair.station_id] || {};
   
-  if (!repairValue) {
+  const value = dataSource === 'station' 
+    ? findField(station, paramName)
+    : findField(repair, paramName);
+  
+  if (!value) {
     return {
       passes: false,
-      reason: `Missing temporal parameter: ${param.name}`
+      reason: `Missing temporal parameter: ${param.name} in ${dataSource} data`
     };
   }
 
-  const repairNum = _tryFloat(repairValue);
+  const repairNum = _tryFloat(value);
   const constraintValue = _tryFloat(param.value);
 
   if (repairNum === null || constraintValue === null) {
@@ -155,36 +167,45 @@ function checkTemporalConstraint(repair, param) {
   if (normalizedRepair > normalizedConstraint) {
     return {
       passes: false,
-      reason: `${param.name} exceeds ${param.scope} limit: ${repairValue} > ${param.value} ${param.unit}`
+      reason: `${param.name} exceeds ${param.scope} limit: ${value} > ${param.value} ${param.unit}`
     };
   }
 
   return { passes: true };
 }
 
-function checkMonetaryConstraint(repair, param) {
+function checkMonetaryConstraint(repair, param, station_data) {
   // Check if repair's field meets monetary conditional
   // field_name: the field to check
   // conditional: <, <=, >, >=, =, !=
   // value: numeric value to compare against
   
-  const fieldName = _canon(param.field_name);
-  const repairValue = findRepairField(repair, fieldName);
+  // Determine which field name to use for matching
+  const matchUsing = param.match_using || 'parameter_name';
+  const lookupName = matchUsing === 'field_name' ? param.field_name : param.name;
+  const fieldName = _canon(lookupName);
   
-  if (!repairValue) {
+  const dataSource = param.data_source || 'repair';
+  const station = station_data[repair.station_id] || {};
+  
+  const value = dataSource === 'station' 
+    ? findField(station, fieldName)
+    : findField(repair, fieldName);
+  
+  if (!value) {
     return {
       passes: false,
-      reason: `Missing monetary field: ${param.field_name}`
+      reason: `Missing monetary field: ${lookupName} in ${dataSource} data`
     };
   }
 
-  const repairNum = _tryFloat(repairValue);
+  const repairNum = _tryFloat(value);
   const constraintValue = _tryFloat(param.value);
 
   if (repairNum === null || constraintValue === null) {
     return {
       passes: false,
-      reason: `Invalid numeric value for monetary constraint: ${param.field_name}`
+      reason: `Invalid numeric value for monetary constraint: ${lookupName}`
     };
   }
 
@@ -217,27 +238,38 @@ function checkMonetaryConstraint(repair, param) {
   if (!passes) {
     return {
       passes: false,
-      reason: `${param.field_name} (${repairValue}) does not meet condition: ${conditional} ${param.value} ${param.unit || ''}`
+      reason: `${lookupName} (${value}) does not meet condition: ${conditional} ${param.value} ${param.unit || ''}`
     };
   }
 
   return { passes: true };
 }
 
-function checkDesignationConstraint(repair, param) {
+function checkDesignationConstraint(repair, param, station_data) {
   // condition: "None" or "Only"
   // field_name: the field to check
   
-  const fieldName = _canon(param.field_name);
-  const repairValue = findRepairField(repair, fieldName);
-  const hasValue = repairValue !== null && repairValue !== '';
+  // Determine which field name to use for matching
+  const matchUsing = param.match_using || 'parameter_name';
+  const lookupName = matchUsing === 'field_name' ? param.field_name : param.name;
+  const fieldName = _canon(lookupName);
+  
+  const dataSource = param.data_source || 'repair';
+  const station = station_data[repair.station_id] || {};
+  
+  const value = dataSource === 'station' 
+    ? findField(station, fieldName)
+    : findField(repair, fieldName);
+  
+  const hasValue = value !== null && value !== '';
+
 
   if (param.condition === 'None') {
     // Filter out if field is present
     if (hasValue) {
       return {
         passes: false,
-        reason: `${param.field_name} should not be present (condition: None)`
+        reason: `${lookupName} should not be present (condition: None)`
       };
     }
   } else if (param.condition === 'Only') {
@@ -245,7 +277,7 @@ function checkDesignationConstraint(repair, param) {
     if (!hasValue) {
       return {
         passes: false,
-        reason: `${param.field_name} must be present (condition: Only)`
+        reason: `${lookupName} must be present (condition: Only)`
       };
     }
   }
@@ -253,10 +285,10 @@ function checkDesignationConstraint(repair, param) {
   return { passes: true };
 }
 
-function findRepairField(repair, fieldName) {
+function findField(dataObj, fieldName) {
   // Case-insensitive field lookup
   const canon = _canon(fieldName);
-  for (const [key, value] of Object.entries(repair)) {
+  for (const [key, value] of Object.entries(dataObj)) {
     if (_canon(key) === canon) {
       return value;
     }

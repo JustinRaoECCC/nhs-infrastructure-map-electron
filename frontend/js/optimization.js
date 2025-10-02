@@ -71,15 +71,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const fixedParamNameInput = document.getElementById('fixedParamNameInput');
     const fixedParamTypeSelect = document.getElementById('fixedParamTypeSelect');
 
+    const fixedParamDataSource = document.getElementById('fixedParamDataSource');
+    const fixedParamMatchUsing = document.getElementById('fixedParamMatchUsing');
+    const matchUsingContainer = document.getElementById('matchUsingContainer');
+
     // Constraint-specific fields
     const geographicalFields = document.getElementById('geographicalFields');
     const temporalFields = document.getElementById('temporalFields');
     const monetaryFields = document.getElementById('monetaryFields');
     const designationFields = document.getElementById('designationFields');
-    const geoValuesList = document.getElementById('geoValuesList');
-    const addGeoValueBtn = document.getElementById('addGeoValueBtn');
 
-    // Toggle constraint fields based on type
+    // Toggle constraint fields AND match using based on type
     fixedParamTypeSelect.addEventListener('change', () => {
       document.querySelectorAll('.constraint-fields').forEach(el => el.style.display = 'none');
       const type = fixedParamTypeSelect.value;
@@ -87,7 +89,14 @@ document.addEventListener('DOMContentLoaded', () => {
       if (type === 'temporal') temporalFields.style.display = 'block';
       if (type === 'monetary') monetaryFields.style.display = 'block';
       if (type === 'designation') designationFields.style.display = 'block';
+      
+      // Only show "Match Using" for types that have a field_name
+      const hasFieldName = type === 'monetary' || type === 'designation';
+      matchUsingContainer.style.display = hasFieldName ? 'block' : 'none';
     });
+
+    const geoValuesList = document.getElementById('geoValuesList');
+    const addGeoValueBtn = document.getElementById('addGeoValueBtn');
 
     function makeGeoValueRow(value = '') {
       const row = document.createElement('div');
@@ -112,20 +121,29 @@ document.addEventListener('DOMContentLoaded', () => {
       row.style = 'border:1px solid #ddd; padding:1em; margin-bottom:1em; border-radius:4px; background:#f9f9f9;';
       
       let detailsHTML = '';
+      const dataSourceLabel = param.data_source === 'station' ? 'Station Data' : 'Repair Fields';
       if (param.type === 'geographical') {
         detailsHTML = `<div><strong>Type:</strong> Geographical</div>
+                       <div><strong>Data Source:</strong> ${dataSourceLabel}</div>
                        <div><strong>Allowed Values:</strong> ${param.values.join(', ')}</div>`;
       } else if (param.type === 'temporal') {
         detailsHTML = `<div><strong>Type:</strong> Temporal</div>
+                       <div><strong>Data Source:</strong> ${dataSourceLabel}</div>
                        <div><strong>Scope:</strong> ${param.scope}</div>
                        <div><strong>Value:</strong> ${param.value}</div>
                        <div><strong>Unit:</strong> ${param.unit}</div>`;
       } else if (param.type === 'monetary') {
+        const matchLabel = param.match_using === 'field_name' ? 'Field Name' : 'Fixed Parameter Name';
         detailsHTML = `<div><strong>Type:</strong> Monetary</div>
+                       <div><strong>Data Source:</strong> ${dataSourceLabel}</div>
+                       <div><strong>Match Using:</strong> ${matchLabel}</div>
                        <div><strong>Field:</strong> ${param.field_name}</div>
                        <div><strong>Condition:</strong> ${param.conditional} ${param.value} ${param.unit}</div>`;
-      } else if (param.type === 'designation') {
+      } else if (param.type === 'designatino') {
+        const matchLabel = param.match_using === 'field_name' ? 'Field Name' : 'Fixed Parameter Name';
         detailsHTML = `<div><strong>Type:</strong> Designation</div>
+                       <div><strong>Data Source:</strong> ${dataSourceLabel}</div>
+                       <div><strong>Match Using:</strong> ${matchLabel}</div>
                        <div><strong>Condition:</strong> ${param.condition}</div>
                        <div><strong>Field:</strong> ${param.field_name}</div>`;
       }
@@ -157,6 +175,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Open add fixed parameter modal
     addFixedParamBtn.addEventListener('click', () => {
       fixedParamNameInput.value = '';
+      fixedParamDataSource.value = 'repair';
+      fixedParamMatchUsing.value = 'parameter_name';
       fixedParamTypeSelect.value = 'geographical';
       geoValuesList.innerHTML = '';
       geoValuesList.appendChild(makeGeoValueRow());
@@ -171,6 +191,7 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('designationFieldName').value = '';
       document.querySelectorAll('.constraint-fields').forEach(el => el.style.display = 'none');
       geographicalFields.style.display = 'block';
+      matchUsingContainer.style.display = 'none';
       addFixedParamModal.style.display = 'flex';
     });
 
@@ -184,13 +205,15 @@ document.addEventListener('DOMContentLoaded', () => {
     saveFixedParamBtn.addEventListener('click', () => {
       const name = fixedParamNameInput.value.trim();
       const type = fixedParamTypeSelect.value;
+      const dataSource = fixedParamDataSource.value;
+      const matchUsing = fixedParamMatchUsing.value;
       
       if (!name) {
         alert('Please enter a parameter name');
         return;
       }
 
-      const param = { name, type };
+      const param = { name, type, data_source: dataSource };
 
       if (type === 'geographical') {
         const values = Array.from(geoValuesList.querySelectorAll('.geo-value'))
@@ -210,6 +233,7 @@ document.addEventListener('DOMContentLoaded', () => {
           return;
         }
       } else if (type === 'monetary') {
+        param.match_using = matchUsing;
         param.field_name = document.getElementById('monetaryFieldName').value.trim();
         param.conditional = document.getElementById('monetaryConditional').value;
         param.value = document.getElementById('monetaryValue').value;
@@ -219,6 +243,7 @@ document.addEventListener('DOMContentLoaded', () => {
           return;
         }
       } else if (type === 'designation') {
+        param.match_using = matchUsing;
         param.condition = document.getElementById('designationCondition').value;
         param.field_name = document.getElementById('designationFieldName').value.trim();
         if (!param.field_name) {
@@ -565,11 +590,24 @@ document.addEventListener('DOMContentLoaded', () => {
           return;
         }
 
+        // Get all station data to pass to the algorithm
+        const stationList = await window.electronAPI.getStationData();
+        const stationDataMap = {};
+        
+        // Build a map of station_id -> all station fields
+        (stationList || []).forEach(station => {
+          const stationId = station.station_id || station['Station ID'] || station.id;
+          if (stationId) {
+            stationDataMap[stationId] = station;
+          }
+        });
+
         filteringResults.innerHTML = '<div class="opt2-note">Filtering repairs...</div>';
 
         const result = await window.electronAPI.runConstraintFiltering({
           repairs: allRepairs,
-          fixed_parameters: fixedParams
+          fixed_parameters: fixedParams,
+          station_data: stationDataMap
         });
 
         if (!result.success) {

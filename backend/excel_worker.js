@@ -48,7 +48,8 @@ const REPAIRS_HEADERS = [
   'Priority',
   'Cost',
   'Category',
-  'Type'         // rightmost
+  'Type',
+  'Days'
 ];
 
 // ─── GI normalization helpers ─────────────────────────────────────────────
@@ -578,7 +579,8 @@ async function listRepairsForStation(company, location, assetType, stationId) {
         priority: takeText(row.getCell(5)),
         cost: takeText(row.getCell(6)),
         category: takeText(row.getCell(7)),
-        type: takeText(row.getCell(8))
+        type: takeText(row.getCell(8)),
+        days: takeText(row.getCell(9))
       });
     }
   }
@@ -728,6 +730,7 @@ async function getAllRepairs() {
             cost: takeText(row.getCell(6)),
             category: takeText(row.getCell(7)),
             type: takeText(row.getCell(8)),
+            days: takeText(row.getCell(9)),
             location,
             assetType,
             company
@@ -775,7 +778,8 @@ async function saveStationRepairs(company, location, assetType, stationId, repai
       repair.priority || '',
       repair.cost || '',
       repair.category || 'Capital',
-      repair.type || 'Repair'
+      repair.type || 'Repair',
+      repair.days || ''
     ];
     ws.addRow(newValues);
   }
