@@ -600,30 +600,60 @@ async function appendRepair(company, location, assetType, repair = {}) {
     return { success: false, message: 'Station ID is required in the repair payload.' };
   }
 
+  // Map common field variations to canonical names
+  const canonicalMap = {
+    'station id': 'Station ID',
+    'stationid': 'Station ID',
+    'id': 'Station ID',
+    'repair name': 'Repair Name',
+    'name': 'Repair Name',
+    'date': 'Date',
+    'severity': 'Severity',
+    'priority': 'Priority',
+    'cost': 'Cost',
+    'category': 'Category',
+    'type': 'Type',
+    'days': 'Days'
+  };
+  
+  function toCanonical(key) {
+    const lower = String(key || '').trim().toLowerCase();
+    return canonicalMap[lower] || key;
+  }
+
   // Canonicalize header to: Date … Type
   const headerRow = ws.getRow(1);
   const maxCol = ws.actualColumnCount || headerRow.cellCount || 0;
   const cur = [];
   for (let c = 1; c <= maxCol; c++) cur.push(takeText(headerRow.getCell(c)));
 
-  // Union payload keys (case-insensitive) then enforce canonical order
+  // Union payload keys with canonical mapping
   const haveCI = new Set(cur.map(h => h.toLowerCase()));
   for (const k of Object.keys(repair || {})) {
-    const key = String(k || '').trim();
-    if (!key) continue;
-    if (!haveCI.has(key.toLowerCase())) { cur.push(key); haveCI.add(key.toLowerCase()); }
+    const canonical = toCanonical(k);
+    if (!canonical) continue;
+    const lower = canonical.toLowerCase();
+    if (!haveCI.has(lower)) { 
+      cur.push(canonical); 
+      haveCI.add(lower); 
+    }
   }
-  // Make sure Date, Station ID, and Type exist
-  if (!haveCI.has('date')) cur.unshift('Date');
-  if (!haveCI.has('station id')) cur.splice(1, 0, 'Station ID'); // directly after Date
-  if (!haveCI.has('type')) cur.push('Type');                      // rightmost
 
-  // Reorder to canonical template: Date first, Type last, everything else in between
-  const others = cur.filter(h => {
-    const l = (h || '').toLowerCase();
-    return l !== 'date' && l !== 'station id' && l !== 'type';
-  });
-  const headers = ['Date', 'Station ID', ...others, 'Type'];
+  // Ensure canonical headers exist in correct order
+  const required = ['Date', 'Station ID', 'Repair Name', 'Severity', 'Priority', 'Cost', 'Category', 'Type', 'Days'];
+  for (const req of required) {
+    if (!haveCI.has(req.toLowerCase())) {
+      cur.push(req);
+      haveCI.add(req.toLowerCase());
+    }
+  }
+
+  // Reorder to canonical template: Date first, Days last, everything else in between
+  const standardOrder = ['Date', 'Station ID', 'Repair Name', 'Severity', 'Priority', 'Cost', 'Category', 'Type', 'Days'];
+  const standardSet = new Set(standardOrder.map(h => h.toLowerCase()));
+  const extras = cur.filter(h => !standardSet.has(h.toLowerCase()));
+  const headers = [...standardOrder, ...extras];
+
   ws.getRow(1).values = [, ...headers];
 
   // Locate Station ID column index (1-based)
@@ -642,10 +672,12 @@ async function appendRepair(company, location, assetType, repair = {}) {
 
   // Build row values aligned to headers
   const today = new Date().toISOString().slice(0,10);
-  const getCI = (key) => {
-    const want = String(key || '').toLowerCase();
+  const getCI = (canonicalKey) => {
+    // Look for any variant of this canonical key in the repair object
+    const want = String(canonicalKey || '').toLowerCase();
     for (const [k, v] of Object.entries(repair || {})) {
-      if (String(k).toLowerCase() === want) return v;
+      const canonical = toCanonical(k);
+      if (String(canonical).toLowerCase() === want) return v;
     }
     return undefined;
   };
