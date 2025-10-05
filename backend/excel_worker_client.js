@@ -64,8 +64,8 @@ module.exports = {
     call('setAssetTypeColorForLocation', assetType, location, color),
   setAssetTypeColorForCompanyLocation: (assetType, company, location, color) =>
     call('setAssetTypeColorForCompanyLocation', assetType, company, location, color),
-  updateStationInLocationFile: (locationName, stationId, updatedRowData) =>
-    call('updateStationInLocationFile', locationName, stationId, updatedRowData),
+  updateStationInLocationFile: (company, locationName, stationId, updatedRowData) =>
+    call('updateStationInLocationFile', company, locationName, stationId, updatedRowData),
   readLocationWorkbook: (locationName) => call('readLocationWorkbook', locationName),
   readSheetData: (locationName, sheetName) => call('readSheetData', locationName, sheetName),
   updateAssetTypeSchema: (assetType, schema, excludeStationId) => 

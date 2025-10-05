@@ -1,8 +1,6 @@
-// backend/algorithms.js
+// backend/algorithms.js (COMPLETE REWRITE)
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
 const lookupsRepo = require('./lookups_repo');
 
 // ───────── helpers ─────────
@@ -17,305 +15,7 @@ const _tryFloat = (s) => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// OPTIMIZATION I - CONSTRAINT-BASED FILTERING (NEW)
-// ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * Filter repairs based on fixed parameter constraints
- * @param {{repairs: Array, fixed_parameters: Array, station_data: Object}} payload
- * @returns {{success: boolean, kept: Array, filtered_out: Array, total_repairs: number}}
- */
-async function runConstraintFiltering({ repairs = [], fixed_parameters = [], station_data = {} } = {}) {
-  console.log('[runConstraintFiltering] repairs=', repairs.length, 'fixed_parameters=', fixed_parameters.length);
-  console.log('[runConstraintFiltering] station_data keys=', Object.keys(station_data).length);
-
-  if (!repairs.length) {
-    return {
-      success: false,
-      message: 'No repairs provided for filtering',
-      kept: [],
-      filtered_out: [],
-      total_repairs: 0
-    };
-  }
-
-  if (!fixed_parameters.length) {
-    // No constraints means all repairs pass
-    return {
-      success: true,
-      kept: repairs,
-      filtered_out: [],
-      total_repairs: repairs.length
-    };
-  }
-
-  const kept = [];
-  const filtered_out = [];
-
-  for (const repair of repairs) {
-    let passes = true;
-    let filter_reason = '';
-
-    for (const param of fixed_parameters) {
-      const result = checkConstraint(repair, param, station_data);
-      if (!result.passes) {
-        passes = false;
-        filter_reason = result.reason;
-        break;
-      }
-    }
-
-    if (passes) {
-      kept.push(repair);
-    } else {
-      filtered_out.push({ ...repair, filter_reason });
-    }
-  }
-
-  return {
-    success: true,
-    kept,
-    filtered_out,
-    total_repairs: repairs.length
-  };
-}
-
-function checkConstraint(repair, param, station_data) {
-  const type = param.type;
-
-  if (type === 'geographical') {
-    return checkGeographicalConstraint(repair, param, station_data);
-  } else if (type === 'temporal') {
-    return checkTemporalConstraint(repair, param, station_data);
-  } else if (type === 'monetary') {
-    return checkMonetaryConstraint(repair, param, station_data);
-  } else if (type === 'designation') {
-    return checkDesignationConstraint(repair, param, station_data);
-  }
-
-  return { passes: true };
-}
-
-function checkGeographicalConstraint(repair, param, station_data) {
-  // Check if repair's field value is in the allowed values list
-  const paramName = _canon(param.name);
-  const allowedValues = (param.values || []).map(v => _canon(v));
-
-  // Determine data source
-  const dataSource = param.data_source || 'repair';
-  const station = station_data[repair.station_id] || {};
-  
-  // Look for matching field in the appropriate data source
-  const value = dataSource === 'station' 
-    ? findField(station, paramName)
-    : findField(repair, paramName);
-  
-  if (!value) {
-    return {
-      passes: false,
-      reason: `Missing geographical parameter: ${param.name} in ${dataSource} data`
-    };
-  }
-
-  const canonValue = _canon(value);
-  if (!allowedValues.includes(canonValue)) {
-    return {
-      passes: false,
-      reason: `${param.name} value "${value}" not in allowed list: ${param.values.join(', ')}`
-    };
-  }
-
-  return { passes: true };
-}
-
-function checkTemporalConstraint(repair, param, station_data) {
-  // Check if repair meets temporal constraint
-  // scope: per_day, per_week, per_month, per_year
-  // value: numeric value
-  // unit: hours, days, weeks, months, years
-  
-  const paramName = _canon(param.name);
-  const dataSource = param.data_source || 'repair';
-  const station = station_data[repair.station_id] || {};
-  
-  const value = dataSource === 'station' 
-    ? findField(station, paramName)
-    : findField(repair, paramName);
-  
-  if (!value) {
-    return {
-      passes: false,
-      reason: `Missing temporal parameter: ${param.name} in ${dataSource} data`
-    };
-  }
-
-  const repairNum = _tryFloat(value);
-  const constraintValue = _tryFloat(param.value);
-
-  if (repairNum === null || constraintValue === null) {
-    return {
-      passes: false,
-      reason: `Invalid numeric value for temporal constraint: ${param.name}`
-    };
-  }
-
-  // Convert both to same unit for comparison
-  const normalizedRepair = normalizeTemporalValue(repairNum, param.unit);
-  const normalizedConstraint = normalizeTemporalValue(constraintValue, param.unit);
-
-  // Check based on scope
-  if (normalizedRepair > normalizedConstraint) {
-    return {
-      passes: false,
-      reason: `${param.name} exceeds ${param.scope} limit: ${value} > ${param.value} ${param.unit}`
-    };
-  }
-
-  return { passes: true };
-}
-
-function checkMonetaryConstraint(repair, param, station_data) {
-  // Check if repair's field meets monetary conditional
-  // field_name: the field to check
-  // conditional: <, <=, >, >=, =, !=
-  // value: numeric value to compare against
-  
-  // Determine which field name to use for matching
-  const matchUsing = param.match_using || 'parameter_name';
-  const lookupName = matchUsing === 'field_name' ? param.field_name : param.name;
-  const fieldName = _canon(lookupName);
-  
-  const dataSource = param.data_source || 'repair';
-  const station = station_data[repair.station_id] || {};
-  
-  const value = dataSource === 'station' 
-    ? findField(station, fieldName)
-    : findField(repair, fieldName);
-  
-  if (!value) {
-    return {
-      passes: false,
-      reason: `Missing monetary field: ${lookupName} in ${dataSource} data`
-    };
-  }
-
-  const repairNum = _tryFloat(value);
-  const constraintValue = _tryFloat(param.value);
-
-  if (repairNum === null || constraintValue === null) {
-    return {
-      passes: false,
-      reason: `Invalid numeric value for monetary constraint: ${lookupName}`
-    };
-  }
-
-  const conditional = param.conditional;
-  let passes = false;
-
-  switch (conditional) {
-    case '<':
-      passes = repairNum < constraintValue;
-      break;
-    case '<=':
-      passes = repairNum <= constraintValue;
-      break;
-    case '>':
-      passes = repairNum > constraintValue;
-      break;
-    case '>=':
-      passes = repairNum >= constraintValue;
-      break;
-    case '=':
-      passes = repairNum === constraintValue;
-      break;
-    case '!=':
-      passes = repairNum !== constraintValue;
-      break;
-    default:
-      passes = true;
-  }
-
-  if (!passes) {
-    return {
-      passes: false,
-      reason: `${lookupName} (${value}) does not meet condition: ${conditional} ${param.value} ${param.unit || ''}`
-    };
-  }
-
-  return { passes: true };
-}
-
-function checkDesignationConstraint(repair, param, station_data) {
-  // condition: "None" or "Only"
-  // field_name: the field to check
-  
-  // Determine which field name to use for matching
-  const matchUsing = param.match_using || 'parameter_name';
-  const lookupName = matchUsing === 'field_name' ? param.field_name : param.name;
-  const fieldName = _canon(lookupName);
-  
-  const dataSource = param.data_source || 'repair';
-  const station = station_data[repair.station_id] || {};
-  
-  const value = dataSource === 'station' 
-    ? findField(station, fieldName)
-    : findField(repair, fieldName);
-  
-  const hasValue = value !== null && value !== '';
-
-
-  if (param.condition === 'None') {
-    // Filter out if field is present
-    if (hasValue) {
-      return {
-        passes: false,
-        reason: `${lookupName} should not be present (condition: None)`
-      };
-    }
-  } else if (param.condition === 'Only') {
-    // Keep only if field is present
-    if (!hasValue) {
-      return {
-        passes: false,
-        reason: `${lookupName} must be present (condition: Only)`
-      };
-    }
-  }
-
-  return { passes: true };
-}
-
-function findField(dataObj, fieldName) {
-  // Case-insensitive field lookup
-  const canon = _canon(fieldName);
-  for (const [key, value] of Object.entries(dataObj)) {
-    if (_canon(key) === canon) {
-      return value;
-    }
-  }
-  return null;
-}
-
-function normalizeTemporalValue(value, unit) {
-  // Normalize all temporal values to hours for comparison
-  switch (unit) {
-    case 'hours':
-      return value;
-    case 'days':
-      return value * 24;
-    case 'weeks':
-      return value * 24 * 7;
-    case 'months':
-      return value * 24 * 30; // approximation
-    case 'years':
-      return value * 24 * 365; // approximation
-    default:
-      return value;
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// OPTIMIZATION II - SCORING & RANKING (OLD OPTIMIZATION I)
+// OPTIMIZATION 1 - REPAIR SCORING (Soft Parameters)
 // ═══════════════════════════════════════════════════════════════════════════
 
 function _buildParamIndex(parameters = []) {
@@ -325,6 +25,7 @@ function _buildParamIndex(parameters = []) {
     if (!pname) continue;
     const grp = (out[pname] ||= {
       max_weight: null,
+      data_source: row?.data_source || 'repair',
       options: Object.create(null),
       condition: row?.condition,
     });
@@ -392,24 +93,31 @@ function _matchOptionWeight(paramCfg, value) {
   return { matched: false, weight: 0 };
 }
 
+function findField(dataObj, fieldName) {
+  const canon = _canon(fieldName);
+  for (const [key, value] of Object.entries(dataObj)) {
+    if (_canon(key) === canon) {
+      return value;
+    }
+  }
+  return null;
+}
+
 async function _loadParams() {
   if (typeof lookupsRepo.getAlgorithmParameters === 'function') {
     return await lookupsRepo.getAlgorithmParameters();
-  }
-  if (typeof lookupsRepo.loadAlgorithmParameters === 'function') {
-    return await lookupsRepo.loadAlgorithmParameters();
   }
   return [];
 }
 
 /**
- * Score and rank repairs using soft parameters (old Algorithm I)
- * @param {{workplan_rows?: Array<Object>, param_overall?: Object, parameters?: Array}} payload
+ * OPTIMIZATION 1: Score and rank repairs using soft parameters
+ * @param {{repairs: Array, station_data: Object, param_overall?: Object, parameters?: Array}} payload
  * @returns {{success: boolean, optimized_count: number, ranking: Array<Object>, notes: string}}
  */
-async function optimizeWorkplan({ workplan_rows = [], param_overall = {}, parameters: paramsFromUI } = {}) {
+async function optimizeWorkplan({ repairs = [], station_data = {}, param_overall = {}, parameters: paramsFromUI } = {}) {
   const parameters = Array.isArray(paramsFromUI) ? paramsFromUI : await _loadParams();
-  console.log('[optimizeWorkplan] workplan_rows=', workplan_rows.length, 'parameters=', (parameters || []).length);
+  console.log('[optimizeWorkplan] repairs=', repairs.length, 'parameters=', (parameters || []).length);
   
   const pindex = _buildParamIndex(parameters || []);
   if (!Object.keys(pindex).length) {
@@ -417,7 +125,7 @@ async function optimizeWorkplan({ workplan_rows = [], param_overall = {}, parame
       success: false,
       optimized_count: 0,
       ranking: [],
-      notes: 'No algorithm parameters loaded. Ensure Soft Parameters are saved and passed in.'
+      notes: 'No soft parameters loaded. Ensure parameters are saved and passed in.'
     };
   }
   
@@ -425,39 +133,53 @@ async function optimizeWorkplan({ workplan_rows = [], param_overall = {}, parame
   const paramNames = Object.keys(pindex);
 
   const results = [];
-  for (let i = 0; i < workplan_rows.length; i++) {
-    const row = workplan_rows[i] || {};
-    const stationNo = row['Station Number'] ?? row['Station ID'] ?? '';
-    const operation = row['Operation'] ?? row['Repair Name'] ?? '';
-    const siteName  = row['Site Name'] ?? '';
+  for (let i = 0; i < repairs.length; i++) {
+    const repair = repairs[i] || {};
+    const stationId = repair.station_id ?? '';
+    const repairName = repair.name ?? '';
+    const location = repair.location ?? '';
+    const assetType = repair.assetType ?? '';
+    const station = station_data[stationId] || {};
 
     const perParam = Object.create(null);
     let presentSum = 0;
+    
     for (const pname of paramNames) {
       const cfg = pindex[pname];
-      const { matched, weight } = _matchOptionWeight(cfg, row[pname]);
+      const dataSource = cfg.data_source || 'repair';
+      
+      // Get value from appropriate data source
+      const value = dataSource === 'station' 
+        ? findField(station, pname)
+        : findField(repair, pname);
+      
+      const { matched, weight } = _matchOptionWeight(cfg, value);
       const maxw = Number(cfg?.max_weight || 1);
       const frac = Number(overallFrac[pname] || 0);
+      
       perParam[pname] = {
         matched,
         option_weight: weight,
         max_weight: maxw,
         overall_fraction: frac,
-        row_value: row[pname],
+        value: value,
       };
+      
       if (matched && maxw > 0 && frac > 0) presentSum += frac;
     }
+    
     const renorm = presentSum > 0 ? (1 / presentSum) : 0;
 
     let score = 0;
     const breakdown = Object.create(null);
+    
     for (const [pname, info] of Object.entries(perParam)) {
       const { matched, option_weight, max_weight, overall_fraction } = info;
       const effFrac = (matched && presentSum > 0) ? (overall_fraction * renorm) : 0;
       const contrib = (matched && max_weight > 0) ? ((option_weight / max_weight) * effFrac) : 0;
       score += contrib;
       breakdown[pname] = {
-        row_value: info.row_value,
+        value: info.value,
         option_weight,
         max_weight,
         overall_fraction,
@@ -468,36 +190,477 @@ async function optimizeWorkplan({ workplan_rows = [], param_overall = {}, parame
 
     results.push({
       row_index: i,
-      station_number: stationNo,
-      site_name: siteName,
-      operation,
+      station_id: stationId,
+      repair_name: repairName,
+      location,
+      asset_type: assetType,
       score: Math.round(score * 10000) / 100,
       details: breakdown,
+      original_repair: repair
     });
   }
 
   results.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
-    const an = String(a.station_number || '');
-    const bn = String(b.station_number || '');
+    const an = String(a.station_id || '');
+    const bn = String(b.station_id || '');
     if (an !== bn) return an.localeCompare(bn);
-    const ao = String(a.operation || '');
-    const bo = String(b.operation || '');
+    const ao = String(a.repair_name || '');
+    const bo = String(b.repair_name || '');
     return ao.localeCompare(bo);
   });
+  
   results.forEach((r, idx) => (r.rank = idx + 1));
 
   return {
     success: true,
     optimized_count: results.length,
     ranking: results,
-    notes:
-      'Scores use per-row re-normalization over present parameters so blanks are neutral. ' +
-      'Option weights are divided by each parameter max; overall weights are normalized to sum to 1.',
+    notes: 'Repairs scored using soft parameters with per-row re-normalization.'
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// OPTIMIZATION 2 - TRIP GROUPING
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Group scored repairs into trips by Trip Location and Access Type
+ * @param {{scored_repairs: Array, station_data: Object}} payload
+ * @returns {{success: boolean, trips: Array}}
+ */
+async function groupRepairsIntoTrips({ scored_repairs = [], station_data = {} } = {}) {
+  console.log('[groupRepairsIntoTrips] scored_repairs=', scored_repairs.length);
+
+  if (!scored_repairs.length) {
+    return {
+      success: false,
+      message: 'No scored repairs provided',
+      trips: []
+    };
+  }
+
+  // Group by trip_location + access_type
+  const tripGroups = new Map();
+
+  for (const scoredRepair of scored_repairs) {
+    const repair = scoredRepair.original_repair;
+    const stationId = repair.station_id;
+    const station = station_data[stationId] || {};
+
+    // Get trip fields from station data
+    const tripLocation = findField(station, 'Trip Location') || 'Unknown';
+    const accessType = findField(station, 'Access Type') || 'Unknown';
+    const cityOfTravel = findField(station, 'City of Travel') || '';
+    const timeToSite = findField(station, 'Time to Site (hr)') || '';
+    const siteName = findField(station, 'Site Name') || findField(station, 'name') || '';
+
+    const tripKey = `${tripLocation}|||${accessType}`;
+    
+    if (!tripGroups.has(tripKey)) {
+      tripGroups.set(tripKey, {
+        trip_location: tripLocation,
+        access_type: accessType,
+        repairs: [],
+        stations: new Map() // Map<stationId, station_info>
+      });
+    }
+
+    const trip = tripGroups.get(tripKey);
+    trip.repairs.push(scoredRepair);
+
+    // Track unique stations
+    if (!trip.stations.has(stationId)) {
+      trip.stations.set(stationId, {
+        station_id: stationId,
+        site_name: siteName,
+        city_of_travel: cityOfTravel,
+        time_to_site: timeToSite,
+        repairs: []
+      });
+    }
+
+    const stationInfo = trip.stations.get(stationId);
+    stationInfo.repairs.push(repair);
+  }
+
+  // Convert to array and calculate totals
+  const trips = [];
+  
+  for (const [tripKey, tripData] of tripGroups.entries()) {
+    let totalDays = 0;
+    const stationsArray = [];
+
+    for (const [stationId, stationInfo] of tripData.stations.entries()) {
+      let stationDays = 0;
+      
+      // Sum days for all repairs at this station
+      for (const repair of stationInfo.repairs) {
+        const days = _tryFloat(repair.days || repair.Days) || 0;
+        stationDays += days;
+      }
+
+      stationInfo.total_days = stationDays;
+      stationInfo.repair_count = stationInfo.repairs.length;
+      totalDays += stationDays;
+      
+      stationsArray.push(stationInfo);
+    }
+
+    trips.push({
+      trip_location: tripData.trip_location,
+      access_type: tripData.access_type,
+      total_days: totalDays,
+      repairs: tripData.repairs,
+      stations: stationsArray
+    });
+  }
+
+  // Sort trips by total days (descending)
+  trips.sort((a, b) => b.total_days - a.total_days);
+
+  return {
+    success: true,
+    trips,
+    total_trips: trips.length
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// OPTIMIZATION 3 - YEARLY ASSIGNMENT WITH CONSTRAINTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+function checkIfCondition(repair, param, station_data) {
+  if (!param.if_condition) return true; // No IF condition means always apply
+  
+  const ifCond = param.if_condition;
+  const dataSource = ifCond.data_source || 'repair';
+  const station = station_data[repair.station_id] || {};
+  
+  const value = dataSource === 'station' 
+    ? findField(station, ifCond.field)
+    : findField(repair, ifCond.field);
+  
+  if (!value) return false; // Field doesn't exist, IF fails
+  
+  const valueStr = _canon(String(value));
+  const targetStr = _canon(String(ifCond.value));
+  
+  switch (ifCond.operator) {
+    case '=':
+      return valueStr === targetStr;
+    case '!=':
+      return valueStr !== targetStr;
+    case 'contains':
+      return valueStr.includes(targetStr);
+    default:
+      return true;
+  }
+}
+
+function checkGeographicalConstraint(repair, param, station_data) {
+  // First check IF condition
+  if (!checkIfCondition(repair, param, station_data)) {
+    return true; // IF condition not met, so constraint doesn't apply (pass)
+  }  
+  
+  const paramName = _canon(param.name);
+  const allowedValues = (param.values || []).map(v => _canon(v));
+  
+  const dataSource = param.data_source || 'repair';
+  const station = station_data[repair.station_id] || {};
+  
+  const value = dataSource === 'station' 
+    ? findField(station, paramName)
+    : findField(repair, paramName);
+  
+  if (!value) return false;
+  
+  const valueParts = String(value).split(/[\/,;]/)
+    .map(part => _canon(part.trim()))
+    .filter(part => part);
+  
+  return valueParts.every(part => allowedValues.includes(part));
+}
+
+function checkTemporalConstraint(repair, param, station_data, year) {
+  if (!checkIfCondition(repair, param, station_data)) {
+    return true;
+  }  
+  
+  const paramName = _canon(param.name);
+  const dataSource = param.data_source || 'repair';
+  const station = station_data[repair.station_id] || {};
+  
+  const value = dataSource === 'station' 
+    ? findField(station, paramName)
+    : findField(repair, paramName);
+  
+  if (!value) return false;
+  
+  const repairNum = _tryFloat(value);
+  if (repairNum === null) return false;
+  
+  // Get yearly constraint
+  const yearConstraint = param.years && param.years[year];
+  if (!yearConstraint) return true; // No constraint for this year
+  
+  const constraintValue = _tryFloat(yearConstraint.value);
+  if (constraintValue === null) return true;
+  
+  return _compare(param.conditional || '<=', repairNum, constraintValue);
+}
+
+function _compare(op, a, b) {
+  switch (op) {
+    case '<':  return a <  b;
+    case '<=': return a <= b;
+    case '>':  return a >  b;
+    case '>=': return a >= b;
+    case '=':  return a === b;
+    case '!=': return a !== b;
+    default:   return a <= b;
+  }
+}
+
+function checkMonetaryConstraint(repair, param, station_data, year) {
+  if (!checkIfCondition(repair, param, station_data)) {
+    return true;
+  }  
+  
+  const fieldName = _canon(param.field_name);
+  const dataSource = param.data_source || 'repair';
+  const station = station_data[repair.station_id] || {};
+  
+  const value = dataSource === 'station' 
+    ? findField(station, fieldName)
+    : findField(repair, fieldName);
+  
+  if (!value) return false;
+  
+  const repairCost = _tryFloat(value);
+  if (repairCost === null) return false;
+  
+  // Get yearly budget
+  const yearConstraint = param.years && param.years[year];
+  if (!yearConstraint) return true; // No constraint for this year
+  
+  const budget = _tryFloat(yearConstraint.value);
+  if (budget === null) return true;
+  
+  return _compare(param.conditional || '<=', repairCost, budget);
+}
+
+/**
+ * OPTIMIZATION 3: Assign trips to years based on fixed parameters
+ * @param {{trips: Array, fixed_parameters: Array}} payload
+ * @returns {{success: boolean, assignments: Object}}
+ */
+async function assignTripsToYears({ trips = [], fixed_parameters = [] } = {}) {
+  console.log('[assignTripsToYears] trips=', trips.length, 'fixed_parameters=', fixed_parameters.length);
+
+  if (!trips.length) {
+    return {
+      success: false,
+      message: 'No trips provided for assignment',
+      assignments: {}
+    };
+  }
+
+  // Get all years from fixed parameters
+  const allYears = new Set();
+  for (const param of fixed_parameters) {
+    if (param.years) {
+      Object.keys(param.years).forEach(year => allYears.add(year));
+    }
+  }
+  
+  const years = Array.from(allYears).sort();
+  
+  if (!years.length) {
+    // No yearly constraints, assign all to current year
+    const currentYear = new Date().getFullYear();
+    return {
+      success: true,
+      assignments: {
+        [currentYear]: trips
+      }
+    };
+  }
+
+  // Build station data map (needed for constraint checking)
+  const stationDataMap = {};
+  // This will be populated from the trips' repair data
+  trips.forEach(trip => {
+    trip.stations.forEach(station => {
+      if (!stationDataMap[station.station_id]) {
+        stationDataMap[station.station_id] = station;
+      }
+    });
+  });
+
+  // Track yearly budgets/constraints
+  const yearlyBudgets = {};
+  const yearlyTemporal = {};
+  
+  for (const year of years) {
+    yearlyBudgets[year] = {};
+    yearlyTemporal[year] = {};
+    
+    for (const param of fixed_parameters) {
+      if (param.type === 'monetary' && param.years && param.years[year]) {
+          const key = _canon(param.field_name);
+          yearlyBudgets[year][key] = {
+          total: _tryFloat(param.years[year].value) || 0,
+          used: 0,
+          cumulative: !!param.cumulative
+        };
+      } else if (param.type === 'temporal' && param.years && param.years[year]) {
+          const key = _canon(param.name);
+          yearlyTemporal[year][key] = {
+          total: _tryFloat(param.years[year].value) || 0,
+          used: 0,
+          cumulative: !!param.cumulative
+        };
+      }
+    }
+  }
+
+  const assignments = {};
+  years.forEach(year => assignments[year] = []);
+  const unassigned = [];
+
+  // Try to assign each trip starting from first year
+  for (const trip of trips) {
+    let assigned = false;
+    
+    for (const year of years) {
+      let canAssign = true;
+      
+      // Check all constraints for this trip's repairs
+      for (const repair of trip.repairs) {
+        const originalRepair = repair.original_repair;
+        
+        for (const param of fixed_parameters) {
+          if (param.type === 'geographical') {
+            if (!checkGeographicalConstraint(originalRepair, param, stationDataMap)) {
+              canAssign = false;
+              break;
+            }
+          } else if (param.type === 'temporal' && !param.cumulative) {
+            // Only check per-repair if not cumulative
+            if (!checkTemporalConstraint(originalRepair, param, stationDataMap, year)) {
+              canAssign = false;
+              break;
+            }
+          } else if (param.type === 'monetary' && !param.cumulative) {
+            // Only check per-repair if not cumulative
+            if (!checkMonetaryConstraint(originalRepair, param, stationDataMap, year)) {
+              canAssign = false;
+              break;
+            }
+          }
+        }
+        
+        if (!canAssign) break;
+      }
+      
+      // Check cumulative budget/temporal availability
+      if (canAssign) {
+        // Calculate trip totals for cumulative constraints
+        const tripTotals = {};
+        
+        for (const repair of trip.repairs) {
+          const originalRepair = repair.original_repair;
+          const stationId = originalRepair.station_id;
+          const station = stationDataMap[stationId] || {};
+          
+          for (const param of fixed_parameters) {
+            if (!param.cumulative) continue; // Skip non-cumulative
+            // Only count when IF condition (if any) holds
+            if (!checkIfCondition(originalRepair, param, stationDataMap)) continue;
+            
+            if (param.type === 'monetary') {
+              const fieldName = _canon(param.field_name);
+              const dataSource = param.data_source || 'repair';
+              const value = dataSource === 'station' 
+                ? findField(station, fieldName)
+                : findField(originalRepair, fieldName);
+              const amount = _tryFloat(value) || 0;
+              tripTotals[fieldName] = (tripTotals[fieldName] || 0) + amount;
+            } else if (param.type === 'temporal') {
+              const fieldName = _canon(param.name);
+              const dataSource = param.data_source || 'repair';
+              const value = dataSource === 'station' 
+                ? findField(station, fieldName)
+                : findField(originalRepair, fieldName);
+              const amount = _tryFloat(value) || 0;
+              tripTotals[fieldName] = (tripTotals[fieldName] || 0) + amount;
+            }
+          }
+        }
+        
+        // Check if cumulative budgets have room
+        for (const [fieldName, budget] of Object.entries(yearlyBudgets[year])) {
+          if (!budget.cumulative) continue;
+          const tripAmount = tripTotals[fieldName] || 0;
+          if (budget.used + tripAmount > budget.total) {
+            canAssign = false;
+            break;
+          }
+        }
+        
+        // Check if cumulative temporal limits have room
+        for (const [fieldName, temporal] of Object.entries(yearlyTemporal[year])) {
+          if (!temporal.cumulative) continue;
+          const tripAmount = tripTotals[fieldName] || 0;
+          if (temporal.used + tripAmount > temporal.total) {
+            canAssign = false;
+            break;
+          }
+        }
+        
+        if (canAssign) {
+          // Update cumulative trackers
+          for (const [fieldName, budget] of Object.entries(yearlyBudgets[year])) {
+            if (budget.cumulative) {
+              budget.used += (tripTotals[fieldName] || 0);
+            }
+          }
+          for (const [fieldName, temporal] of Object.entries(yearlyTemporal[year])) {
+            if (temporal.cumulative) {
+              temporal.used += (tripTotals[fieldName] || 0);
+            }
+          }
+          
+          assignments[year].push(trip);
+          assigned = true;
+          break;
+        }
+      }
+    }
+    
+    if (!assigned) {
+      unassigned.push(trip);
+    }
+  }
+
+  // Add unassigned trips to a later year or create a new year
+  if (unassigned.length > 0) {
+    const lastYear = parseInt(years[years.length - 1]);
+    const nextYear = lastYear + 1;
+    assignments[nextYear] = unassigned;
+  }
+
+  return {
+    success: true,
+    assignments,
+    total_years: Object.keys(assignments).length
   };
 }
 
 module.exports = { 
-  runConstraintFiltering,
-  optimizeWorkplan
+  optimizeWorkplan,
+  groupRepairsIntoTrips,
+  assignTripsToYears
 };

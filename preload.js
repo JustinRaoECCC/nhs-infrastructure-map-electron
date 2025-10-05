@@ -140,8 +140,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveFixedParameters: (params) => ipcRenderer.invoke('excel:saveFixedParameters', params),
   // Optimization I / II
   optimizeWorkplan: (payload) => ipcRenderer.invoke('algo:optimizeWorkplan', payload),
-  runGeographicalAlgorithm: (payload) => ipcRenderer.invoke('algo:runGeographical', payload),
-  runConstraintFiltering: (payload) => ipcRenderer.invoke('algo:runConstraintFiltering', payload),
+  groupRepairsIntoTrips: (payload) => ipcRenderer.invoke('algo:groupRepairsIntoTrips', payload),
+  assignTripsToYears: (payload) => ipcRenderer.invoke('algo:assignTripsToYears', payload),
 
   // ─── Authentication ──────────────────────────────────────────────────────
   hasUsers: () => ipcRenderer.invoke('auth:hasUsers'),

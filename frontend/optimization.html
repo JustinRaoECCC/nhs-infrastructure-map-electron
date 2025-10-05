@@ -1,15 +1,37 @@
-<!-- frontend/optimization.html -->
+<!-- frontend/optimization.html (COMPLETE REWRITE) -->
 <div id="dashboardContainer" class="nhs-dashboard">
   <div class="dashboard-tabs">
-    <button class="dashboard-tab active" data-target="fixedParameters">Fixed Parameters</button>
-    <button class="dashboard-tab" data-target="softParameters">Soft Parameters</button>
-    <button class="dashboard-tab" data-target="workplan">Workplan</button>
-    <button class="dashboard-tab" data-target="optimization1">Optimization I</button>
-    <button class="dashboard-tab" data-target="optimization2">Optimization II</button>
+    <button class="dashboard-tab active" data-target="softParameters">Soft Parameters</button>
+    <button class="dashboard-tab" data-target="fixedParameters">Fixed Parameters</button>
+    <button class="dashboard-tab" data-target="optimization1">Optimization 1</button>
+    <button class="dashboard-tab" data-target="optimization2">Optimization 2</button>
+    <button class="dashboard-tab" data-target="optimization3">Optimization 3</button>
   </div>
 
-  <!-- 1) Fixed Parameters (NEW) -->
-  <div id="fixedParameters" class="dashboard-content active">
+  <!-- 1) SOFT PARAMETERS (Optimization 1 - Scoring) -->
+  <div id="softParameters" class="dashboard-content active">
+    <div class="top-pane">
+      <h2>Soft Parameters - Scoring Weights</h2>
+      <p class="section-description">Define weighted parameters for ranking repairs in Optimization 1.</p>
+      <div id="paramContainer"></div>
+      <div class="actions">
+        <button id="addParamBtn" class="btn">+ Add Parameter</button>
+        <button id="saveParamsBtn" class="btn btn-primary">💾 Save Changes</button>
+      </div>
+    </div>
+
+    <hr class="separator"/>
+
+    <div class="bottom-pane">
+      <div id="percentageSection" style="margin-top:1em;">
+        <h3>Percentage Summary</h3>
+        <p>Total: <span id="percentageTotal">0</span>%</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2) FIXED PARAMETERS (Optimization 3 - Yearly Constraints) -->
+  <div id="fixedParameters" class="dashboard-content">
     <div class="top-pane">
       <h2>Fixed Parameters - Constraint Filtering</h2>
       <p class="section-description">Define constraints to filter repairs. Repairs not meeting all constraints will be filtered out.</p>
@@ -21,73 +43,93 @@
     </div>
   </div>
 
-  <!-- 2) Soft Parameters (RENAMED from Parameters) -->
-  <div id="softParameters" class="dashboard-content">
-    <div class="top-pane">
-      <h2>Soft Parameters - Scoring Weights</h2>
-      <p class="section-description">Define weighted parameters for ranking repairs in Optimization II.</p>
-      <div id="paramContainer"></div>
-      <div class="actions">
-        <button id="addParamBtn" class="btn">+ Add Parameter</button>
-        <button id="saveParamsBtn" class="btn btn-primary">💾 Save Changes</button>
-      </div>
-    </div>
 
-    <hr class="separator"/>
-
-    <div class="bottom-pane">
-      <div id="paramStats"></div>
-      <div id="percentageSection" style="margin-top:1em;">
-        <h3>Percentage Summary</h3>
-        <p>Total: <span id="percentageTotal">0</span>%</p>
-      </div>
-    </div>
-  </div>
-
-  <!-- 3) Workplan -->
-  <div id="workplan" class="dashboard-content">
-    <div class="top-pane">
-      <div id="workplanContainer">
-        <div id="constantsContainer"></div>
-        <div class="actions">
-          <button id="addConstantBtn" class="btn">+ Add Constant</button>
-          <button id="saveWorkplanBtn" class="btn btn-primary">💾 Save Changes</button>
-        </div>
-      </div>
-    </div>
-
-    <hr class="separator" />
-
-    <div class="bottom-pane">
-      <table id="workplanTable" class="opt-table">
-        <thead><tr id="workplanHeaders"></tr></thead>
-        <tbody id="workplanBody"></tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- 4) Optimization I (NEW - Constraint Filtering) -->
+  <!-- 3) OPTIMIZATION 1 - Scoring -->
   <div id="optimization1" class="dashboard-content">
     <div class="opt-container">
-      <h2>Optimization I - Constraint-Based Filtering</h2>
-      <p class="section-description">Apply fixed parameter constraints to filter repairs.</p>
-      <button id="runFilteringBtn" class="btn btn-primary">Run Constraint Filtering</button>
+      <h2>Optimization 1 - Repair Scoring</h2>
+      <p class="section-description">Score and rank all repairs using soft parameter weights.</p>
+      <button id="runOpt1Btn" class="btn btn-primary">Run Optimization 1</button>
       
-      <div id="filteringResults" style="margin-top: 2em;"></div>
+      <div id="opt1Results" style="margin-top: 2em;"></div>
     </div>
   </div>
 
-  <!-- 5) Optimization II (OLD Optimization I - Scoring) -->
+  <!-- 4) OPTIMIZATION 2 - Trip Grouping -->
   <div id="optimization2" class="dashboard-content">
     <div class="opt-container">
-      <h2>Optimization II - Weighted Scoring & Ranking</h2>
-      <p class="section-description">Score and rank filtered repairs using soft parameter weights.</p>
-      <button id="optimizeBtn" class="btn btn-primary">Run Scoring Algorithm</button>
+      <h2>Optimization 2 - Trip Grouping</h2>
+      <p class="section-description">
+        Group scored repairs by trip location and access type.
+        <br/>
+        <strong>⚠️ Note:</strong> You must run Optimization 1 first.
+      </p>
+      <button id="runOpt2Btn" class="btn btn-primary">Run Optimization 2</button>
       
-      <div id="scoringResults" style="margin-top: 2em;"></div>
+      <div id="opt2Results" style="margin-top: 2em;"></div>
     </div>
   </div>
 
+  <!-- 5) OPTIMIZATION 3 - Yearly Assignment -->
+  <div id="optimization3" class="dashboard-content">
+    <div class="opt-container">
+      <h2>Optimization 3 - Yearly Assignment</h2>
+      <p class="section-description">
+        Assign trips to years based on fixed parameter constraints.
+        <br/>
+        <strong>⚠️ Note:</strong> You must run Optimizations 1 and 2 first.
+      </p>
+      <button id="runOpt3Btn" class="btn btn-primary">Run Optimization 3</button>
+      
+      <div id="opt3Results" style="margin-top: 2em;"></div>
+    </div>
+  </div>
+
+  <!-- Add Soft Parameter Modal -->
+  <div id="addParamModal" class="modal" style="display:none;">
+    <div class="modal-content" style="width:400px; max-width:90%;">
+      <span class="close-modal" id="closeAddParamModal">&times;</span>
+      <h2 class="modal-header">Add Soft Parameter</h2>
+
+      <div style="margin-top:1em;">
+        <label>Parameter Name</label><br/>
+        <input type="text" id="paramNameInput" placeholder="Enter name" style="width:100%; padding:0.5em;"/>
+      </div>
+
+      <div style="margin-top:1em;">
+        <label>Data Source</label><br/>
+        <select id="paramDataSource" style="width:100%; padding:0.5em;">
+          <option value="repair">Repair Fields</option>
+          <option value="station">Station Data</option>
+        </select>
+      </div>
+
+      <div style="margin-top:1em;">
+        <label>Condition Type</label><br/>
+        <select id="paramConditionSelect" style="width:100%; padding:0.5em;">
+          <option value="IF">IF</option>
+        </select>
+      </div>
+
+      <div style="margin-top:1em;">
+        <label>Max Weight (1–Y)</label><br/>
+        <input type="number" id="paramMaxWeight" min="1" value="3" style="width:100%; padding:0.5em;"/>
+      </div>
+
+      <div id="optionsContainer" style="margin-top:1em;">
+        <h3>Options → Weight</h3>
+        <button type="button" id="addOptionBtn" class="btn" style="margin-bottom:0.5em;">+ Add Option</button>
+        <div id="optionsList"></div>
+      </div>
+
+      <div style="margin-top:1.5em; text-align:right;">
+        <button id="saveParamBtn" class="btn btn-primary">Save Parameter</button>
+        <button id="cancelParamBtn" class="btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Fixed Parameter Modal -->
   <!-- Add Fixed Parameter Modal -->
   <div id="addFixedParamModal" class="modal" style="display:none;">
     <div class="modal-content" style="width:500px; max-width:90%;">
@@ -135,6 +177,15 @@
       <!-- Temporal Fields -->
       <div id="temporalFields" class="constraint-fields" style="display:none; margin-top:1em;">
         <div style="margin-bottom:0.5em;">
+          <label style="display:flex; align-items:center; gap:0.5em; cursor:pointer;">
+            <input type="checkbox" id="temporalCumulative" style="cursor:pointer;"/>
+            <span>Cumulative (sum all repairs for the year)</span>
+          </label>
+          <p style="font-size:0.85em; color:#666; margin:0.3em 0 0 1.5em;">
+            When checked, adds up all repair values for the year. When unchecked, checks each repair individually.
+          </p>
+        </div>
+        <div style="margin-bottom:0.5em;">
           <label>Scope</label><br/>
           <select id="temporalScope" style="width:100%; padding:0.5em;">
             <option value="per_day">Per Day</option>
@@ -161,6 +212,15 @@
 
       <!-- Monetary Fields -->
       <div id="monetaryFields" class="constraint-fields" style="display:none; margin-top:1em;">
+        <div style="margin-bottom:0.5em;">
+          <label style="display:flex; align-items:center; gap:0.5em; cursor:pointer;">
+            <input type="checkbox" id="monetaryCumulative" style="cursor:pointer;"/>
+            <span>Cumulative Budget (sum all repairs for the year)</span>
+          </label>
+          <p style="font-size:0.85em; color:#666; margin:0.3em 0 0 1.5em;">
+            When checked, treats the value as total yearly budget. When unchecked, checks each repair individually.
+          </p>
+        </div>
         <div style="margin-bottom:0.5em;">
           <label>Field Name</label><br/>
           <input type="text" id="monetaryFieldName" placeholder="e.g., Cost, Budget" style="width:100%; padding:0.5em;"/>
@@ -201,73 +261,70 @@
         </div>
       </div>
 
+      <!-- IF Condition (Optional) -->
+      <div style="margin-top:1.5em; padding-top:1em; border-top:2px solid #ddd;">
+        <div style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.5em;">
+          <input type="checkbox" id="enableIfCondition" style="cursor:pointer;"/>
+          <label for="enableIfCondition" style="cursor:pointer; font-weight:bold;">Add IF Condition (Optional)</label>
+        </div>
+        <p style="font-size:0.9em; color:#666; margin:0 0 1em 0;">
+          Only apply this constraint when a condition is met (e.g., Cost &lt; 30,000 IF Type = "O&M")
+        </p>
+        
+        <div id="ifConditionFields" style="display:none; padding:1em; background:#f8f9fa; border-radius:4px;">
+          <div style="margin-bottom:0.5em;">
+            <label>IF Data Source</label><br/>
+            <select id="ifDataSource" style="width:100%; padding:0.5em;">
+              <option value="repair">Repair Fields</option>
+              <option value="station">Station Data</option>
+            </select>
+          </div>
+          
+          <div style="margin-bottom:0.5em;">
+            <label>Field Name</label><br/>
+            <input type="text" id="ifFieldName" placeholder="e.g., Type, Category, Status" style="width:100%; padding:0.5em;"/>
+          </div>
+          
+          <div style="margin-bottom:0.5em;">
+            <label>Operator</label><br/>
+            <select id="ifOperator" style="width:100%; padding:0.5em;">
+              <option value="=">=  (equals)</option>
+              <option value="!=">!= (not equals)</option>
+              <option value="contains">contains</option>
+            </select>
+          </div>
+          
+          <div>
+            <label>Value</label><br/>
+            <input type="text" id="ifValue" placeholder="e.g., O&M, Capital, Active" style="width:100%; padding:0.5em;"/>
+          </div>
+        </div>
+      </div>
+
       <div style="margin-top:1.5em; text-align:right;">
         <button id="saveFixedParamBtn" class="btn btn-primary">Save Fixed Parameter</button>
         <button id="cancelFixedParamBtn" class="btn">Cancel</button>
       </div>
     </div>
   </div>
-
-  <!-- Add Soft Parameter Modal (same as old Add Parameter Modal) -->
-  <div id="addParamModal" class="modal" style="display:none;">
-    <div class="modal-content" style="width:400px; max-width:90%;">
-      <span class="close-modal" id="closeAddParamModal">&times;</span>
-      <h2 class="modal-header">Add New Parameter</h2>
-
+  
+  <!-- Add Year Modal -->
+  <div id="addYearModal" class="modal" style="display:none;">
+    <div class="modal-content" style="width:300px; max-width:90%;">
+      <span class="close-modal" id="closeAddYearModal">&times;</span>
+      <h2 class="modal-header">Add Year</h2>
+      
       <div style="margin-top:1em;">
-        <label>Parameter Name</label><br/>
-        <input type="text" id="paramNameInput" placeholder="Enter name" style="width:100%; padding:0.5em;"/>
+        <label>Enter Year</label><br/>
+        <input type="number" id="yearInput" placeholder="e.g., 2025" min="2020" max="2100" 
+               style="width:100%; padding:0.5em;"/>
       </div>
-
-      <div style="margin-top:1em;">
-        <label>Condition Type</label><br/>
-        <select id="paramConditionSelect" style="width:100%; padding:0.5em;">
-          <option value="IF">IF</option>
-        </select>
-      </div>
-
-      <div style="margin-top:1em;">
-        <label>Max Weight (1–Y)</label><br/>
-        <input type="number" id="paramMaxWeight" min="1" value="3" style="width:100%; padding:0.5em;"/>
-      </div>
-
-      <div style="margin-top:1em;">
-        <button id="addCustomWeightBtn" class="btn">+ Add Custom Weight</button>
-      </div>
-
-      <div id="optionsContainer" style="margin-top:1em;">
-        <h3>Options → Weight</h3>
-        <button type="button" id="addOptionBtn" class="btn" style="margin-bottom:0.5em;">+ Add Option</button>
-        <div id="optionsList"></div>
-      </div>
-
-      <!-- Custom Weight Modal -->
-      <div id="customWeightModal" class="modal" style="display:none;">
-        <div class="modal-content" style="width:300px; max-width:90%;">
-          <span class="close-modal" id="closeCustomWeightModal">&times;</span>
-          <h2 class="modal-header">Add / Select Custom Weight</h2>
-          <select id="selectCustomWeight" style="width:100%; padding:0.5em; margin-top:1em;">
-            <option value="">-- select weight --</option>
-          </select>
-          <input type="text" id="inputNewCustomWeight" placeholder="New custom weight"
-                 style="width:100%; padding:0.5em; margin-top:0.5em;"/>
-          <button id="btnSaveCustomWeight" class="btn" style="margin-top:0.5em;">➕ Add Custom Weight</button>
-          <div style="margin-top:1.5em; text-align:right;">
-            <button id="confirmCustomWeight" class="btn btn-primary">Confirm</button>
-            <button id="cancelCustomWeight" class="btn">Cancel</button>
-          </div>
-        </div>
-      </div>
-
-      <div style="margin-top:1em;">
-        <h3>Applies To</h3>
-        <div id="paramAssetFilter" style="max-height:200px; overflow:auto; border:1px solid #ccc; padding:0.5em;"></div>
-      </div>
-
+      
       <div style="margin-top:1.5em; text-align:right;">
-        <button id="saveParamBtn" class="btn btn-primary">Save Parameter</button>
-        <button id="cancelParamBtn" class="btn">Cancel</button>
+        <button id="confirmAddYearBtn" class="btn btn-primary">Add Year</button>
+        <button id="cancelAddYearBtn" class="btn">Cancel</button>
       </div>
     </div>
   </div>
+
 </div>

@@ -394,8 +394,8 @@ ipcMain.handle('excel:saveFixedParameters', async (_e, params) =>
 
 // Optimization I / II (now call the dedicated algorithms module)
 ipcMain.handle('algo:optimizeWorkplan', async (_e, payload) => algorithms.optimizeWorkplan(payload));
-ipcMain.handle('algo:runGeographical', async (_e, payload) => algorithms.runGeographicalAlgorithm(payload));
-ipcMain.handle('algo:runConstraintFiltering', async (_e, payload) => algorithms.runConstraintFiltering(payload));
+ipcMain.handle('algo:groupRepairsIntoTrips', async (_e, payload) => algorithms.groupRepairsIntoTrips(payload));
+ipcMain.handle('algo:assignTripsToYears', async (_e, payload) => algorithms.assignTripsToYears(payload));
 
 // ─── IPC: Authentication ───────────────────────────────────────────────────
 ipcMain.handle('auth:hasUsers', async () => auth.hasUsers());
