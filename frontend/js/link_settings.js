@@ -1,13 +1,14 @@
-// frontend/js/link_settings.js (simplified)
+// frontend/js/link_settings.js (fixed version)
 (function () {
   'use strict';
 
   // State
   const state = {
     lookupTree: null,
-    originalLinks: new Map(), // Original values for cancel
-    currentLinks: new Map(),  // Current edited values
-    hasChanges: false
+    originalLinks: new Map(),
+    currentLinks: new Map(),
+    hasChanges: false,
+    initialized: false
   };
 
   // Helper functions
@@ -27,13 +28,13 @@
   async function getLookupTree() {
     const api = window.electronAPI || {};
     if (typeof api.getLookupTree !== 'function') {
-      return { companies: [], locationsByCompany: {}, assetsByLocation: {} };
+      return { companies: [], locationsByCompany: {}, assetsByCompanyLocation: {} };
     }
     try {
       return await api.getLookupTree();
     } catch (e) {
       console.error('[link_settings] getLookupTree failed:', e);
-      return { companies: [], locationsByCompany: {}, assetsByLocation: {} };
+      return { companies: [], locationsByCompany: {}, assetsByCompanyLocation: {} };
     }
   }
 
@@ -77,7 +78,7 @@
 
     if (!state.lookupTree) return;
 
-    const { locationsByCompany, assetsByLocation } = state.lookupTree;
+    const { locationsByCompany, assetsByCompanyLocation } = state.lookupTree;
 
     // Load all links by querying each combination
     for (const [company, locations] of Object.entries(locationsByCompany)) {
@@ -89,7 +90,9 @@
         state.currentLinks.set(locKey, locLink || '');
 
         // Get asset-type-level links
-        const assetTypes = assetsByLocation[location] || [];
+        const companyAssets = assetsByCompanyLocation?.[company] || {};
+        const assetTypes = companyAssets[location] || [];
+        
         for (const assetType of assetTypes) {
           const atKey = makeAssetTypeKey(company, location, assetType);
           const atLink = await getPhotosBase(company, location, assetType);
@@ -112,7 +115,7 @@
     const container = document.getElementById('linkTree');
     if (!container || !state.lookupTree) return;
 
-    const { companies, locationsByCompany, assetsByLocation } = state.lookupTree;
+    const { companies, locationsByCompany, assetsByCompanyLocation } = state.lookupTree;
 
     container.innerHTML = '';
     const frag = document.createDocumentFragment();
@@ -122,32 +125,46 @@
       
       if (locations.length === 0) return;
 
+      // Company container
       const companyDiv = document.createElement('div');
-      companyDiv.className = 'link-company expanded';
+      companyDiv.className = 'link-company';
+      companyDiv.style.cssText = 'margin-bottom: 16px; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;';
       
+      // Company header
       const companyHeader = document.createElement('div');
       companyHeader.className = 'link-company-header';
+      companyHeader.style.cssText = 'display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: #f9fafb; cursor: pointer; user-select: none; font-weight: 600;';
       companyHeader.innerHTML = `
         <span>${company}</span>
-        <span class="chevron">▶</span>
+        <span class="chevron" style="transition: transform 0.2s;">▼</span>
       `;
-      companyHeader.onclick = () => {
-        companyDiv.classList.toggle('expanded');
-      };
       
+      // Company content (locations)
       const companyContent = document.createElement('div');
       companyContent.className = 'link-company-content';
+      companyContent.style.cssText = 'padding: 12px; display: block;';
+
+      // Toggle expansion
+      companyHeader.onclick = () => {
+        const isExpanded = companyContent.style.display !== 'none';
+        companyContent.style.display = isExpanded ? 'none' : 'block';
+        const chevron = companyHeader.querySelector('.chevron');
+        if (chevron) chevron.style.transform = isExpanded ? 'rotate(-90deg)' : 'rotate(0deg)';
+      };
 
       locations.forEach(location => {
         const locDiv = document.createElement('div');
         locDiv.className = 'link-location';
+        locDiv.style.cssText = 'margin-bottom: 16px; padding: 12px; background: white; border: 1px solid #e5e7eb; border-radius: 6px;';
         
         // Location header with input
         const locHeader = document.createElement('div');
         locHeader.className = 'link-location-header';
+        locHeader.style.cssText = 'display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;';
         
         const locName = document.createElement('div');
         locName.className = 'link-location-name';
+        locName.style.cssText = 'font-weight: 600; color: #374151;';
         locName.textContent = location;
         
         const locKey = makeLocationKey(company, location);
@@ -160,6 +177,7 @@
         locInput.dataset.linkType = 'location';
         locInput.dataset.company = company;
         locInput.dataset.location = location;
+        locInput.style.cssText = 'width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 4px; font-family: monospace; font-size: 13px;';
         
         locInput.addEventListener('input', handleInputChange);
         
@@ -168,17 +186,22 @@
         locDiv.appendChild(locHeader);
         
         // Asset types
-        const assetTypes = assetsByLocation[location] || [];
+        const companyAssets = assetsByCompanyLocation?.[company] || {};
+        const assetTypes = companyAssets[location] || [];
+        
         if (assetTypes.length > 0) {
           const atContainer = document.createElement('div');
           atContainer.className = 'link-asset-types';
+          atContainer.style.cssText = 'display: flex; flex-direction: column; gap: 8px; padding-left: 16px; border-left: 2px solid #e5e7eb;';
           
           assetTypes.forEach(assetType => {
             const atDiv = document.createElement('div');
             atDiv.className = 'link-asset-type';
+            atDiv.style.cssText = 'display: flex; flex-direction: column; gap: 6px;';
             
             const atName = document.createElement('div');
             atName.className = 'link-asset-type-name';
+            atName.style.cssText = 'font-size: 14px; color: #6b7280; font-weight: 500;';
             atName.textContent = assetType;
             
             const atKey = makeAssetTypeKey(company, location, assetType);
@@ -192,6 +215,7 @@
             atInput.dataset.company = company;
             atInput.dataset.location = location;
             atInput.dataset.assetType = assetType;
+            atInput.style.cssText = 'width: 100%; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 4px; font-family: monospace; font-size: 12px;';
             
             atInput.addEventListener('input', handleInputChange);
             
@@ -223,18 +247,12 @@
     // Normalize UNC paths
     let normalizedValue = value;
     if (normalizedValue.startsWith('\\\\')) {
-      // UNC path - ensure single backslashes after the initial \\
       const parts = normalizedValue.substring(2).split(/\\+/);
       normalizedValue = '\\\\' + parts.join('\\');
     }
     
     state.currentLinks.set(key, normalizedValue);
     state.hasChanges = true;
-    
-    // Mark settings as having changes
-    if (window.linkSettingsChanged) {
-      window.linkSettingsChanged();
-    }
   }
 
   // Save all changes
@@ -256,7 +274,6 @@
     
     // Apply changes
     for (const { key, value } of changes) {
-      // Parse the key to get type and parameters
       const parts = key.split('||');
       const type = parts[0];
       
@@ -271,7 +288,6 @@
       
       if (result && result.success) {
         successCount++;
-        // Update the original value on success
         state.originalLinks.set(key, value);
       } else {
         failCount++;
@@ -295,25 +311,38 @@
     };
   }
 
-  // Cancel changes (revert to original)
+  // Cancel changes
   function cancelChanges() {
-    // Reset current links to original values
     state.currentLinks.clear();
     for (const [key, value] of state.originalLinks) {
       state.currentLinks.set(key, value);
     }
     state.hasChanges = false;
-    
-    // Re-render to show original values
     renderTree();
   }
 
   // Initialize
   async function initLinkSettings() {
-    // Load data
-    state.lookupTree = await getLookupTree();
-    await loadAllLinks();
-    renderTree();
+    if (state.initialized) return;
+    
+    const container = document.getElementById('linkTree');
+    if (!container) {
+      console.error('[link_settings] linkTree container not found');
+      return;
+    }
+
+    // Show loading message
+    container.innerHTML = '<div style="padding: 20px; text-align: center; color: #6b7280;">Loading photo links...</div>';
+    
+    try {
+      state.lookupTree = await getLookupTree();
+      await loadAllLinks();
+      renderTree();
+      state.initialized = true;
+    } catch (e) {
+      console.error('[link_settings] Initialization failed:', e);
+      container.innerHTML = '<div style="padding: 20px; text-align: center; color: #ef4444;">Failed to load photo links</div>';
+    }
   }
 
   // Export for external access
@@ -321,15 +350,8 @@
     init: initLinkSettings,
     save: saveChanges,
     cancel: cancelChanges,
-    hasChanges: () => state.hasChanges
+    hasChanges: () => state.hasChanges,
+    initialized: false
   };
-
-  // Auto-init if the tab exists
-  document.addEventListener('DOMContentLoaded', () => {
-    const tab = document.getElementById('tab-photoLinks');
-    if (tab) {
-      initLinkSettings();
-    }
-  });
 
 })();
