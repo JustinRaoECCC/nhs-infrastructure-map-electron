@@ -432,7 +432,10 @@
   let repairsState = {
     allRepairs: [],
     selectedRepairs: new Set(),
-    selectedMaintenance: new Set()
+    selectedMaintenance: new Set(),
+    repairsPage: 1,
+    maintenancePage: 1,
+    pageSize: 10  // Show 10 items per page
   };
   let stationsList = [];
 
@@ -440,6 +443,8 @@
     try {
       const repairs = await window.electronAPI.getAllRepairs();
       repairsState.allRepairs = Array.isArray(repairs) ? repairs : [];
+      repairsState.repairsPage = 1;  // Reset to page 1
+      repairsState.maintenancePage = 1;
       renderRepairsTables();
     } catch (e) {
       console.error('[dashboard:repairs] Failed to load repairs:', e);
@@ -451,25 +456,109 @@
   window.loadRepairsData = loadRepairsData;
 
   function renderRepairsTables() {
+    renderRepairsTable();
+    renderMaintenanceTable();
+  }
+
+  // Replace the updatePaginationControls function in dashboard.js with this version:
+
+  function updatePaginationControls(type, currentPage, totalPages, totalItems) {
+    const tableId = type === 'repairs' ? 'globalRepairsTable' : 'globalMaintenanceTable';
+    const table = $(`#${tableId}`);
+    if (!table) return;
+  
+    // Find the panel container
+    const panel = table.closest('.panel');
+    if (!panel) return;
+
+    // Remove existing pagination
+    let paginationDiv = panel.querySelector('.pagination-controls');
+    if (paginationDiv) paginationDiv.remove();
+  
+    // Create new pagination
+    paginationDiv = document.createElement('div');
+    paginationDiv.className = 'pagination-controls';
+  
+    const startItem = (currentPage - 1) * repairsState.pageSize + 1;
+    const endItem = Math.min(currentPage * repairsState.pageSize, totalItems);
+  
+    paginationDiv.innerHTML = `
+      <div class="pagination-info">
+        Showing ${startItem}-${endItem} of ${totalItems} items
+      </div>
+      <div class="pagination-buttons">
+        <button class="btn btn-ghost" id="${type}PrevPage" ${currentPage === 1 ? 'disabled' : ''}>← Previous</button>
+        <span style="padding:0 12px;line-height:32px;font-size:13px;">Page ${currentPage} of ${totalPages || 1}</span>
+        <button class="btn btn-ghost" id="${type}NextPage" ${currentPage >= totalPages ? 'disabled' : ''}>Next →</button>
+      </div>
+    `;
+  
+    // IMPORTANT: Insert pagination AFTER the table-scroll container, not after the panel
+    const tableScroll = panel.querySelector('.table-scroll');
+    if (tableScroll && tableScroll.nextSibling) {
+      panel.insertBefore(paginationDiv, tableScroll.nextSibling);
+    } else {
+      panel.appendChild(paginationDiv);
+    }
+    
+    // Force a reflow to ensure CSS is applied
+    panel.offsetHeight;
+    
+    // Ensure table scroll container maintains its constraints
+    if (tableScroll) {
+      tableScroll.style.overflowX = 'auto';
+      tableScroll.style.overflowY = 'auto';
+      tableScroll.style.maxWidth = '100%';
+      tableScroll.style.width = '100%';
+    }
+  
+    // Wire up pagination buttons with null checks
+    const prevBtn = $(`#${type}PrevPage`);
+    const nextBtn = $(`#${type}NextPage`);
+    
+    if (prevBtn) {
+      prevBtn.addEventListener('click', () => {
+        if (type === 'repairs') {
+          repairsState.repairsPage = Math.max(1, repairsState.repairsPage - 1);
+          renderRepairsTable();
+        } else {
+          repairsState.maintenancePage = Math.max(1, repairsState.maintenancePage - 1);
+          renderMaintenanceTable();
+        }
+      });
+    }
+  
+    if (nextBtn) {
+      nextBtn.addEventListener('click', () => {
+        if (type === 'repairs') {
+          repairsState.repairsPage = Math.min(totalPages, repairsState.repairsPage + 1);
+          renderRepairsTable();
+        } else {
+          repairsState.maintenancePage = Math.min(totalPages, repairsState.maintenancePage + 1);
+          renderMaintenanceTable();
+        }
+      });
+    }
+  }
+
+  // Also update renderRepairsTable to ensure constraints after rendering:
+  function renderRepairsTable() {
     const repairsBody = $('#globalRepairsBody');
-    const maintenanceBody = $('#globalMaintenanceBody');
-    
-    if (!repairsBody || !maintenanceBody) return;
-    
-    repairsBody.innerHTML = '';
-    maintenanceBody.innerHTML = '';
+    if (!repairsBody) return;
     
     const repairs = repairsState.allRepairs.filter(r => r.type !== 'Monitoring');
-    const maintenance = repairsState.allRepairs.filter(r => r.type === 'Monitoring');
-
-    // Clear selections
-    repairsState.selectedRepairs.clear();
-    repairsState.selectedMaintenance.clear();    
+    const totalPages = Math.ceil(repairs.length / repairsState.pageSize);
+    const startIdx = (repairsState.repairsPage - 1) * repairsState.pageSize;
+    const endIdx = startIdx + repairsState.pageSize;
+    const pageRepairs = repairs.slice(startIdx, endIdx);
     
-    repairs.forEach((repair, idx) => {
+    repairsBody.innerHTML = '';
+    
+    pageRepairs.forEach((repair, idx) => {
+      const globalIdx = startIdx + idx;
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td><input type="checkbox" class="repair-checkbox" data-index="${idx}" /></td>
+        <td><input type="checkbox" class="repair-checkbox" data-repair-id="${globalIdx}" /></td>
         <td>${esc(repair.date || '')}</td>
         <td>${esc(repair.station_id || '')}</td>
         <td>${esc(repair.location || '')}</td>
@@ -482,6 +571,7 @@
         <td>${esc(repair.days || '')}</td>
       `;
       const checkbox = tr.querySelector('.repair-checkbox');
+      checkbox.checked = repairsState.selectedRepairs.has(repair);
       checkbox.addEventListener('change', (e) => {
         if (e.target.checked) repairsState.selectedRepairs.add(repair);
         else repairsState.selectedRepairs.delete(repair);
@@ -489,10 +579,38 @@
       repairsBody.appendChild(tr);
     });
     
-    maintenance.forEach((item, idx) => {
+    updatePaginationControls('repairs', repairsState.repairsPage, totalPages, repairs.length);
+    
+    // Ensure table constraints are maintained after render
+    const tableScroll = $('#globalRepairsTable').closest('.table-scroll');
+    if (tableScroll) {
+      // Force the scroll container to maintain its constraints
+      tableScroll.style.display = 'block';
+      tableScroll.style.overflowX = 'auto';
+      tableScroll.style.overflowY = 'auto';
+      tableScroll.style.maxWidth = '100%';
+      tableScroll.style.width = '100%';
+      tableScroll.style.boxSizing = 'border-box';
+    }
+  }
+
+  function renderMaintenanceTable() {
+    const maintenanceBody = $('#globalMaintenanceBody');
+    if (!maintenanceBody) return;
+    
+    const maintenance = repairsState.allRepairs.filter(r => r.type === 'Monitoring');
+    const totalPages = Math.ceil(maintenance.length / repairsState.pageSize);
+    const startIdx = (repairsState.maintenancePage - 1) * repairsState.pageSize;
+    const endIdx = startIdx + repairsState.pageSize;
+    const pageMaintenance = maintenance.slice(startIdx, endIdx);
+    
+    maintenanceBody.innerHTML = '';
+    
+    pageMaintenance.forEach((item, idx) => {
+      const globalIdx = startIdx + idx;
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td><input type="checkbox" class="maintenance-checkbox" data-index="${idx}" /></td>
+        <td><input type="checkbox" class="maintenance-checkbox" data-maintenance-id="${globalIdx}" /></td>
         <td>${esc(item.date || '')}</td>
         <td>${esc(item.station_id || '')}</td>
         <td>${esc(item.location || '')}</td>
@@ -505,12 +623,106 @@
         <td>${esc(item.days || '')}</td>
       `;
       const checkbox = tr.querySelector('.maintenance-checkbox');
+      checkbox.checked = repairsState.selectedMaintenance.has(item);
       checkbox.addEventListener('change', (e) => {
         if (e.target.checked) repairsState.selectedMaintenance.add(item);
         else repairsState.selectedMaintenance.delete(item);
       });
       maintenanceBody.appendChild(tr);
     });
+  
+    updatePaginationControls('maintenance', repairsState.maintenancePage, totalPages, maintenance.length);
+    
+    // Ensure table constraints are maintained after render
+    const tableScroll = $('#globalMaintenanceTable').closest('.table-scroll');
+    if (tableScroll) {
+      // Force the scroll container to maintain its constraints
+      tableScroll.style.display = 'block';
+      tableScroll.style.overflowX = 'auto';
+      tableScroll.style.overflowY = 'auto';
+      tableScroll.style.maxWidth = '100%';
+      tableScroll.style.width = '100%';
+      tableScroll.style.boxSizing = 'border-box';
+    }
+  }
+
+  function updatePaginationControls(type, currentPage, totalPages, totalItems) {
+    const tableId = type === 'repairs' ? 'globalRepairsTable' : 'globalMaintenanceTable';
+    const table = $(`#${tableId}`);
+    if (!table) return;
+  
+    // Find the panel container
+    const panel = table.closest('.panel');
+    if (!panel) return;
+
+    // Remove existing pagination
+    let paginationDiv = panel.querySelector('.pagination-controls');
+    if (paginationDiv) paginationDiv.remove();
+  
+    // Create new pagination
+    paginationDiv = document.createElement('div');
+    paginationDiv.className = 'pagination-controls';
+  
+    const startItem = (currentPage - 1) * repairsState.pageSize + 1;
+    const endItem = Math.min(currentPage * repairsState.pageSize, totalItems);
+  
+    paginationDiv.innerHTML = `
+      <div class="pagination-info">
+        Showing ${startItem}-${endItem} of ${totalItems} items
+      </div>
+      <div class="pagination-buttons">
+        <button class="btn btn-ghost" id="${type}PrevPage" ${currentPage === 1 ? 'disabled' : ''}>← Previous</button>
+        <span style="padding:0 12px;line-height:32px;font-size:13px;">Page ${currentPage} of ${totalPages || 1}</span>
+        <button class="btn btn-ghost" id="${type}NextPage" ${currentPage >= totalPages ? 'disabled' : ''}>Next →</button>
+      </div>
+    `;
+  
+    // IMPORTANT: Insert pagination AFTER the table-scroll container, not after the panel
+    const tableScroll = panel.querySelector('.table-scroll');
+    if (tableScroll && tableScroll.nextSibling) {
+      panel.insertBefore(paginationDiv, tableScroll.nextSibling);
+    } else {
+      panel.appendChild(paginationDiv);
+    }
+    
+    // Force a reflow to ensure CSS is applied
+    panel.offsetHeight;
+    
+    // Ensure table scroll container maintains its constraints
+    if (tableScroll) {
+      tableScroll.style.overflowX = 'auto';
+      tableScroll.style.overflowY = 'auto';
+      tableScroll.style.maxWidth = '100%';
+      tableScroll.style.width = '100%';
+    }
+  
+    // Wire up pagination buttons with null checks
+    const prevBtn = $(`#${type}PrevPage`);
+    const nextBtn = $(`#${type}NextPage`);
+    
+    if (prevBtn) {
+      prevBtn.addEventListener('click', () => {
+        if (type === 'repairs') {
+          repairsState.repairsPage = Math.max(1, repairsState.repairsPage - 1);
+          renderRepairsTable();
+        } else {
+          repairsState.maintenancePage = Math.max(1, repairsState.maintenancePage - 1);
+          renderMaintenanceTable();
+        }
+      });
+    }
+  
+    if (nextBtn) {
+      nextBtn.addEventListener('click', () => {
+        if (type === 'repairs') {
+          repairsState.repairsPage = Math.min(totalPages, repairsState.repairsPage + 1);
+          renderRepairsTable();
+        } else {
+          repairsState.maintenancePage = Math.min(totalPages, repairsState.maintenancePage + 1);
+          renderMaintenanceTable();
+        }
+      });
+    }
   }
 
   function formatCost(cost) {

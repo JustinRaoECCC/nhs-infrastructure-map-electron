@@ -1377,6 +1377,7 @@ async function readStationsAggregate() {
       }
       for (const ws of wb.worksheets) {
         if (!ws || ws.rowCount < 2) continue;
+        if (ws.name && ws.name.toLowerCase().includes('repairs')) continue;
         const twoRow = (ws.getRow(2)?.actualCellCount || 0) > 0;
         let rows = [];
         if (twoRow) {
