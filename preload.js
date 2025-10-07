@@ -53,7 +53,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('photos:getRecent', { siteName, stationId, limit }),
 
   // ─── Station Updates ─────────────────────────────────────────────────────
-  updateStationData: (stationData) => ipcRenderer.invoke('stations:update', stationData),
+  updateStationData: (stationData, schema) => ipcRenderer.invoke('stations:update', stationData, schema),
 
   // ─── Schema synchronization ──────────────────────────────────────────────
   syncAssetTypeSchema: (assetType, schema, excludeStationId) =>
@@ -63,11 +63,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('schema:getExisting', assetType),
 
   // ─── Excel worker extensions ────────────────────────────────────────────
-  readLocationWorkbook: (locationName) =>
-    ipcRenderer.invoke('excel:readLocationWorkbook', locationName),
+  readLocationWorkbook: (company, locationName) =>
+    ipcRenderer.invoke('excel:readLocationWorkbook', company, locationName),
 
-  readSheetData: (locationName, sheetName) =>
-    ipcRenderer.invoke('excel:readSheetData', locationName, sheetName),
+  readSheetData: (company, locationName, sheetName) =>
+    ipcRenderer.invoke('excel:readSheetData', company, locationName, sheetName),
 
   updateAssetTypeSchema: (assetType, schema, excludeStationId) =>
     ipcRenderer.invoke('excel:updateAssetTypeSchema', assetType, schema, excludeStationId),

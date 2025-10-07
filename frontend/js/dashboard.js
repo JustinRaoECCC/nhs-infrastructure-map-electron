@@ -713,10 +713,14 @@
           </div>
           <div class="form-row" style="grid-column: 1 / 4;">
             <label>Station ID *</label>
-            <select id="grStationId" disabled>
-              <option value="">Select Asset Type first...</option>
-            </select>
+            <div style="position:relative;">
+              <input id="grStationId" type="text" placeholder="Type to search..." disabled autocomplete="off" />
+              <div id="grStationDropdown" class="station-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;max-height:200px;overflow-y:auto;background:#fff;border:1px solid #ddd;border-top:none;z-index:1000;"></div>
+            </div>
           </div>
+          <input type="hidden" id="grStationIdValue" />
+          <input type="hidden" id="grStationName" />
+          <input type="hidden" id="grStationLocation" />
           <div class="form-row" style="grid-column: 1 / 4;">
             <label>Name *</label>
             <input id="grName" type="text" placeholder="Repair/Maintenance name" />
@@ -765,7 +769,10 @@
     const companySelect = $('#grCompany');
     const locationSelect = $('#grLocation');
     const assetTypeSelect = $('#grAssetType');
-    const stationSelect = $('#grStationId');
+    const stationInput = $('#grStationId');
+    const stationDropdown = $('#grStationDropdown');
+    const stationIdValue = $('#grStationIdValue');
+    let availableStations = [];
     
     companySelect.addEventListener('change', () => {
       const company = companySelect.value;
@@ -808,24 +815,81 @@
     assetTypeSelect.addEventListener('change', () => {
       const location = locationSelect.value;
       const assetType = assetTypeSelect.value;
-      stationSelect.innerHTML = '<option value="">Select Station...</option>';
+      stationInput.value = '';
+      stationIdValue.value = '';
+      stationDropdown.innerHTML = '';
+      stationDropdown.style.display = 'none';
       
       if (location && assetType) {
         // Filter stations by location and asset type
-        const validStations = stationsList.filter(s => 
+        availableStations = stationsList.filter(s =>
           (s.location_file === location || s.province === location) && 
           s.asset_type === assetType
         );
-        validStations.forEach(st => {
-          const opt = document.createElement('option');
-          // Store just the station ID as the value
-          opt.value = String(st.station_id).trim();
-          opt.textContent = `${st.station_id} - ${st.name || ''}`;
-          stationSelect.appendChild(opt);
-        });
-        stationSelect.disabled = false;
+        stationInput.disabled = false;
+        stationInput.placeholder = 'Type to search stations...';
       } else {
-        stationSelect.disabled = true;
+        availableStations = [];
+        stationInput.disabled = true;
+        stationInput.placeholder = 'Select Asset Type first...';
+      }
+    });
+
+    // Filter stations as user types
+    stationInput.addEventListener('input', () => {
+      const searchTerm = stationInput.value.toLowerCase().trim();
+      stationDropdown.innerHTML = '';
+      
+      if (!searchTerm || availableStations.length === 0) {
+        stationDropdown.style.display = 'none';
+        return;
+      }
+      
+      const filtered = availableStations.filter(st => {
+        const stationId = String(st.station_id).toLowerCase();
+        const stationName = String(st.name || '').toLowerCase();
+        return stationId.includes(searchTerm) || stationName.includes(searchTerm);
+      });
+      
+      if (filtered.length === 0) {
+        stationDropdown.innerHTML = '<div style="padding:8px;color:#666;">No matching stations</div>';
+        stationDropdown.style.display = 'block';
+        return;
+      }
+      
+      filtered.forEach(st => {
+        const item = document.createElement('div');
+        item.style.cssText = 'padding:8px;cursor:pointer;border-bottom:1px solid #f0f0f0;';
+        item.textContent = `${st.station_id} - ${st.name || ''}`;
+        item.addEventListener('mouseenter', () => {
+          item.style.backgroundColor = '#f5f5f5';
+        });
+        item.addEventListener('mouseleave', () => {
+          item.style.backgroundColor = '';
+        });
+        item.addEventListener('click', () => {
+          stationInput.value = `${st.station_id} - ${st.name || ''}`;
+          stationIdValue.value = String(st.station_id).trim();
+          stationDropdown.style.display = 'none';
+        });
+        stationDropdown.appendChild(item);
+      });
+      
+      stationDropdown.style.display = 'block';
+    });
+    
+    // Close dropdown when clicking outside
+    const closeDropdown = (e) => {
+      if (!stationInput.contains(e.target) && !stationDropdown.contains(e.target)) {
+        stationDropdown.style.display = 'none';
+      }
+    };
+    document.addEventListener('click', closeDropdown);
+    
+    // Show all stations when focusing empty input
+    stationInput.addEventListener('focus', () => {
+      if (!stationInput.value && availableStations.length > 0) {
+        stationInput.dispatchEvent(new Event('input'));
       }
     });
     
@@ -838,10 +902,9 @@
       const location = $('#grLocation').value;
       const assetType = $('#grAssetType').value;
       // Ensure we get just the station ID value, not the display text
-      const stationId = String($('#grStationId').value).trim();
+      const stationId = String($('#grStationIdValue').value).trim();
       const repair = {
         'Station ID': stationId,  // This must match what backend expects
-        'station_id': stationId,  // Also include lowercase version for compatibility
         'Repair Name': $('#grName').value,  // Excel expects 'Repair Name'
         name: $('#grName').value,            // Keep for compatibility
         severity: $('#grSeverity').value,
@@ -986,6 +1049,409 @@
     _setTriState(selectAllMaintenance, repairsState.selectedMaintenance.size, _rowsMaintenance().length);
   }
 
+  // ---- Import Repairs from Excel -----------------------------------------------
+
+  async function openImportRepairsModal() {
+    const modal = $('#importRepairsModal');
+    if (!modal) return;
+
+    // Load stations list first to ensure we have the data
+    stationsList = await window.electronAPI.getStationData({}) || [];
+
+    modal.innerHTML = `
+      <div class="modal-content" style="max-width:680px;width:92%;">
+        <h3 style="margin-top:0;">Import Repairs from Excel</h3>
+        <div class="form-row">
+          <label>Select Excel File</label>
+          <input type="file" id="irFileInput" accept=".xlsx,.xls" />
+        </div>
+        <div id="irPreview" style="display:none;margin-top:16px;">
+          <div style="margin-bottom:8px;"><strong>Preview:</strong> <span id="irCount"></span> repairs found</div>
+          <div id="irMissingFields" style="display:none;margin-bottom:12px;padding:8px;background:#fff3cd;border:1px solid #ffc107;border-radius:4px;">
+            <strong>⚠️ Some repairs are missing required fields</strong>
+            <div style="margin-top:4px;font-size:0.9em;">You'll be prompted to fill in missing information after import.</div>
+          </div>
+        </div>
+        <div class="modal-actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+          <button id="irImport" class="btn btn-primary" disabled>Import</button>
+          <button id="irCancel" class="btn btn-ghost">Cancel</button>
+        </div>
+      </div>
+    `;
+
+    modal.style.display = 'flex';
+
+    const fileInput = $('#irFileInput');
+    const preview = $('#irPreview');
+    const countSpan = $('#irCount');
+    const missingDiv = $('#irMissingFields');
+    const importBtn = $('#irImport');
+    const cancelBtn = $('#irCancel');
+
+    let parsedRepairs = [];
+
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      try {
+        const b64 = await fileToBase64(file);
+        const result = await window.electronAPI.importRepairsExcel(b64);
+        
+        if (!result.success || !result.rows || result.rows.length === 0) {
+          appAlert('No data found in the Excel file');
+          return;
+        }
+
+        // Map column headers to standardized field names
+        parsedRepairs = result.rows.map(row => mapRepairFields(row));
+        
+        // Check for missing fields
+        const hasMissing = parsedRepairs.some(r => !r.stationId || !r.name);
+        
+        countSpan.textContent = parsedRepairs.length;
+        preview.style.display = 'block';
+        missingDiv.style.display = hasMissing ? 'block' : 'none';
+        importBtn.disabled = false;
+
+      } catch (err) {
+        console.error('[importRepairs] parse failed:', err);
+        appAlert('Failed to parse Excel file: ' + err.message);
+      }
+    });
+
+    importBtn.addEventListener('click', async () => {
+      if (parsedRepairs.length === 0) return;
+
+      modal.style.display = 'none';
+
+      const errors = [];
+      const REQUIRED_KEYS = ['stationId', 'name'];
+      const OPTIONAL_KEYS = ['category', 'type', 'severity', 'priority', 'cost', 'days'];
+      const ALL_KEYS = [...REQUIRED_KEYS, ...OPTIONAL_KEYS];
+
+      // Split into "needs prompting" vs "already complete"
+      const toPrompt = [];
+      const ready = [];
+      for (const r of parsedRepairs) {
+        const missingAny = ALL_KEYS.some(k => !String(r[k] ?? '').trim());
+        if (missingAny) toPrompt.push(r); else ready.push(r);
+      }
+
+      // Ask user to fill anything missing (including Category/Type/etc.)
+      if (toPrompt.length) {
+        await promptForMissingFields(toPrompt); // <- updated function below
+      }
+
+      // Validate & build final lists (after prompting)
+      const complete = [];
+      const incomplete = [];
+
+      for (const repair of [...ready, ...toPrompt]) {
+        if (REQUIRED_KEYS.every(k => String(repair[k] ?? '').trim())) {
+          const station = stationsList.find(s =>
+            String(s.station_id).trim().toLowerCase() === String(repair.stationId).trim().toLowerCase()
+          );
+
+          if (!station) {
+            errors.push(`Station ID "${repair.stationId}" not found in system`);
+          } else if (!station.company) {
+            errors.push(`Station "${repair.stationId}" is missing company information`);
+          } else {
+            complete.push(repair);
+          }
+        } else {
+          // still missing required bits
+          incomplete.push(repair);
+        }
+      }
+
+      if (errors.length > 0) {
+        await appAlert(`⚠️ Could not import ${errors.length} repair(s):\n\n${
+          errors.slice(0, 5).join('\n')
+        }${errors.length > 5 ? '\n...' : ''}`);
+      }
+
+      // Import the complete ones
+      let successCount = 0;
+      let failCount = 0;
+      const failReasons = [];
+
+      for (const repair of complete) {
+        const result = await importSingleRepair(repair);
+        if (result && result.success) successCount++;
+        else {
+          failCount++;
+          failReasons.push(`${repair.stationId}: ${result?.message || 'Unknown error'}`);
+        }
+      }
+
+      // If any entries still missing required fields, let user fill those too
+      if (incomplete.length > 0) {
+        await promptForMissingFields(incomplete);
+        // Try importing whatever became complete after that second pass
+        const secondPass = [];
+        for (const r of incomplete) {
+          if (REQUIRED_KEYS.every(k => String(r[k] ?? '').trim())) secondPass.push(r);
+        }
+        for (const repair of secondPass) {
+          const result = await importSingleRepair(repair);
+          if (result && result.success) successCount++;
+          else {
+            failCount++;
+            failReasons.push(`${repair.stationId}: ${result?.message || 'Unknown error'}`);
+          }
+        }
+      }
+
+      await loadRepairsData();
+      if (window.populateWorkplanFromRepairs) window.populateWorkplanFromRepairs();
+
+      let message = `Import complete!\n\nSuccessfully imported: ${successCount}`;
+      if (failCount > 0) {
+        message += `\nFailed: ${failCount}`;
+        if (failReasons.length > 0) {
+          message += `\n\nFailure reasons:\n${failReasons.slice(0, 3).join('\n')}${failReasons.length > 3 ? '\n...' : ''}`;
+        }
+      }
+      appAlert(message);
+    });
+
+    cancelBtn.addEventListener('click', () => {
+      modal.style.display = 'none';
+    });
+  }
+
+  // Map various column header names to standardized field names
+  function mapRepairFields(row) {
+    const mapped = {
+      stationId: pickField(row, ['Station Number', 'Site Number', 'Station ID', 'Site ID', 'ID']),
+      name: pickField(row, ['Repair Name', 'Name']),
+      severity: pickField(row, ['Severity Ranking', 'Severity']),
+      priority: pickField(row, ['Priority Ranking', 'Priority']),
+      cost: pickField(row, ['Repair Cost (K)', 'Repair Cost', 'Cost']),
+      days: pickField(row, ['Days']),
+      category: pickField(row, ['Category']),
+      type: pickField(row, ['Type']) || 'Repair'
+    };
+    
+    // Clean up cost if it has "(K)" in it
+    if (mapped.cost && String(mapped.cost).includes('K')) {
+      mapped.cost = String(mapped.cost).replace(/[^\d.]/g, '');
+    }
+    
+    return mapped;
+  }
+
+  // Helper to pick first non-empty value from multiple possible field names
+  function pickField(row, candidates) {
+    for (const name of candidates) {
+      const value = row[name];
+      if (value !== undefined && value !== null && String(value).trim() !== '') {
+        return String(value).trim();
+      }
+    }
+    return '';
+  }
+
+  // Prompt user to fill in missing fields for repairs
+  async function promptForMissingFields(repairs) {
+    const FIELD_DEFS = [
+      { key: 'stationId', label: 'Station ID *', type: 'text', required: true },
+      { key: 'name',      label: 'Repair Name *', type: 'text', required: true },
+      { key: 'category',  label: 'Category',      type: 'select', options: ['Capital', 'O&M'] },
+      { key: 'type',      label: 'Type',          type: 'select', options: ['Repair', 'Monitoring'] },
+      { key: 'severity',  label: 'Severity',      type: 'text' },
+      { key: 'priority',  label: 'Priority',      type: 'text' },
+      { key: 'cost',      label: 'Cost',          type: 'number' },
+      { key: 'days',      label: 'Days',          type: 'number' }
+    ];
+
+    const getMissingKeys = (r) =>
+      FIELD_DEFS.filter(f => !String(r[f.key] ?? '').trim()).map(f => f.key);
+
+    for (let i = 0; i < repairs.length; i++) {
+      const repair = repairs[i];
+      const missing = getMissingKeys(repair);
+      if (missing.length === 0) continue;
+
+      const modal = $('#missingFieldsModal');
+      if (!modal) continue;
+
+      const rowHTML = (f) => {
+        if (f.type === 'select') {
+          const id = `mf_${f.key}`;
+          const applyAllId = `mf_${f.key}_all`;
+          const applyAllHtml = (f.key === 'category' || f.key === 'type')
+            ? `<label style="margin-left:8px;font-size:0.9em;">
+                <input id="${applyAllId}" type="checkbox"> Apply to all remaining missing
+              </label>`
+            : '';
+          return `
+            <div class="form-row">
+              <label>${f.label}</label>
+              <select id="${id}">
+                <option value="">Select…</option>
+                ${f.options.map(o => `<option value="${o}">${o}</option>`).join('')}
+              </select>
+              ${applyAllHtml}
+            </div>
+          `;
+        }
+        const id = `mf_${f.key}`;
+        const step = f.type === 'number' ? ` step="1"` : '';
+        const ph  = f.type === 'number' ? '0' : '';
+        return `
+          <div class="form-row">
+            <label>${f.label}</label>
+            <input id="${id}" type="${f.type === 'number' ? 'number' : 'text'}" placeholder="${ph}" ${step} />
+          </div>
+        `;
+      };
+
+      const currentDataHtml = `
+        ${repair.name ? `Name: ${esc(repair.name)}<br>` : ''}
+        ${repair.stationId ? `Station ID: ${esc(repair.stationId)}<br>` : ''}
+        ${repair.category ? `Category: ${esc(repair.category)}<br>` : ''}
+        ${repair.type ? `Type: ${esc(repair.type)}<br>` : ''}
+        ${repair.severity ? `Severity: ${esc(repair.severity)}<br>` : ''}
+        ${repair.priority ? `Priority: ${esc(repair.priority)}<br>` : ''}
+        ${repair.cost ? `Cost: ${esc(repair.cost)}<br>` : ''}
+        ${repair.days ? `Days: ${esc(repair.days)}<br>` : ''}
+      `;
+
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width:520px;width:92%;">
+          <h3 style="margin-top:0;">Missing Information (${i + 1}/${repairs.length})</h3>
+          <div style="margin-bottom:12px;padding:8px;background:#f8f9fa;border-radius:4px;">
+            <div><strong>Current repair data:</strong></div>
+            <div style="margin-top:4px;font-size:0.9em;">${currentDataHtml || '(empty)'}</div>
+          </div>
+          <div class="form-grid" style="display:grid;gap:10px;">
+            ${FIELD_DEFS.filter(f => missing.includes(f.key)).map(rowHTML).join('')}
+          </div>
+          <div class="modal-actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+            <button id="mfSave" class="btn btn-primary">Save & Continue</button>
+            <button id="mfSkip" class="btn btn-ghost">Skip This Repair</button>
+          </div>
+        </div>
+      `;
+
+      modal.style.display = 'flex';
+
+      await new Promise((resolve) => {
+        $('#mfSave').onclick = async () => {
+          // Persist inputs
+          for (const f of FIELD_DEFS) {
+            if (!missing.includes(f.key)) continue;
+            const el = document.getElementById(`mf_${f.key}`);
+            if (!el) continue;
+            const v = String(el.value || '').trim();
+            if (v) repair[f.key] = v;
+
+            // Optional bulk apply for Category/Type
+            if ((f.key === 'category' || f.key === 'type') && v) {
+              const allCb = document.getElementById(`mf_${f.key}_all`);
+              if (allCb && allCb.checked) {
+                for (let j = i + 1; j < repairs.length; j++) {
+                  if (!String(repairs[j][f.key] ?? '').trim()) {
+                    repairs[j][f.key] = v;
+                  }
+                }
+              }
+            }
+          }
+
+          // Required checks
+          if (!String(repair.stationId || '').trim() || !String(repair.name || '').trim()) {
+            appAlert('Station ID and Repair Name are required');
+            return;
+          }
+
+          modal.style.display = 'none';
+          resolve();
+        };
+
+        $('#mfSkip').onclick = () => {
+          modal.style.display = 'none';
+          resolve();
+        };
+      });
+    }
+  }
+
+  // Import a single repair by looking up station info
+  async function importSingleRepair(repair) {
+    try {
+      // Find the station to get location, assetType, and company
+      const station = stationsList.find(s => 
+        String(s.station_id).trim().toLowerCase() === String(repair.stationId).trim().toLowerCase()
+      );
+      
+      if (!station) {
+        console.error(`[importSingleRepair] Station not found: ${repair.stationId}`);
+        return { success: false, message: 'Station not found' };
+      }
+      
+      const location = station.location_file || station.province || station.location;
+      const assetType = station.asset_type;
+      const company = station.company || '';
+
+      if (!company) {
+        return { success: false, message: 'Station is missing company information' };
+      }
+      
+      if (!location || !assetType) {
+        console.error(`[importSingleRepair] Missing location or asset type for station ${repair.stationId}`);
+        return { success: false, message: 'Station missing location or asset type' };
+      }
+      
+      // Build repair payload
+      const repairData = {
+        'Station ID': repair.stationId,
+        'Repair Name': repair.name,
+        name: repair.name,
+        severity: repair.severity || '',
+        priority: repair.priority || '',
+        cost: repair.cost || '',
+        category: String(repair.category ?? '').trim(),
+        type: repair.type || 'Repair',
+        days: repair.days || ''
+      };
+      
+      const result = await window.electronAPI.appendRepair({ 
+        company, 
+        location, 
+        assetType, 
+        repair: repairData 
+      });
+
+      if (!company) {
+        return { success: false, message: 'Station is missing company information' };
+      }
+      
+      return result;
+      
+    } catch (err) {
+      console.error('[importSingleRepair] failed:', err);
+      return { success: false, message: String(err) };
+    }
+  }
+
+  // Convert File to base64
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const b64 = reader.result.split(',')[1];
+        resolve(b64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+
   // ---- Tabs ----------------------------------------------------------------
 
   function bindTabs() {
@@ -1066,6 +1532,11 @@
     const btnAddRepair = $('#btnAddGlobalRepair');
     if (btnAddRepair) {
       btnAddRepair.addEventListener('click', openGlobalRepairModal);
+    }
+
+    const btnImportRepairs = $('#btnImportRepairs');
+    if (btnImportRepairs) {
+      btnImportRepairs.addEventListener('click', openImportRepairsModal);
     }
 
     const btnResolve = $('#btnResolveRepairs');

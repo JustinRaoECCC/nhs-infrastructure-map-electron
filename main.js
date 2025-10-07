@@ -198,7 +198,7 @@ ipcMain.handle('photos:getRecent', async (_evt, { siteName, stationId, limit }) 
   backend.getRecentPhotos(siteName, stationId, limit)
 );
 
-ipcMain.handle('stations:update', async (_evt, stationData) => backend.updateStationData(stationData));
+ipcMain.handle('stations:update', async (_evt, stationData, schema) => backend.updateStationData(stationData, schema));
 
 // Schema synchronization handlers
 ipcMain.handle('schema:sync', async (_evt, assetType, schema, excludeStationId) => {
@@ -212,12 +212,12 @@ ipcMain.handle('schema:getExisting', async (_evt, assetType) => {
 });
 
 // Add handler for Excel worker's new functions
-ipcMain.handle('excel:readLocationWorkbook', async (_evt, locationName) =>
-  excelClient.readLocationWorkbook(locationName)
+ipcMain.handle('excel:readLocationWorkbook', async (_evt, company, locationName) =>
+  excelClient.readLocationWorkbook(company, locationName)
 );
 
-ipcMain.handle('excel:readSheetData', async (_evt, locationName, sheetName) =>
-  excelClient.readSheetData(locationName, sheetName)
+ipcMain.handle('excel:readSheetData', async (_evt, company, locationName, sheetName) =>
+  excelClient.readSheetData(company, locationName, sheetName)
 );
 
 ipcMain.handle('excel:updateAssetTypeSchema', async (_evt, assetType, schema, excludeStationId) =>

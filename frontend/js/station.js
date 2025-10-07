@@ -682,6 +682,24 @@ async function saveStationChanges(assetType) {
       updatedData.status = getValue('giStatus');
     }
 
+    // NEW: Read the current Excel structure to get complete column order
+    let existingSchema = null;
+    try {
+      const company = updatedData.company || currentStationData.company;
+      const location = updatedData.location_file || currentStationData.location_file || updatedData.province || currentStationData.province;
+      const sheetName = `${assetType} ${location}`;
+     
+      const sheetData = await window.electronAPI.readSheetData(company, location, sheetName);
+      if (sheetData.success && sheetData.sections && sheetData.fields) {
+        existingSchema = {
+          sections: sheetData.sections,
+          fields: sheetData.fields
+        };
+      }
+    } catch (e) {
+      console.warn('[saveStationChanges] Could not read existing schema:', e);
+    }
+
     // Dynamic sections data - clear old ones first
     Object.keys(updatedData).forEach(key => {
       if (key.includes(' – ')) {
@@ -695,12 +713,16 @@ async function saveStationChanges(assetType) {
 
     // Collect new section data
     const sections = container.querySelectorAll('.editable-section');
-    const schemaData = { sections: [], fields: [] };
+    const uiSections = new Map(); // Map of section name -> array of field names in UI order
     
     sections.forEach(sectionDiv => {
       const sectionTitle = sectionDiv.querySelector('.section-title-input').value.trim();
       const fieldRows = sectionDiv.querySelectorAll('.field-row');
       
+      if (!uiSections.has(sectionTitle)) {
+        uiSections.set(sectionTitle, []);
+      }
+
       fieldRows.forEach(fieldRow => {
         const fieldName = fieldRow.querySelector('.field-label-input').value.trim();
         const fieldValue = fieldRow.querySelector('.field-value-input').value.trim();
@@ -709,14 +731,53 @@ async function saveStationChanges(assetType) {
           const compositeKey = `${sectionTitle} – ${fieldName}`;
           updatedData[compositeKey] = fieldValue;
           
-          // Build schema for synchronization (exclude General Information)
-          if (sectionTitle.toLowerCase() !== 'general information') {
-            schemaData.sections.push(sectionTitle);
-            schemaData.fields.push(fieldName);
-          }
+          // Track UI field order
+          uiSections.get(sectionTitle).push(fieldName);
+
         }
       });
     });
+
+    // Build schema STRICTLY from what's in the UI (deletions included).
+    let schemaData;
+    (function buildSchemaFromUI() {
+      // Flatten UI into ordered [section, field] pairs
+      const uiPairs = [];
+      uiSections.forEach((fieldsList, sectionName) => {
+        fieldsList.forEach(fieldName => {
+          if (sectionName && fieldName) uiPairs.push([sectionName, fieldName]);
+        });
+      });
+
+      // If we have an existing schema, use it ONLY to preserve the
+      // relative order among the subset that still exists in the UI.
+      if (existingSchema && Array.isArray(existingSchema.fields) && Array.isArray(existingSchema.sections)) {
+        const present = new Set(uiPairs.map(([s, f]) => `${s.toLowerCase()}|||${f.toLowerCase()}`));
+
+        // Keep only pairs that are still present, in their previous order
+        const ordered = [];
+        for (let i = 0; i < existingSchema.fields.length; i++) {
+          const s = existingSchema.sections[i];
+          const f = existingSchema.fields[i];
+          if (!s || !f) continue;
+          if (String(s).toLowerCase() === 'general information') continue;
+          const key = `${String(s).toLowerCase()}|||${String(f).toLowerCase()}`;
+          if (present.has(key)) ordered.push([s, f]);
+        }
+
+        // Append any remaining UI pairs (new ones) after that
+        const orderedKeys = new Set(ordered.map(([s, f]) => `${s.toLowerCase()}|||${f.toLowerCase()}`));
+        for (const [s, f] of uiPairs) {
+          const k = `${s.toLowerCase()}|||${f.toLowerCase()}`;
+          if (!orderedKeys.has(k)) ordered.push([s, f]);
+        }
+
+        schemaData = { sections: ordered.map(p => p[0]), fields: ordered.map(p => p[1]) };
+      } else {
+        // No existing schema: just take UI order
+        schemaData = { sections: uiPairs.map(p => p[0]), fields: uiPairs.map(p => p[1]) };
+      }
+    })();
 
     // If GI is unlocked, also persist any edited extra GI fields
     if (generalInfoUnlocked) {
@@ -728,8 +789,11 @@ async function saveStationChanges(assetType) {
       });
     }
 
-    // Save to this station's Excel file
-    const result = await window.electronAPI.updateStationData(updatedData);
+   // Save to this station's Excel file with schema information
+   const result = await window.electronAPI.updateStationData(updatedData, {
+     sections: schemaData.sections,
+     fields: schemaData.fields
+   });
     
     if (result.success) {
       // Now sync schema to all other stations of same asset type

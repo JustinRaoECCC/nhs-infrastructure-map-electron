@@ -603,7 +603,7 @@ async function getRecentPhotos(siteName, stationId, limit = 5) {
 /**
  * Update station data - saves changes back to the appropriate Excel file
  */
-async function updateStationData(updatedStation) {
+async function updateStationData(updatedStation, schema) {
   try {
     if (!updatedStation || !updatedStation.station_id) {
       return { success: false, message: 'Station ID is required' };
@@ -638,9 +638,11 @@ async function updateStationData(updatedStation) {
     
     // Update the station in the appropriate Excel file
     const result = await excel.updateStationInLocationFile(
-      company, locationFile, 
+      company, 
+      locationFile, 
       updatedStation.station_id, 
-      rowData
+      rowData,
+      schema  // Pass schema to maintain column order
     );
 
     if (result.success) {

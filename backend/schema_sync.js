@@ -153,7 +153,8 @@ async function syncAssetTypeSchema(assetType, updatedSchema, sourceStationId) {
             const updateResult = await excel.updateStationInLocationFile(
               locFile.company, locFile.locationName,
               stationId,
-              updatedStation
+              updatedStation,
+              updatedSchema
             );
             
             if (updateResult.success) {
@@ -348,7 +349,8 @@ async function syncNewlyImportedStations(assetType, company, locationName, exist
         company,
         locationName,
         stationId,
-        updatedStation
+        updatedStation,
+        existingSchema
       );
       
       if (updateResult.success) {

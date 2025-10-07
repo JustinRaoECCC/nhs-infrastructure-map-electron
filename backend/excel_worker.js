@@ -76,7 +76,13 @@ function normalizeHeaderPair(sec, fld) {
   const f = String(fld || '').trim();
   const fl = f.toLowerCase();
   // Collapse synonyms into GI/Category (but NEVER "Structure Type")
-  if (fl === 'asset type' || fl === 'type') return { sec: 'General Information', fld: 'Category' };
+  if (fl === 'asset type' || fl === 'type' || fl === 'category') {
+    return { sec: 'General Information', fld: 'Category' };
+  }
+  // Canonicalize name to "Station Name"
+  if (['site name','station name','name'].includes(fl)) {
+    return { sec: 'General Information', fld: 'Station Name' };
+  }
   if (isGIAnchorName(f)) return { sec: 'General Information', fld: f };
   // If section is blank for a non-GI field, force "Extra Information"
   return { sec: s || giSectionForFieldName(f), fld: f };
@@ -1120,7 +1126,7 @@ async function writeLocationRows(company, location, sheetName, sections, headers
   // If the parsed sheet had no meaningful section headers, create:
   //   - "General Information" for the 7 core fields (see giFields)
   //   - "Extra Information" for everything else
-  const giFields = ['Station ID','Category','Site Name','Province','Latitude','Longitude','Status'];
+  const giFields = ['Station ID','Category','Station Name','Province','Latitude','Longitude','Status'];
   const isUnsectioned = !sections?.some(s => String(s || '').trim()) || (curSecs.every(s => !String(s || '').trim()));
   if (isUnsectioned && Array.isArray(headers) && headers.length) {
     curSecs = headers.map(h => {
@@ -1432,7 +1438,7 @@ async function setAssetTypeColorForCompanyLocation(assetType, company, location,
   return { success: true };
 }
 
-async function updateStationInLocationFile(company, locationName, stationId, updatedRowData) {
+async function updateStationInLocationFile(company, locationName, stationId, updatedRowData, schema = null) {
   try {
     await ensureLookupsReady();
     const companyDir = getCompanyDir(company);
@@ -1481,7 +1487,7 @@ async function updateStationInLocationFile(company, locationName, stationId, upd
         
         if (String(currentStationId).trim() === String(stationId).trim()) {
           // Found the station row - update it
-          await updateStationRow(ws, row, r, updatedRowData, twoRowHeader);
+          await updateStationRow(ws, row, r, updatedRowData, twoRowHeader, schema);
           updated = true;
           break;
         }
@@ -1504,7 +1510,7 @@ async function updateStationInLocationFile(company, locationName, stationId, upd
   }
 }
 
-async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHeader) {
+async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHeader, schema = null) {
   // Get current header structure
   let headerRowNum = twoRowHeader ? 2 : 1;
   let sectionRowNum = twoRowHeader ? 1 : null;
@@ -1522,109 +1528,302 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
   
   let maxCol = worksheet.actualColumnCount || headerRow.cellCount || 0;
   
-  // Build maps of existing headers
-  const existingHeaders = [];
-  const existingSections = [];
-  
+  // Build a map of current values from this row - USE ONLY COMPOSITE KEYS
+  const currentValues = new Map();
   for (let c = 1; c <= maxCol; c++) {
-    const headerText = takeText(headerRow.getCell(c));
-    const sectionText = sectionRow ? takeText(sectionRow.getCell(c)) : '';
-    existingHeaders.push(headerText);
-    existingSections.push(sectionText);
+    const section = sectionRow ? takeText(sectionRow.getCell(c)) : '';
+    const field = takeText(headerRow.getCell(c));
+    if (!field) continue;
+    
+    const compositeKey = section ? `${section} – ${field}`.toLowerCase() : field.toLowerCase();
+    const value = row.getCell(c).value;
+    
+    currentValues.set(compositeKey, value);
   }
 
-  // Create a map of composite keys to column indices for existing columns
-  const columnMap = new Map();
-  existingHeaders.forEach((header, index) => {
-    if (!header) return;
-    const section = existingSections[index] || giSectionForFieldName(header);
-    const compositeKey = section ? `${section} – ${header}` : header;
-    columnMap.set(compositeKey.toLowerCase(), index + 1); // Excel columns are 1-indexed
-    columnMap.set(header.toLowerCase(), index + 1); // Also map plain header
-  });
+  // DEBUG: Log for station 08HB023 (second in sync)
+  const stationIdCell = row.getCell(1);
+  let debugStationId = null;
+  for (let c = 1; c <= 5; c++) {
+    const cellVal = String(row.getCell(c).value || '').trim();
+    if (cellVal && cellVal.match(/^\d+[A-Z]+\d+$/)) {
+      debugStationId = cellVal;
+      break;
+    }
+  }
+  if (debugStationId === '08HB023') {
+    console.log('[DEBUG 08HB023] === BEFORE SCHEMA APPLY ===');
+    console.log('[DEBUG 08HB023] currentValues map (first 10):', 
+      Array.from(currentValues.entries()).slice(0, 10));
+    console.log('[DEBUG 08HB023] Current header row values (first 15):', 
+      Array.from({length: 15}, (_, i) => takeText(headerRow.getCell(i + 1))));
+    console.log('[DEBUG 08HB023] Current section row values (first 15):', 
+      sectionRow ? Array.from({length: 15}, (_, i) => takeText(sectionRow.getCell(i + 1))) : 'N/A');
+    console.log('[DEBUG 08HB023] schema exists?:', !!schema);
+    console.log('[DEBUG 08HB023] schema.sections exists?:', !!(schema && schema.sections));
+    console.log('[DEBUG 08HB023] schema.fields exists?:', !!(schema && schema.fields));
+  }
 
-  // Track new columns that need to be added
-  const newColumns = [];
-  
-  // Update existing cells and identify new columns
-  Object.entries(updatedData).forEach(([key, value]) => {
-    const keyLower = key.toLowerCase();
-    let columnIndex = columnMap.get(keyLower);
+
+  if (schema && schema.sections && schema.fields && schema.sections.length > 0) {
+
+    if (debugStationId === '08HB023') {
+      console.log('[DEBUG 08HB023] === ENTERED SCHEMA BLOCK ===');
+    }
+
+    // Schema-based reconstruction: rebuild the ENTIRE row in schema order
     
-    // If not found by exact match, try variations
-    if (!columnIndex) {
-
-      // Try mapping standard field names
-      const fieldMappings = {
-            'station id': ['stationid', 'id'],
-            'category': ['asset type', 'type'],
-            'asset_type': ['category', 'asset type', 'type'], // normalize to Category
-            'site name': ['name', 'station name'],
-            'station name': ['site name', 'name'],
-            'province': ['location', 'state', 'region'],
-            'latitude': ['lat', 'y'],
-            'longitude': ['long', 'lng', 'lon', 'x'],
-            'status': []
-          };
+    // Find the last GI column
+    const giFields = ['station id', 'stationid', 'id', 'category', 'site name', 
+                      'station name', 'name', 'province', 'location', 'latitude', 
+                      'lat', 'longitude', 'lon', 'status'];
+    
+    let lastGICol = 0;
+    for (let c = 1; c <= maxCol; c++) {
+      const section = sectionRow ? takeText(sectionRow.getCell(c)).toLowerCase() : '';
+      const field = takeText(headerRow.getCell(c)).toLowerCase();
       
-      for (const [standardField, alternatives] of Object.entries(fieldMappings)) {
-        if (keyLower === standardField) {
-          columnIndex = columnMap.get(standardField);
-          if (!columnIndex) {
-            for (const alt of alternatives) {
-              columnIndex = columnMap.get(alt);
-              if (columnIndex) break;
-            }
+      if (section === 'general information' || giFields.includes(field)) {
+        lastGICol = c;
+      }
+    }
+    
+    if (debugStationId === '08HB023') {
+      console.log('[DEBUG 08HB023] lastGICol calculated as:', lastGICol);
+      console.log('[DEBUG 08HB023] maxCol:', maxCol);
+      console.log('[DEBUG 08HB023] Field at lastGICol:', takeText(headerRow.getCell(lastGICol)));
+      console.log('[DEBUG 08HB023] Section at lastGICol:', takeText(sectionRow.getCell(lastGICol)));
+    }
+
+    // Define field synonym mappings for GI fields
+    const fieldSynonyms = {
+      'station id': ['stationid', 'id', 'station id'],
+      'category': ['asset type', 'type', 'category'],
+      'site name': ['station name', 'name', 'site name'],
+      'station name': ['site name', 'name', 'station name'],
+      'province': ['location', 'state', 'region', 'province'],
+      'latitude': ['lat', 'y', 'latitude'],
+      'longitude': ['long', 'lng', 'lon', 'x', 'longitude'],
+      'status': ['status']
+    };
+    
+    // Helper to find a value in updatedData considering synonyms
+    function findValueWithSynonyms(field, section) {
+      const fieldLower = field.toLowerCase();
+      const compositeKey = section ? `${section} – ${field}` : field;
+      
+      // Try exact match first
+      let value = updatedData[compositeKey] || updatedData[field];
+      if (value !== undefined) return value;
+      
+      // Try synonyms
+      for (const [canonical, synonyms] of Object.entries(fieldSynonyms)) {
+        if (synonyms.includes(fieldLower)) {
+          // Try all synonyms with and without section prefix
+          for (const syn of synonyms) {
+            const synComposite = section ? `${section} – ${syn}` : syn;
+            const synCapitalized = syn.charAt(0).toUpperCase() + syn.slice(1);
+            const synCompositeCapitalized = section ? `${section} – ${synCapitalized}` : synCapitalized;
+            
+            value = updatedData[synComposite] || updatedData[syn] || 
+                    updatedData[synCompositeCapitalized] || updatedData[synCapitalized];
+            if (value !== undefined) return value;
           }
-          break;
+          // Try canonical form
+          const canonicalCapitalized = canonical.split(' ').map(w => 
+            w.charAt(0).toUpperCase() + w.slice(1)
+          ).join(' ');
+          const canonicalComposite = section ? `${section} – ${canonicalCapitalized}` : canonicalCapitalized;
+          value = updatedData[canonicalComposite] || updatedData[canonicalCapitalized] ||
+                  updatedData[canonical];
+          if (value !== undefined) return value;
         }
       }
+      
+      return undefined;
     }
-
-    if (columnIndex) {
-      // Update existing column
-      row.getCell(columnIndex).value = value || '';
-    } else {
-      // This is a new column
-      newColumns.push({ key, value: value || '' });
-    }
-  });
-
-  // Add new columns if any
-  if (newColumns.length > 0) {
-    const startCol = maxCol + 1;
     
-    newColumns.forEach((newCol, index) => {
-      const colIndex = startCol + index;
+    // Update GI fields from updatedData if they exist
+    for (let c = 1; c <= lastGICol; c++) {
+      const section = sectionRow ? takeText(sectionRow.getCell(c)) : '';
+      const field = takeText(headerRow.getCell(c));
+      if (!field) continue;
       
-      // Parse section and field from composite key
-      let section = 'Extra Information';
-      let field = newCol.key;
-      if (newCol.key.includes(' – ')) {
-        [section, field] = newCol.key.split(' – ', 2);
-      } else {
-        // Normalize GI section for common fields (but NOT "Structure Type")
-        const lcKey = String(field).trim().toLowerCase();
-        if ([
-          'category','asset_type','station id','stationid','id',
-          'site name','station name','name',
-          'province','location','state','region',
-          'latitude','lat','y','longitude','long','lng','lon','x',
-          'status'
-        ].includes(lcKey)) {
-          section = 'General Information';
-          if (lcKey === 'asset_type') field = 'Category';
+      const value = findValueWithSynonyms(field, section);
+      if (value !== undefined) {
+        row.getCell(c).value = value;
+      }
+    }
+
+    // --- SNAPSHOT OLD POST-GI HEADER (for remapping all rows) -------------
+    const oldSecs = []; const oldFlds = []; const oldKeys = [];
+    for (let c = lastGICol + 1; c <= maxCol; c++) {
+      const s = sectionRow ? takeText(sectionRow.getCell(c)) : '';
+      const f = takeText(headerRow.getCell(c));
+      oldSecs.push(s);
+      oldFlds.push(f);
+      oldKeys.push(s ? `${s} – ${f}` : f);
+    }
+    function buildRowMap(r) {
+      const m = new Map();
+      const targetRow = worksheet.getRow(r);
+      for (let i = 0; i < oldKeys.length; i++) {
+        const key = (oldKeys[i] || '').toLowerCase();
+        if (!key) continue;
+        const val = targetRow.getCell(lastGICol + 1 + i).value;
+        if (val !== undefined && val !== null && String(val) !== '') {
+          m.set(key, val);
+          // also index by field-only to be forgiving
+          const fldOnly = (oldFlds[i] || '').toLowerCase();
+          if (fldOnly) m.set(fldOnly, val);
         }
       }
+      return m;
+    }
+    
+    // CRITICAL FIX: Build new structure in arrays FIRST, then apply to Excel
+    // This prevents ExcelJS cell reference issues when modifying while reading
+    const newSections = [];
+    const newFields = [];
+    const newValues = [];
+    
+    // Build new column structure from schema
+    for (let i = 0; i < schema.fields.length; i++) {
+      const section = schema.sections[i];
+      const field = schema.fields[i];
       
-      // Add headers
-      // After upgrade above, we always have twoRowHeader=true here
-      worksheet.getRow(1).getCell(colIndex).value = section || 'Extra Information';
-      worksheet.getRow(2).getCell(colIndex).value = field;
+      // Skip General Information fields - they're already handled above
+      if (section.toLowerCase() === 'general information') continue;
       
-      // Add the value to the current row
-      row.getCell(colIndex).value = newCol.value;
+      // CRITICAL: Use ONLY composite key for lookup to avoid collisions
+      const compositeKey = `${section} – ${field}`.toLowerCase();
+      
+      // Get value: first from updatedData (try various forms), then from currentValues (composite key ONLY)
+      let value = updatedData[`${section} – ${field}`] || updatedData[field];
+      if (value === undefined) {
+        // ONLY use composite key to avoid getting wrong field's value
+        value = currentValues.get(compositeKey) || '';
+      }
+      
+      newSections.push(section);
+      newFields.push(field);
+      newValues.push(value);
+    }
+
+    // DEBUG: Log what we're about to write
+    if (debugStationId === '08HB023') {
+      console.log('[DEBUG 08HB023] === ABOUT TO WRITE ===');
+      console.log('[DEBUG 08HB023] lastGICol:', lastGICol);
+      console.log('[DEBUG 08HB023] newFields (first 10):', newFields.slice(0, 10));
+      console.log('[DEBUG 08HB023] newValues (first 10):', newValues.slice(0, 10));
+      console.log('[DEBUG 08HB023] Schema fields (first 10):', schema.fields.slice(0, 10));
+      console.log('[DEBUG 08HB023] Writing to columns starting at:', lastGICol + 1);
+    }  
+
+    // Now apply everything at once - clear old columns and write new structure
+    // Clear everything AFTER GI (headers + current row)
+    for (let c = lastGICol + 1; c <= maxCol; c++) {
+      if (sectionRow) sectionRow.getCell(c).value = null;
+      headerRow.getCell(c).value = null;
+      row.getCell(c).value = null;
+    }
+    
+    // Write new structure starting after GI (headers + current row)
+    for (let i = 0; i < newFields.length; i++) {
+      const colIndex = lastGICol + 1 + i;
+      if (sectionRow) sectionRow.getCell(colIndex).value = newSections[i];
+      headerRow.getCell(colIndex).value = newFields[i];
+      row.getCell(colIndex).value = newValues[i];
+    }
+
+    // --- REMAP **ALL** DATA ROWS TO THE NEW HEADER ORDER -------------------
+    const dataStart = headerRowNum + 1;
+    const lastRow   = worksheet.actualRowCount || worksheet.rowCount || headerRowNum;
+    const newSpan   = newFields.length;
+    const newMax    = lastGICol + newSpan;
+
+    // make sure we blank any extra trailing columns for all rows
+    function clearAfterGi(targetRow) {
+      for (let c = lastGICol + 1; c <= Math.max(maxCol, newMax); c++) {
+        targetRow.getCell(c).value = null;
+      }
+    }
+
+    for (let r = dataStart; r <= lastRow; r++) {
+      const targetRow = worksheet.getRow(r);
+      const map = buildRowMap(r);
+      clearAfterGi(targetRow);
+      for (let i = 0; i < newFields.length; i++) {
+        const sec = newSections[i] || '';
+        const fld = newFields[i] || '';
+        const composite = (sec ? `${sec} – ${fld}` : fld).toLowerCase();
+        let v = map.get(composite);
+        if (v === undefined) v = map.get(String(fld).toLowerCase()); // field-only fallback
+        targetRow.getCell(lastGICol + 1 + i).value = v ?? '';
+      }
+    }
+    
+    // DEBUG: Log after writing
+    if (debugStationId === '08HB023') {
+      console.log('[DEBUG 08HB023] === AFTER WRITE ===');
+      console.log('[DEBUG 08HB023] Row data values (first 20 cols):', 
+        Array.from({length: 20}, (_, i) => row.getCell(i + 1).value));
+      console.log('[DEBUG 08HB023] Header row values (first 20):', 
+        Array.from({length: 20}, (_, i) => takeText(headerRow.getCell(i + 1))));
+    }
+
+  } else {
+    // No schema: fallback to old append-at-end behavior
+    const columnMap = new Map();
+    for (let c = 1; c <= maxCol; c++) {
+      const section = sectionRow ? takeText(sectionRow.getCell(c)) : '';
+      const field = takeText(headerRow.getCell(c));
+      if (!field) continue;
+      
+      const compositeKey = section ? `${section} – ${field}` : field;
+      columnMap.set(compositeKey.toLowerCase(), c);
+      columnMap.set(field.toLowerCase(), c);
+
+      // Alias GI name and category synonyms to the same column index
+      const f = field.toLowerCase();
+      if (['station name','site name','name'].includes(f)) {
+        ['station name','site name','name'].forEach(k => columnMap.set(k, c));
+      }
+      if (['category','asset type','type'].includes(f)) {
+        ['category','asset type','type'].forEach(k => columnMap.set(k, c));
+      }
+
+    }
+
+    const newColumns = [];
+    
+    Object.entries(updatedData).forEach(([key, value]) => {
+      const keyLower = key.toLowerCase();
+      let columnIndex = columnMap.get(keyLower);
+      
+      if (columnIndex) {
+        row.getCell(columnIndex).value = value || '';
+      } else {
+        newColumns.push({ key, value: value || '' });
+      }
     });
+
+    if (newColumns.length > 0) {
+      const startCol = maxCol + 1;
+      newColumns.forEach((newCol, index) => {
+        const colIndex = startCol + index;
+        let section = 'Extra Information';
+        let field = newCol.key;
+        
+        if (newCol.key.includes(' – ')) {
+          [section, field] = newCol.key.split(' – ', 2);
+        }
+        
+        if (sectionRow) sectionRow.getCell(colIndex).value = section;
+        headerRow.getCell(colIndex).value = field;
+        row.getCell(colIndex).value = newCol.value;
+      });
+    }
   }
 }
 
