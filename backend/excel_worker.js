@@ -1452,19 +1452,11 @@ async function saveFundingSettingsForAssetType(company, location, assetType, set
   
   await wb.xlsx.readFile(filePath);
   
-  // Find worksheets that contain this asset type
+  // Iterate worksheets; match rows by Category field rather than brittle sheet-name parsing
   for (const ws of wb.worksheets) {
     if (!ws || ws.rowCount < 2) continue;
-    
-    // Check if this sheet is for our asset type
-    const sheetName = ws.name;
-    const sheetParts = sheetName.split(' ');
-    
-    // Extract asset type from sheet name (everything except last word which is location)
-    if (sheetParts.length >= 2) {
-      const sheetAssetType = sheetParts.slice(0, -1).join(' ');
-      if (sheetAssetType.toLowerCase() !== assetType.toLowerCase()) continue;
-    }
+    // Do not filter by sheet name; some sheets include suffixes like "Repairs".
+    // We'll rely on the Category/Asset Type column to target the correct rows.
     
     // Ensure funding section exists
     await ensureFundingSection(wb, ws);

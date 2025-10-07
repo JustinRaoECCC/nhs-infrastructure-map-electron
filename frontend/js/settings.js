@@ -310,19 +310,7 @@
     const fundingHasChanges = window.fundingSettings && window.fundingSettings.hasChanges();
 
 
-    // Always report "Saved changes" even if nothing changed
-    if (!entries.length && !statusChanged.length && state.togglesChanged.size === 0 && !linkHasChanges) {
-      if (status) {
-        status.textContent = 'Saved changes';
-        // auto-clear after 3s
-        if (state.statusTimer) clearTimeout(state.statusTimer);
-        state.statusTimer = setTimeout(() => {
-          if (status) status.textContent = '';
-          state.statusTimer = null;
-        }, 3000);
-      }
-      return;
-    }
+    // Do not early-return when nothing changed; always run save workflow
 
     saveBtn.disabled = true;
     if (cancelBtn) cancelBtn.disabled = true;
