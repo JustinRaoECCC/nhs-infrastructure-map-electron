@@ -1,6 +1,7 @@
-// frontend/js/optimization.js (COMPLETE REWRITE)
+// frontend/js/optimization.js (UPDATED)
 document.addEventListener('DOMContentLoaded', () => {
 
+  // ───────────────────────────────── helpers for autocomplete wiring ─────────────────────────────────
   const dashPlaceholder    = document.getElementById('dashboardContentContainer');
   const mapContainer       = document.getElementById('mapContainer');
   const rightPanel         = document.getElementById('rightPanel');
@@ -13,6 +14,214 @@ document.addEventListener('DOMContentLoaded', () => {
       showOptimization();
     });
     navOpt._wired = true;
+  }
+
+  // Store available field names for autocomplete
+  let availableFieldNames = [];
+  let availableParameterNames = [];
+  let availableAllNames = [];
+
+  function uniqCaseInsensitive(arr) {
+    const seen = new Set();
+    const out = [];
+    for (const s of arr || []) {
+      const key = String(s || '').toLowerCase();
+      if (!seen.has(key)) { seen.add(key); out.push(s); }
+    }
+    return out;
+  }
+
+  async function loadAvailableFields() {
+    try {
+      // Get all station data to extract field names
+      const stations = await window.electronAPI.getStationData();
+      const fieldSet = new Set();
+      
+      // Extract all unique field names from station data
+      if (stations && stations.length > 0) {
+        stations.forEach(station => {
+          Object.keys(station).forEach(key => {
+            // Add both plain field names and section-field combinations
+            fieldSet.add(key);
+            // If it's a section-field combination, also add the field part
+            if (key.includes(' – ')) {
+              const field = key.split(' – ')[1];
+              fieldSet.add(field);
+            }
+          });
+        });
+      }
+
+      // Get all repairs to extract repair-specific fields
+      const repairs = await window.electronAPI.getAllRepairs();
+      if (repairs && repairs.length > 0) {
+        repairs.forEach(repair => {
+          Object.keys(repair).forEach(key => {
+            fieldSet.add(key);
+          });
+        });
+      }
+
+      availableFieldNames = Array.from(fieldSet).sort();
+
+      // Load existing parameter names for autocomplete
+      const params = await window.electronAPI.getAlgorithmParameters();
+      const paramSet = new Set();
+      params.forEach(p => {
+        if (p.parameter) paramSet.add(p.parameter);
+      });
+      
+      // Load fixed parameters too
+      const fixedParams = await window.electronAPI.getFixedParameters();
+      fixedParams.forEach(p => {
+        if (p.name) paramSet.add(p.name);
+      });
+
+      availableParameterNames = Array.from(paramSet).sort();
+
+      // UNION: field names + parameter names (case-insensitive unique)
+      availableAllNames = uniqCaseInsensitive([...availableFieldNames, ...availableParameterNames]);
+      
+    } catch (e) {
+      console.error('Failed to load available fields:', e);
+    }
+  }
+
+  // Remove any open suggestion lists
+  function _clearAutocompleteLists() {
+    document.querySelectorAll('.autocomplete-items').forEach(n => n.remove());
+  }
+
+  // Replace an input with a clean clone (preserving value/id/attrs), returning the clone
+  function _cloneInput(input) {
+    if (!input) return input;
+    const val = input.value;
+    const clone = input.cloneNode(true);
+    input.parentNode.replaceChild(clone, input);
+    clone.value = val;
+    return clone;
+  }
+
+  // Apply autocomplete to an input, first clearing old listeners by cloning
+  function applyAutocomplete(input, suggestions) {
+    if (!input) return input;
+    _clearAutocompleteLists();
+    const clone = _cloneInput(input);
+    setupAutocomplete(clone, suggestions);
+    return clone;
+  }
+
+  // Explicitly remove autocomplete (clone without re-wiring)
+  function unwireAutocomplete(input) {
+    if (!input) return input;
+    _clearAutocompleteLists();
+    return _cloneInput(input);
+  }
+
+  // ───────────────────────────────── end helpers ─────────────────────────────────
+
+  // Autocomplete functionality
+  function setupAutocomplete(input, suggestions) {
+    let currentFocus = -1;
+    
+    input.addEventListener('input', function() {
+      closeAllLists();
+      if (!this.value) return;
+      
+      const val = this.value.toLowerCase();
+      const listDiv = document.createElement('div');
+      listDiv.setAttribute('class', 'autocomplete-items');
+      listDiv.style.position = 'absolute';
+      listDiv.style.top = '100%';
+      listDiv.style.left = '0';
+      listDiv.style.right = '0';
+      listDiv.style.maxHeight = '200px';
+      listDiv.style.overflowY = 'auto';
+      listDiv.style.background = 'white';
+      listDiv.style.border = '1px solid #d4d4d4';
+      listDiv.style.borderTop = 'none';
+      listDiv.style.zIndex = '99';
+      
+      this.parentNode.style.position = 'relative';
+      this.parentNode.appendChild(listDiv);
+      
+      let count = 0;
+      for (let suggestion of suggestions) {
+        if (suggestion.toLowerCase().includes(val) && count < 10) {
+          const itemDiv = document.createElement('div');
+          itemDiv.style.padding = '10px';
+          itemDiv.style.cursor = 'pointer';
+          itemDiv.style.backgroundColor = '#fafafa';
+          
+          // Highlight matching part
+          const matchIndex = suggestion.toLowerCase().indexOf(val);
+          const beforeMatch = suggestion.substr(0, matchIndex);
+          const match = suggestion.substr(matchIndex, val.length);
+          const afterMatch = suggestion.substr(matchIndex + val.length);
+          
+          itemDiv.innerHTML = beforeMatch + '<strong>' + match + '</strong>' + afterMatch;
+          itemDiv.addEventListener('click', function() {
+            input.value = suggestion;
+            closeAllLists();
+          });
+          itemDiv.addEventListener('mouseenter', function() {
+            removeActive(listDiv.getElementsByTagName('div'));
+            this.classList.add('autocomplete-active');
+          });
+          
+          listDiv.appendChild(itemDiv);
+          count++;
+        }
+      }
+    });
+    
+    input.addEventListener('keydown', function(e) {
+      let items = this.parentNode.querySelector('.autocomplete-items');
+      if (items) items = items.getElementsByTagName('div');
+      
+      if (e.keyCode === 40) { // Down arrow
+        currentFocus++;
+        addActive(items);
+      } else if (e.keyCode === 38) { // Up arrow
+        currentFocus--;
+        addActive(items);
+      } else if (e.keyCode === 13) { // Enter
+        e.preventDefault();
+        if (currentFocus > -1 && items) {
+          items[currentFocus].click();
+        }
+      } else if (e.keyCode === 27) { // Escape
+        closeAllLists();
+      }
+    });
+    
+    function addActive(items) {
+      if (!items) return;
+      removeActive(items);
+      if (currentFocus >= items.length) currentFocus = 0;
+      if (currentFocus < 0) currentFocus = items.length - 1;
+      items[currentFocus].classList.add('autocomplete-active');
+    }
+    
+    function removeActive(items) {
+      for (let item of items) {
+        item.classList.remove('autocomplete-active');
+      }
+    }
+    
+    function closeAllLists() {
+      const items = document.getElementsByClassName('autocomplete-items');
+      for (let item of items) {
+        item.parentNode.removeChild(item);
+      }
+      currentFocus = -1;
+    }
+    
+    document.addEventListener('click', function(e) {
+      if (e.target !== input) {
+        closeAllLists();
+      }
+    });
   }
 
   function resetOptimizationViews() {
@@ -44,6 +253,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     dashPlaceholder.style.display = 'block';
     resetOptimizationViews();
+    
+    // Load available fields for autocomplete
+    await loadAvailableFields();
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -72,7 +284,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const cancelParamBtn     = document.querySelector('#cancelParamBtn');
     const saveParamBtn       = document.querySelector('#saveParamBtn');
     const paramNameInput     = document.querySelector('#paramNameInput');
-    const paramDataSource    = document.querySelector('#paramDataSource');
     const paramConditionSel  = document.querySelector('#paramConditionSelect');
     const paramMaxWeightInp  = document.querySelector('#paramMaxWeight');
     const addOptionBtn       = document.querySelector('#addOptionBtn');
@@ -88,14 +299,12 @@ document.addEventListener('DOMContentLoaded', () => {
       el.style.color = sum === 100 ? '' : 'red';
     }
 
-    function makeDisplayRow({ parameter, data_source, condition, max_weight, options }) {
+    function makeDisplayRow({ parameter, condition, max_weight, options }) {
       const row = document.createElement('div');
       row.className = 'param-row';
-      row.dataset.dataSource = data_source;
       row.dataset.maxWeight = max_weight;
       row.innerHTML = `
         <input type="text" class="param-name" value="${parameter}" disabled />
-        <span class="param-source">${data_source === 'station' ? 'Station' : 'Repair'}</span>
         <select class="param-condition" disabled>
           <option value="${condition}" selected>${condition}</option>
         </select>
@@ -164,11 +373,11 @@ document.addEventListener('DOMContentLoaded', () => {
     paramContainer.innerHTML = '';
     const grouped = {};
     (existing || []).forEach(e => {
-      const key = `${e.parameter}||${e.condition}||${e.data_source}`;
+      // Note: data_source no longer used, but keep for backward compatibility
+      const key = `${e.parameter}||${e.condition}`;
       if (!grouped[key]) {
         grouped[key] = {
           parameter: e.parameter,
-          data_source: e.data_source,
           condition: e.condition, 
           max_weight: e.max_weight, 
           options: []
@@ -188,12 +397,14 @@ document.addEventListener('DOMContentLoaded', () => {
     
     addBtn.addEventListener('click', () => {
       paramNameInput.value=''; 
-      paramDataSource.value='repair';
       paramConditionSel.value='IF'; 
       paramMaxWeightInp.value='3';
       optionsList.innerHTML=''; 
       optionsList.appendChild(makeOptionRow());
       addParamModal.style.display='flex';
+      
+      // Setup autocomplete for parameter name
+      setupAutocomplete(paramNameInput, availableFieldNames);
     });
     
     closeModalBtn.addEventListener('click', closeAddParamModal);
@@ -205,7 +416,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Save new parameter
     saveParamBtn.addEventListener('click', async () => {
       const parameter = paramNameInput.value.trim();
-      const dataSource = paramDataSource.value;
       const condition = paramConditionSel.value;
       const maxWeight = parseInt(paramMaxWeightInp.value, 10) || 1;
       const options = Array.from(optionsList.querySelectorAll('.option-row')).map(r => ({
@@ -217,7 +427,7 @@ document.addEventListener('DOMContentLoaded', () => {
       options.forEach(o => {
         rows.push({
           parameter, 
-          data_source: dataSource,
+          data_source: 'all', // Set to 'all' since we search everything now
           condition, 
           max_weight: maxWeight, 
           option: o.label, 
@@ -229,7 +439,6 @@ document.addEventListener('DOMContentLoaded', () => {
       
       paramContainer.appendChild(makeDisplayRow({
         parameter, 
-        data_source: dataSource,
         condition, 
         max_weight: maxWeight, 
         options
@@ -241,13 +450,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // Save edited parameter selections
     saveParamsBtn.addEventListener('click', async () => {
       const toSave = Array.from(paramContainer.querySelectorAll('.param-row')).flatMap(r => {
-        const dataSource = r.dataset.dataSource;
         const maxW    = parseInt(r.dataset.maxWeight, 10);
         const param   = r.querySelector('.param-name').value.trim();
         const cond    = r.querySelector('.param-condition').value;
         return Array.from(r.querySelectorAll('.param-options option')).map(opt => ({
           parameter: param,
-          data_source: dataSource,
+          data_source: 'all', // Always 'all' now
           condition: cond,
           max_weight: maxW, 
           option: opt.textContent, 
@@ -271,8 +479,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const saveFixedParamBtn = document.getElementById('saveFixedParamBtn');
     const fixedParamNameInput = document.getElementById('fixedParamNameInput');
     const fixedParamTypeSelect = document.getElementById('fixedParamTypeSelect');
-
-    const fixedParamDataSource = document.getElementById('fixedParamDataSource');
     const fixedParamMatchUsing = document.getElementById('fixedParamMatchUsing');
     const matchUsingContainer = document.getElementById('matchUsingContainer');
 
@@ -334,7 +540,6 @@ document.addEventListener('DOMContentLoaded', () => {
         row.dataset.cumulative = param.cumulative ? 'true' : 'false';
       }
 
-      const dataSourceLabel = param.data_source === 'station' ? 'Station Data' : 'Repair Fields';
       const years = param.years ? Object.keys(param.years).sort() : [];
       
       // Left side: Parameter info
@@ -342,7 +547,6 @@ document.addEventListener('DOMContentLoaded', () => {
         <div style="margin-bottom:1em;">
           <h4 style="margin:0 0 0.5em 0;">${param.name}</h4>
           <div><strong>Type:</strong> ${param.type}</div>
-          <div><strong>Data Source:</strong> ${dataSourceLabel}</div>
       `;
       
       if (param.type === 'geographical') {
@@ -370,7 +574,6 @@ document.addEventListener('DOMContentLoaded', () => {
         infoHTML += `<div style="margin-top:0.5em; padding:0.5em; background:#fff3cd; border-left:3px solid #ffc107;">
                       <strong>IF Condition:</strong><br/>
                       ${param.if_condition.field} ${param.if_condition.operator} "${param.if_condition.value}"
-                      <span style="font-size:0.85em; color:#666;">(${param.if_condition.data_source === 'station' ? 'Station' : 'Repair'})</span>
                     </div>`;
       }
 
@@ -398,7 +601,6 @@ document.addEventListener('DOMContentLoaded', () => {
           yearsHTML += `<label style="font-size:0.9em;">Budget:</label><br/>
                         <input type="number" class="year-value" value="${yearData.value || ''}" style="width:100%; padding:0.3em;"/>`;
         } else if (param.type === 'designation') {
-          // Designation probably doesn't change per year, just show it's active
           yearsHTML += `<div style="font-size:0.9em; color:#666;">Active this year</div>`;
         }
         
@@ -467,10 +669,6 @@ document.addEventListener('DOMContentLoaded', () => {
             paramData.years[newYear] = { values: paramData.values || [] };
           } else if (paramData.type === 'temporal' || paramData.type === 'monetary') {
             paramData.years[newYear] = { value: 0 };
-            // Preserve cumulative flag
-            if (paramData.cumulative !== undefined) {
-              // Already in paramData from extractParamData
-            }
           } else if (paramData.type === 'designation') {
             paramData.years[newYear] = {};
           }
@@ -529,9 +727,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const infoDiv = row.querySelector('div');
       Array.from(infoDiv.querySelectorAll('div')).forEach(div => {
         const text = div.textContent;
-        if (text.includes('Data Source:')) {
-          param.data_source = text.includes('Station Data') ? 'station' : 'repair';
-        } else if (text.includes('Scope:')) {
+        if (text.includes('Scope:')) {
           param.scope = text.replace('Scope:', '').trim();
         } else if (text.includes('Unit:') && type === 'temporal') {
           param.unit = text.replace('Unit:', '').trim();
@@ -570,15 +766,9 @@ document.addEventListener('DOMContentLoaded', () => {
       });
 
       // Extract IF condition if displayed
-      const ifCondDiv = Array.from(infoDiv.querySelectorAll('div')).find(d => 
-        d.textContent.includes('IF Condition:')
-      );
-      if (ifCondDiv) {
-        // Parse from displayed text - this is a fallback, actual data comes from dataset
-        const rowData = row.dataset.ifCondition;
-        if (rowData) {
-          param.if_condition = JSON.parse(rowData);
-        }
+      const rowData = row.dataset.ifCondition;
+      if (rowData) {
+        param.if_condition = JSON.parse(rowData);
       }
       
       return param;
@@ -596,7 +786,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Open add fixed parameter modal
     addFixedParamBtn.addEventListener('click', () => {
       fixedParamNameInput.value = '';
-      fixedParamDataSource.value = 'repair';
       fixedParamMatchUsing.value = 'parameter_name';
       fixedParamTypeSelect.value = 'geographical';
       geoValuesList.innerHTML = '';
@@ -616,7 +805,6 @@ document.addEventListener('DOMContentLoaded', () => {
       // Reset IF condition
       document.getElementById('enableIfCondition').checked = false;
       document.getElementById('ifConditionFields').style.display = 'none';
-      document.getElementById('ifDataSource').value = 'repair';
       document.getElementById('ifFieldName').value = '';
       document.getElementById('ifOperator').value = '=';
       document.getElementById('ifValue').value = '';
@@ -625,7 +813,51 @@ document.addEventListener('DOMContentLoaded', () => {
       geographicalFields.style.display = 'block';
       matchUsingContainer.style.display = 'none';
       addFixedParamModal.style.display = 'flex';
+
+      // Setup autocomplete based on match_using selection
+      setupFixedParamAutocomplete();
     });
+
+    function setupFixedParamAutocomplete() {
+      const type = fixedParamTypeSelect.value;
+      const matchUsing = fixedParamMatchUsing.value;
+      
+      // Always wire IF-condition field to FIELD names
+      const ifFieldInput = document.getElementById('ifFieldName');
+      if (ifFieldInput) applyAutocomplete(ifFieldInput, availableFieldNames);
+      // Inputs we may (un)wire
+      let fpName = document.getElementById('fixedParamNameInput');
+      let monField = document.getElementById('monetaryFieldName');
+      let desigField = document.getElementById('designationFieldName');
+
+      // 1) Geographical & Temporal → suggest on Fixed Parameter Name only (UNION of field + parameter names)
+      if (type === 'geographical' || type === 'temporal') {
+        if (fpName)  fpName  = applyAutocomplete(fpName, availableAllNames);
+        if (monField) monField = unwireAutocomplete(monField);
+        if (desigField) desigField = unwireAutocomplete(desigField);
+        return;
+      }
+
+      // 2) Monetary & Designation → suggest ONLY on selection from "Match Using"
+      if (type === 'monetary' || type === 'designation') {
+        const fieldInput = (type === 'monetary') ? monField : desigField;
+
+        if (matchUsing === 'field_name') {
+          // Wire Field Name to FIELD suggestions, unwire Fixed Parameter Name
+          if (fieldInput) applyAutocomplete(fieldInput, availableFieldNames);
+          if (fpName)     fpName = unwireAutocomplete(fpName);
+        } else {
+          // matchUsing === 'parameter_name' → wire Fixed Parameter Name to UNION suggestions
+          if (fpName)     fpName = applyAutocomplete(fpName, availableAllNames);
+          if (fieldInput) unwireAutocomplete(fieldInput);
+        }
+      }
+
+    }
+
+    // Update autocomplete when match using changes
+    fixedParamMatchUsing.addEventListener('change', setupFixedParamAutocomplete);
+    fixedParamTypeSelect.addEventListener('change', setupFixedParamAutocomplete);
 
     closeAddFixedParamModal.addEventListener('click', () => addFixedParamModal.style.display = 'none');
     cancelFixedParamBtn.addEventListener('click', () => addFixedParamModal.style.display = 'none');
@@ -637,7 +869,6 @@ document.addEventListener('DOMContentLoaded', () => {
     saveFixedParamBtn.addEventListener('click', () => {
       const name = fixedParamNameInput.value.trim();
       const type = fixedParamTypeSelect.value;
-      const dataSource = fixedParamDataSource.value;
       const matchUsing = fixedParamMatchUsing.value;
       
       if (!name) {
@@ -645,7 +876,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
-      const param = { name, type, data_source: dataSource };
+      const param = { name, type };
       const currentYear = new Date().getFullYear();
       param.years = {};
 
@@ -660,7 +891,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         param.if_condition = {
-          data_source: document.getElementById('ifDataSource').value,
           field: ifField,
           operator: document.getElementById('ifOperator').value,
           value: ifValue
@@ -722,6 +952,9 @@ document.addEventListener('DOMContentLoaded', () => {
       appAlert('Fixed parameters saved successfully');
     });
 
+    // Continue with the rest of the optimization functions...
+    // [REST OF THE CODE REMAINS THE SAME FROM HERE]
+    
     // ═══════════════════════════════════════════════════════════════════════
     // OPTIMIZATION 1 - Scoring
     // ═══════════════════════════════════════════════════════════════════════
@@ -1008,6 +1241,19 @@ document.addEventListener('DOMContentLoaded', () => {
     await loadFixedParameters();
     recalcPercentageTotal();
   }
+
+  // Add CSS for autocomplete
+  const style = document.createElement('style');
+  style.textContent = `
+    .autocomplete-active {
+      background-color: DodgerBlue !important;
+      color: #ffffff;
+    }
+    .autocomplete-items div:hover {
+      background-color: #e9e9e9;
+    }
+  `;
+  document.head.appendChild(style);
 
   window.__openOptimization = showOptimization;
 });

@@ -1,4 +1,4 @@
-// backend/algorithms.js (COMPLETE REWRITE)
+// backend/algorithms.js (UPDATED to search all fields)
 'use strict';
 
 const lookupsRepo = require('./lookups_repo');
@@ -25,7 +25,6 @@ function _buildParamIndex(parameters = []) {
     if (!pname) continue;
     const grp = (out[pname] ||= {
       max_weight: null,
-      data_source: row?.data_source || 'repair',
       options: Object.create(null),
       condition: row?.condition,
     });
@@ -93,13 +92,24 @@ function _matchOptionWeight(paramCfg, value) {
   return { matched: false, weight: 0 };
 }
 
-function findField(dataObj, fieldName) {
+// Search both repair and station data for a field
+function findFieldAnywhere(repair, station, fieldName) {
   const canon = _canon(fieldName);
-  for (const [key, value] of Object.entries(dataObj)) {
+  
+  // Search repair first
+  for (const [key, value] of Object.entries(repair)) {
     if (_canon(key) === canon) {
       return value;
     }
   }
+  
+  // Then search station
+  for (const [key, value] of Object.entries(station)) {
+    if (_canon(key) === canon) {
+      return value;
+    }
+  }
+  
   return null;
 }
 
@@ -112,8 +122,7 @@ async function _loadParams() {
 
 /**
  * OPTIMIZATION 1: Score and rank repairs using soft parameters
- * @param {{repairs: Array, station_data: Object, param_overall?: Object, parameters?: Array}} payload
- * @returns {{success: boolean, optimized_count: number, ranking: Array<Object>, notes: string}}
+ * Now searches across all fields regardless of data_source
  */
 async function optimizeWorkplan({ repairs = [], station_data = {}, param_overall = {}, parameters: paramsFromUI } = {}) {
   const parameters = Array.isArray(paramsFromUI) ? paramsFromUI : await _loadParams();
@@ -146,12 +155,9 @@ async function optimizeWorkplan({ repairs = [], station_data = {}, param_overall
     
     for (const pname of paramNames) {
       const cfg = pindex[pname];
-      const dataSource = cfg.data_source || 'repair';
       
-      // Get value from appropriate data source
-      const value = dataSource === 'station' 
-        ? findField(station, pname)
-        : findField(repair, pname);
+      // Search both repair and station data
+      const value = findFieldAnywhere(repair, station, pname);
       
       const { matched, weight } = _matchOptionWeight(cfg, value);
       const maxw = Number(cfg?.max_weight || 1);
@@ -216,7 +222,7 @@ async function optimizeWorkplan({ repairs = [], station_data = {}, param_overall
     success: true,
     optimized_count: results.length,
     ranking: results,
-    notes: 'Repairs scored using soft parameters with per-row re-normalization.'
+    notes: 'Repairs scored using soft parameters searching all fields.'
   };
 }
 
@@ -226,8 +232,6 @@ async function optimizeWorkplan({ repairs = [], station_data = {}, param_overall
 
 /**
  * Group scored repairs into trips by Trip Location and Access Type
- * @param {{scored_repairs: Array, station_data: Object}} payload
- * @returns {{success: boolean, trips: Array}}
  */
 async function groupRepairsIntoTrips({ scored_repairs = [], station_data = {} } = {}) {
   console.log('[groupRepairsIntoTrips] scored_repairs=', scored_repairs.length);
@@ -249,11 +253,12 @@ async function groupRepairsIntoTrips({ scored_repairs = [], station_data = {} } 
     const station = station_data[stationId] || {};
 
     // Get trip fields from station data
-    const tripLocation = findField(station, 'Trip Location') || 'Unknown';
-    const accessType = findField(station, 'Access Type') || 'Unknown';
-    const cityOfTravel = findField(station, 'City of Travel') || '';
-    const timeToSite = findField(station, 'Time to Site (hr)') || '';
-    const siteName = findField(station, 'Site Name') || findField(station, 'name') || '';
+    const tripLocation = findFieldAnywhere(repair, station, 'Trip Location') || 'Unknown';
+    const accessType = findFieldAnywhere(repair, station, 'Access Type') || 'Unknown';
+    const cityOfTravel = findFieldAnywhere(repair, station, 'City of Travel') || '';
+    const timeToSite = findFieldAnywhere(repair, station, 'Time to Site (hr)') || '';
+    const siteName = findFieldAnywhere(repair, station, 'Site Name') || 
+                     findFieldAnywhere(repair, station, 'name') || '';
 
     const tripKey = `${tripLocation}|||${accessType}`;
     
@@ -262,7 +267,7 @@ async function groupRepairsIntoTrips({ scored_repairs = [], station_data = {} } 
         trip_location: tripLocation,
         access_type: accessType,
         repairs: [],
-        stations: new Map() // Map<stationId, station_info>
+        stations: new Map()
       });
     }
 
@@ -331,17 +336,15 @@ async function groupRepairsIntoTrips({ scored_repairs = [], station_data = {} } 
 // ═══════════════════════════════════════════════════════════════════════════
 
 function checkIfCondition(repair, param, station_data) {
-  if (!param.if_condition) return true; // No IF condition means always apply
+  if (!param.if_condition) return true;
   
   const ifCond = param.if_condition;
-  const dataSource = ifCond.data_source || 'repair';
   const station = station_data[repair.station_id] || {};
   
-  const value = dataSource === 'station' 
-    ? findField(station, ifCond.field)
-    : findField(repair, ifCond.field);
+  // Search both repair and station for the field
+  const value = findFieldAnywhere(repair, station, ifCond.field);
   
-  if (!value) return false; // Field doesn't exist, IF fails
+  if (!value) return false;
   
   const valueStr = _canon(String(value));
   const targetStr = _canon(String(ifCond.value));
@@ -359,20 +362,15 @@ function checkIfCondition(repair, param, station_data) {
 }
 
 function checkGeographicalConstraint(repair, param, station_data) {
-  // First check IF condition
   if (!checkIfCondition(repair, param, station_data)) {
-    return true; // IF condition not met, so constraint doesn't apply (pass)
+    return true;
   }  
   
   const paramName = _canon(param.name);
   const allowedValues = (param.values || []).map(v => _canon(v));
-  
-  const dataSource = param.data_source || 'repair';
   const station = station_data[repair.station_id] || {};
   
-  const value = dataSource === 'station' 
-    ? findField(station, paramName)
-    : findField(repair, paramName);
+  const value = findFieldAnywhere(repair, station, paramName);
   
   if (!value) return false;
   
@@ -389,21 +387,17 @@ function checkTemporalConstraint(repair, param, station_data, year) {
   }  
   
   const paramName = _canon(param.name);
-  const dataSource = param.data_source || 'repair';
   const station = station_data[repair.station_id] || {};
   
-  const value = dataSource === 'station' 
-    ? findField(station, paramName)
-    : findField(repair, paramName);
+  const value = findFieldAnywhere(repair, station, paramName);
   
   if (!value) return false;
   
   const repairNum = _tryFloat(value);
   if (repairNum === null) return false;
   
-  // Get yearly constraint
   const yearConstraint = param.years && param.years[year];
-  if (!yearConstraint) return true; // No constraint for this year
+  if (!yearConstraint) return true;
   
   const constraintValue = _tryFloat(yearConstraint.value);
   if (constraintValue === null) return true;
@@ -429,21 +423,17 @@ function checkMonetaryConstraint(repair, param, station_data, year) {
   }  
   
   const fieldName = _canon(param.field_name);
-  const dataSource = param.data_source || 'repair';
   const station = station_data[repair.station_id] || {};
   
-  const value = dataSource === 'station' 
-    ? findField(station, fieldName)
-    : findField(repair, fieldName);
+  const value = findFieldAnywhere(repair, station, fieldName);
   
   if (!value) return false;
   
   const repairCost = _tryFloat(value);
   if (repairCost === null) return false;
   
-  // Get yearly budget
   const yearConstraint = param.years && param.years[year];
-  if (!yearConstraint) return true; // No constraint for this year
+  if (!yearConstraint) return true;
   
   const budget = _tryFloat(yearConstraint.value);
   if (budget === null) return true;
@@ -453,8 +443,6 @@ function checkMonetaryConstraint(repair, param, station_data, year) {
 
 /**
  * OPTIMIZATION 3: Assign trips to years based on fixed parameters
- * @param {{trips: Array, fixed_parameters: Array}} payload
- * @returns {{success: boolean, assignments: Object}}
  */
 async function assignTripsToYears({ trips = [], fixed_parameters = [] } = {}) {
   console.log('[assignTripsToYears] trips=', trips.length, 'fixed_parameters=', fixed_parameters.length);
@@ -488,9 +476,8 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [] } = {}) {
     };
   }
 
-  // Build station data map (needed for constraint checking)
+  // Build station data map
   const stationDataMap = {};
-  // This will be populated from the trips' repair data
   trips.forEach(trip => {
     trip.stations.forEach(station => {
       if (!stationDataMap[station.station_id]) {
@@ -509,15 +496,15 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [] } = {}) {
     
     for (const param of fixed_parameters) {
       if (param.type === 'monetary' && param.years && param.years[year]) {
-          const key = _canon(param.field_name);
-          yearlyBudgets[year][key] = {
+        const key = _canon(param.field_name);
+        yearlyBudgets[year][key] = {
           total: _tryFloat(param.years[year].value) || 0,
           used: 0,
           cumulative: !!param.cumulative
         };
       } else if (param.type === 'temporal' && param.years && param.years[year]) {
-          const key = _canon(param.name);
-          yearlyTemporal[year][key] = {
+        const key = _canon(param.name);
+        yearlyTemporal[year][key] = {
           total: _tryFloat(param.years[year].value) || 0,
           used: 0,
           cumulative: !!param.cumulative
@@ -548,13 +535,11 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [] } = {}) {
               break;
             }
           } else if (param.type === 'temporal' && !param.cumulative) {
-            // Only check per-repair if not cumulative
             if (!checkTemporalConstraint(originalRepair, param, stationDataMap, year)) {
               canAssign = false;
               break;
             }
           } else if (param.type === 'monetary' && !param.cumulative) {
-            // Only check per-repair if not cumulative
             if (!checkMonetaryConstraint(originalRepair, param, stationDataMap, year)) {
               canAssign = false;
               break;
@@ -576,24 +561,17 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [] } = {}) {
           const station = stationDataMap[stationId] || {};
           
           for (const param of fixed_parameters) {
-            if (!param.cumulative) continue; // Skip non-cumulative
-            // Only count when IF condition (if any) holds
+            if (!param.cumulative) continue;
             if (!checkIfCondition(originalRepair, param, stationDataMap)) continue;
             
             if (param.type === 'monetary') {
               const fieldName = _canon(param.field_name);
-              const dataSource = param.data_source || 'repair';
-              const value = dataSource === 'station' 
-                ? findField(station, fieldName)
-                : findField(originalRepair, fieldName);
+              const value = findFieldAnywhere(originalRepair, station, fieldName);
               const amount = _tryFloat(value) || 0;
               tripTotals[fieldName] = (tripTotals[fieldName] || 0) + amount;
             } else if (param.type === 'temporal') {
               const fieldName = _canon(param.name);
-              const dataSource = param.data_source || 'repair';
-              const value = dataSource === 'station' 
-                ? findField(station, fieldName)
-                : findField(originalRepair, fieldName);
+              const value = findFieldAnywhere(originalRepair, station, fieldName);
               const amount = _tryFloat(value) || 0;
               tripTotals[fieldName] = (tripTotals[fieldName] || 0) + amount;
             }
