@@ -236,15 +236,46 @@
     },
 
     async save() {
+      // Generic format validation helper: "number%Token-number%Token-..." and sum in [99,100]
+      function isValidFundingFormat(s) {
+        const str = String(s || '').trim();
+        if (!str) return true; // blank allowed (will auto-populate per station)
+        const parts = str.split('-').map(x => x.trim()).filter(Boolean);
+        if (!parts.length) return false;
+        let total = 0;
+        const seen = new Set();
+        for (const term of parts) {
+          const m = term.match(/^([0-9]+(?:\.[0-9]+)?)%(.+)$/);
+          if (!m) return false;
+          const pct = parseFloat(m[1]);
+          const tok = m[2].trim();
+          if (!tok || seen.has(tok)) return false;
+          seen.add(tok);
+          total += isFinite(pct) ? pct : 0;
+        }
+        return total >= 99 && total <= 100;
+      }
+
       const results = { success: true, updated: 0, failed: 0 };
-      
+
       // Process each change
       for (const [key, settings] of this.changes) {
         const parts = key.split('|');
         const company = parts[0];
         const location = parts[1];
         const assetType = parts[2];
-        
+
+        // Validate format for each provided field (allow blanks)
+        const vals = [settings.om, settings.capital, settings.decommission];
+        for (const v of vals) {
+          if (v !== undefined && v !== null && String(v).trim() !== '') {
+            if (!isValidFundingFormat(v)) {
+              appAlert('Invalid Funding Type Override format. Use percentages like 75%P-25%F that sum to 99–100%.');
+              return { success: false, updated: 0, failed: 1 };
+            }
+          }
+        }
+
         try {
           if (assetType) {
             // Asset-level setting - update only matching assets in this location

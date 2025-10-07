@@ -1,4 +1,4 @@
-// backend/algorithms.js (UPDATED to search all fields)
+// backend/algorithms.js
 'use strict';
 
 const lookupsRepo = require('./lookups_repo');

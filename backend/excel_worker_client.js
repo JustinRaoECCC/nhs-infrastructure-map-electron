@@ -113,4 +113,5 @@ module.exports = {
     call('saveFundingSettingsForAssetType', company, location, assetType, settings),
   getAllFundingSettings: (company) =>
     call('getAllFundingSettings', company),
+  normalizeFundingOverrides: () => call('normalizeFundingOverrides'),
 };

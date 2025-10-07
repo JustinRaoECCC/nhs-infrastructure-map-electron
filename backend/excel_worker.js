@@ -52,6 +52,111 @@ const REPAIRS_HEADERS = [
   'Days'
 ];
 
+// Funding helpers
+function parseFundingSplitTokens(splitStr) {
+  const raw = String(splitStr || '').trim();
+  if (!raw) return [];
+  return raw
+    .split('-')
+    .map(s => s.trim())
+    .filter(Boolean)
+    .map(tok => tok);
+}
+
+function formatEqualSplitForTokens(tokens) {
+  const n = Array.isArray(tokens) ? tokens.length : 0;
+  if (!n) return '';
+  // Use one decimal place and adjust last to hit 100 exactly
+  const base = Math.round((1000 / n)) / 10; // one decimal
+  const parts = new Array(n).fill(base);
+  let sum = parts.reduce((a, b) => a + b, 0);
+  // Adjust last to fix rounding drift
+  parts[n - 1] = Math.round((100 - (sum - parts[n - 1])) * 10) / 10;
+  return tokens.map((t, i) => `${parts[i]}%${t}`).join('-');
+}
+
+function validateFundingOverrideString(value, allowedTokens) {
+  const str = String(value || '').trim();
+  if (!str) return { ok: false, reason: 'Empty value' };
+  const allow = allowedTokens ? new Set(Array.from(allowedTokens).map(String)) : null;
+  const seen = new Set();
+  let sum = 0;
+  const terms = str.split('-').map(s => s.trim()).filter(Boolean);
+  if (!terms.length) return { ok: false, reason: 'No terms' };
+  for (const term of terms) {
+    const m = term.match(/^([0-9]+(?:\.[0-9]+)?)%(.+)$/);
+    if (!m) return { ok: false, reason: `Invalid term: ${term}` };
+    const pct = parseFloat(m[1]);
+    const tok = m[2].trim();
+    if (!tok) return { ok: false, reason: 'Empty token' };
+    if (seen.has(tok)) return { ok: false, reason: `Duplicate token: ${tok}` };
+    if (allow && !allow.has(tok)) return { ok: false, reason: `Unknown token: ${tok}` };
+    seen.add(tok);
+    sum += isFinite(pct) ? pct : 0;
+  }
+  if (sum < 99 || sum > 100) return { ok: false, reason: `Percent sum ${sum} out of range` };
+  return { ok: true };
+}
+
+let __globalFundingTokensCache = null;
+async function getGlobalFundingTokens() {
+  if (__globalFundingTokensCache) return __globalFundingTokensCache;
+  const tokens = new Set();
+  // Scan all company/location workbooks for "Funding Split" tokens
+  try {
+    ensureDir(COMPANIES_DIR);
+    const companies = fs.readdirSync(COMPANIES_DIR, { withFileTypes: true })
+      .filter(d => d.isDirectory()).map(d => d.name);
+    const _ExcelJS = getExcel();
+    for (const company of companies) {
+      const dir = getCompanyDir(company);
+      if (!fs.existsSync(dir)) continue;
+      const files = fs.readdirSync(dir).filter(f => f.endsWith('.xlsx') && !f.startsWith('~$'));
+      for (const f of files) {
+        const fp = path.join(dir, f);
+        const wb = new _ExcelJS.Workbook();
+        try { await wb.xlsx.readFile(fp); } catch (_) { continue; }
+        for (const ws of wb.worksheets) {
+          if (!ws || ws.rowCount < 2) continue;
+          const splitCol = findColumnByField(ws, 'Funding Split');
+          if (splitCol < 1) continue;
+          const lastRow = ws.actualRowCount || ws.rowCount || 2;
+          for (let r = 3; r <= lastRow; r++) {
+            const sv = takeText(ws.getRow(r).getCell(splitCol));
+            for (const t of parseFundingSplitTokens(sv)) tokens.add(t);
+          }
+        }
+      }
+    }
+  } catch (_) {}
+  __globalFundingTokensCache = tokens;
+  return tokens;
+}
+
+function findColumnByField(ws, targetFieldName) {
+  // Returns column index for a field name, tolerant of one/two-row headers
+  const row1 = ws.getRow(1);
+  const row2 = ws.getRow(2);
+  const maxCol = ws.actualColumnCount || Math.max(row1.cellCount || 0, row2.cellCount || 0);
+  const want = String(targetFieldName || '').trim().toLowerCase();
+  const seps = [' - ', ' – ', ' — ', '-', '–', '—'];
+  for (let c = 1; c <= maxCol; c++) {
+    const s1 = String(takeText(row1.getCell(c))).trim();
+    const s2 = String(takeText(row2.getCell(c))).trim();
+    if (s2) {
+      if (s2.toLowerCase() === want) return c;
+    } else if (s1) {
+      let fieldOnly = s1;
+      for (const sep of seps) {
+        const idx = s1.indexOf(sep);
+        if (idx >= 0) fieldOnly = s1.substring(idx + sep.length);
+      }
+      if (fieldOnly.trim().toLowerCase() === want) return c;
+    }
+  }
+  return -1;
+}
+
 // ─── GI normalization helpers ─────────────────────────────────────────────
 function isGIAnchorName(s) {
   const l = String(s || '').trim().toLowerCase();
@@ -1424,13 +1529,36 @@ async function saveFundingSettings(company, location, settings) {
 
     if (omCol < 0 && capitalCol < 0 && decommissionCol < 0) continue;
 
+    // Locate Funding Split column (per-station) and global tokens
+    const splitCol = findColumnByField(ws, 'Funding Split');
+    const allowedTokens = await getGlobalFundingTokens();
+
     // Update all data rows on this sheet
     const lastRow = ws.actualRowCount || ws.rowCount || 2;
     for (let r = 3; r <= lastRow; r++) {
       const dataRow = ws.getRow(r);
-      if ('om'           in settings && omCol          > 0) dataRow.getCell(omCol).value = settings.om ?? '';
-      if ('capital'      in settings && capitalCol     > 0) dataRow.getCell(capitalCol).value = settings.capital ?? '';
-      if ('decommission' in settings && decommissionCol> 0) dataRow.getCell(decommissionCol).value = settings.decommission ?? '';
+      // Parse this row's funding split tokens
+      const splitVal = splitCol > 0 ? takeText(dataRow.getCell(splitCol)) : '';
+      const tokens = parseFundingSplitTokens(splitVal);
+
+      // Helper to compute value to write (validate or auto-populate)
+      const decide = (incoming) => {
+        const v = String(incoming ?? '').trim();
+        if (!v) return formatEqualSplitForTokens(tokens);
+        const ok = validateFundingOverrideString(v, allowedTokens);
+        if (!ok.ok) throw new Error(`Invalid funding override "${v}" for split "${splitVal}": ${ok.reason}`);
+        return v;
+      };
+
+      if ('om' in settings && omCol > 0) {
+        dataRow.getCell(omCol).value = decide(settings.om);
+      }
+      if ('capital' in settings && capitalCol > 0) {
+        dataRow.getCell(capitalCol).value = decide(settings.capital);
+      }
+      if ('decommission' in settings && decommissionCol > 0) {
+        dataRow.getCell(decommissionCol).value = decide(settings.decommission);
+      }
     }
 
     touchedSheets++;
@@ -1489,6 +1617,10 @@ async function saveFundingSettingsForAssetType(company, location, assetType, set
       }
     }
     
+    // Locate per-row Funding Split column and global tokens
+    const splitCol = findColumnByField(ws, 'Funding Split');
+    const allowedTokens = await getGlobalFundingTokens();
+
     // Update rows that match the asset type
     const lastRow = ws.actualRowCount || ws.rowCount || 2;
     for (let r = 3; r <= lastRow; r++) {
@@ -1500,10 +1632,20 @@ async function saveFundingSettingsForAssetType(company, location, assetType, set
         if (rowAssetType.toLowerCase() !== assetType.toLowerCase()) continue;
       }
       
+      // Derive tokens for this row
+      const splitVal = splitCol > 0 ? takeText(dataRow.getCell(splitCol)) : '';
+      const tokens = parseFundingSplitTokens(splitVal);
+      const decide = (incoming) => {
+        const v = String(incoming ?? '').trim();
+        if (!v) return formatEqualSplitForTokens(tokens);
+        const ok = validateFundingOverrideString(v, allowedTokens);
+        if (!ok.ok) throw new Error(`Invalid funding override "${v}" for split "${splitVal}": ${ok.reason}`);
+        return v;
+      };
       // Update funding values
-      if (omCol > 0) dataRow.getCell(omCol).value = settings.om || '';
-      if (capitalCol > 0) dataRow.getCell(capitalCol).value = settings.capital || '';
-      if (decommissionCol > 0) dataRow.getCell(decommissionCol).value = settings.decommission || '';
+      if (omCol > 0) dataRow.getCell(omCol).value = decide(settings.om);
+      if (capitalCol > 0) dataRow.getCell(capitalCol).value = decide(settings.capital);
+      if (decommissionCol > 0) dataRow.getCell(decommissionCol).value = decide(settings.decommission);
     }
   }
   
@@ -1578,6 +1720,67 @@ async function getAllFundingSettings(company) {
   }
   
   return Object.fromEntries(result);;
+}
+
+// Scan all company/location files and auto-populate blank Funding Type Override Settings
+// values from each station's Funding Split. Also enforces header names for the section.
+async function normalizeFundingOverrides() {
+  ensureDir(COMPANIES_DIR);
+  const _ExcelJS = getExcel();
+  let filesTouched = 0;
+  const companies = fs.readdirSync(COMPANIES_DIR, { withFileTypes: true })
+    .filter(d => d.isDirectory())
+    .map(d => d.name);
+  for (const company of companies) {
+    const dir = getCompanyDir(company);
+    if (!fs.existsSync(dir)) continue;
+    const xlsx = fs.readdirSync(dir).filter(f => f.endsWith('.xlsx') && !f.startsWith('~$'));
+    for (const file of xlsx) {
+      const fp = path.join(dir, file);
+      const wb = new _ExcelJS.Workbook();
+      try { await wb.xlsx.readFile(fp); } catch (_) { continue; }
+      let anyChange = false;
+      for (const ws of wb.worksheets) {
+        if (!ws || ws.rowCount < 2) continue;
+        // Ensure two-row header
+        ensureTwoRowHeader(ws);
+        // Ensure funding section exists
+        await ensureFundingSection(wb, ws);
+        const row1 = ws.getRow(1), row2 = ws.getRow(2);
+        // Re-detect funding columns
+        let omCol=-1, capitalCol=-1, decommissionCol=-1;
+        const maxCol = ws.actualColumnCount || Math.max(row1.cellCount||0,row2.cellCount||0);
+        for (let c=1;c<=maxCol;c++){
+          const section = takeText(row1.getCell(c));
+          const field = takeText(row2.getCell(c));
+          if (section === 'Funding Type Override Settings') {
+            if (field === 'O&M') omCol = c;
+            else if (field === 'Capital') capitalCol = c;
+            else if (field === 'Decommission') decommissionCol = c;
+          }
+        }
+        // Enforce headers integrity
+        if (omCol>0) { row1.getCell(omCol).value = 'Funding Type Override Settings'; row2.getCell(omCol).value = 'O&M'; }
+        if (capitalCol>0) { row1.getCell(capitalCol).value = 'Funding Type Override Settings'; row2.getCell(capitalCol).value = 'Capital'; }
+        if (decommissionCol>0) { row1.getCell(decommissionCol).value = 'Funding Type Override Settings'; row2.getCell(decommissionCol).value = 'Decommission'; }
+
+        const splitCol = findColumnByField(ws, 'Funding Split');
+        const lastRow = ws.actualRowCount || ws.rowCount || 2;
+        for (let r=3;r<=lastRow;r++){
+          const dataRow = ws.getRow(r);
+          const splitVal = splitCol > 0 ? takeText(dataRow.getCell(splitCol)) : '';
+          const tokens = parseFundingSplitTokens(splitVal);
+          if (!tokens.length) continue;
+          const def = formatEqualSplitForTokens(tokens);
+          if (omCol>0 && !String(takeText(dataRow.getCell(omCol))).trim()) { dataRow.getCell(omCol).value = def; anyChange = true; }
+          if (capitalCol>0 && !String(takeText(dataRow.getCell(capitalCol))).trim()) { dataRow.getCell(capitalCol).value = def; anyChange = true; }
+          if (decommissionCol>0 && !String(takeText(dataRow.getCell(decommissionCol))).trim()) { dataRow.getCell(decommissionCol).value = def; anyChange = true; }
+        }
+      }
+      if (anyChange) { await wb.xlsx.writeFile(fp); filesTouched++; }
+    }
+  }
+  return { success: true, filesTouched };
 }
 
 
@@ -2865,6 +3068,7 @@ const handlers = {
   saveFundingSettings,
   saveFundingSettingsForAssetType,
   getAllFundingSettings,
+  normalizeFundingOverrides,
 };
 
 parentPort.on('message', async (msg) => {

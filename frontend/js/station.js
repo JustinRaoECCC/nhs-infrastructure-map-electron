@@ -417,6 +417,16 @@ function createEditableSection(sectionName, fields) {
   // ensure starts in non-editing state
   setSectionEditing(sectionDiv, false);
 
+  // Protect Funding Type Override Settings section schema: no rename/add/delete
+  if (String(sectionName).trim() === 'Funding Type Override Settings') {
+    // Lock section title
+    titleInput.readOnly = true;
+    titleInput.disabled = true;
+    // Hide add/delete controls
+    addFieldBtn.style.display = 'none';
+    deleteSectionBtn.style.display = 'none';
+  }
+
   return sectionDiv;
 }
 
@@ -443,6 +453,15 @@ function createEditableField(fieldName, value) {
   deleteBtn.textContent = '✕';
   deleteBtn.title = 'Delete Field';
   deleteBtn.addEventListener('click', () => deleteField(fieldDiv));
+  // If in protected Funding section, disable label edits and hide delete button
+  try {
+    const parentSectionName = fieldDiv.closest('.station-section')?.dataset?.sectionName || '';
+    if (parentSectionName === 'Funding Type Override Settings') {
+      labelInput.readOnly = true;
+      labelInput.disabled = true;
+      deleteBtn.style.display = 'none';
+    }
+  } catch (_) {}
 
   fieldDiv.appendChild(labelInput);
   fieldDiv.appendChild(valueInput);
@@ -710,6 +729,58 @@ async function saveStationChanges(assetType) {
         }
       }
     });
+
+    // Validate and auto-populate Funding Overrides based on per-station Funding Split
+    try {
+      const foSec = Array.from(container.querySelectorAll('.station-section'))
+        .find(sec => String(sec.dataset.sectionName || '').trim() === 'Funding Type Override Settings');
+      if (foSec) {
+        const splitKey = Object.keys(currentStationData || {}).find(k => /funding split/i.test(k));
+        const splitVal = splitKey ? String(currentStationData[splitKey] || '').trim() : '';
+        const tokens = splitVal ? splitVal.split('-').map(s => s.trim()).filter(Boolean) : [];
+        const makeDefault = () => {
+          const n = tokens.length;
+          if (!n) return '';
+          const base = Math.round((1000 / n)) / 10; // one decimal place
+          const parts = new Array(n).fill(base);
+          const sum = parts.reduce((a,b)=>a+b,0);
+          parts[n-1] = Math.round((100 - (sum - parts[n-1])) * 10) / 10;
+          return tokens.map((t,i)=>`${parts[i]}%${t}`).join('-');
+        };
+        const isValid = (val) => {
+          const s = String(val || '').trim();
+          if (!s) return false;
+          let total = 0;
+          const seen = new Set();
+          const terms = s.split('-').map(x=>x.trim()).filter(Boolean);
+          for (const term of terms) {
+            const m = term.match(/^([0-9]+(?:\.[0-9]+)?)%(.+)$/);
+            if (!m) return false;
+            const pct = parseFloat(m[1]);
+            const tok = m[2].trim();
+            if (!tok || seen.has(tok)) return false;
+            seen.add(tok);
+            total += isFinite(pct) ? pct : 0;
+          }
+          return total >= 99 && total <= 100;
+        };
+        let invalid = false;
+        foSec.querySelectorAll('.field-row .field-value-input').forEach(inp => {
+          const cur = String(inp.value || '').trim();
+          if (!cur) {
+            const def = makeDefault();
+            if (def) { inp.value = def; markUnsavedChanges(); }
+          } else if (!isValid(cur)) {
+            invalid = true;
+          }
+        });
+        if (invalid) {
+          throw new Error('Funding Type Override values must be percentages (e.g., 75%P-25%F) summing to 99–100%.');
+        }
+      }
+    } catch (e) {
+      throw e;
+    }
 
     // Collect new section data
     const sections = container.querySelectorAll('.editable-section');

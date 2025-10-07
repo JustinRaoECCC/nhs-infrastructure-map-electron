@@ -68,6 +68,8 @@ async function createWindow () {
       lookups.ensureLookupsReady?.().catch(err => console.error('[ensure lookups @show] failed:', err));
       // also trigger a snapshot to finalize to 100%
       lookups.primeAllCaches?.().catch(err => console.error('[prime caches @show] failed:', err));
+      // Normalize Funding Override blanks at startup (safe, idempotent)
+      excelClient.normalizeFundingOverrides?.().catch(err => console.error('[normalizeFundingOverrides @show] failed:', err));
     }, 40);
   });
 
@@ -105,6 +107,9 @@ app.whenReady().then(() => {
     lookups.ensureDataFoldersSync();
   }
   bootstrapLookupsAtBoot();
+
+  // Also normalize funding overrides in the background at boot
+  try { excelClient.normalizeFundingOverrides?.(); } catch (_) {}
 
   // Initialize auth and show login window
   auth.initAuthWorkbook()
