@@ -407,11 +407,13 @@ document.addEventListener('DOMContentLoaded', () => {
       setupAutocomplete(paramNameInput, availableFieldNames);
     });
     
-    closeModalBtn.addEventListener('click', closeAddParamModal);
+    // Disable closing via the "X" button; enforce Save/Cancel only
+    // closeModalBtn.addEventListener('click', closeAddParamModal);
     cancelParamBtn.addEventListener('click', closeAddParamModal);
-    addParamModal.addEventListener('click', e => { 
-      if (e.target === addParamModal) closeAddParamModal(); 
-    });
+    // Prevent closing by clicking outside the modal
+    // addParamModal.addEventListener('click', e => { 
+    //   if (e.target === addParamModal) closeAddParamModal(); 
+    // });
 
     // Save new parameter
     saveParamBtn.addEventListener('click', async () => {
@@ -859,11 +861,13 @@ document.addEventListener('DOMContentLoaded', () => {
     fixedParamMatchUsing.addEventListener('change', setupFixedParamAutocomplete);
     fixedParamTypeSelect.addEventListener('change', setupFixedParamAutocomplete);
 
-    closeAddFixedParamModal.addEventListener('click', () => addFixedParamModal.style.display = 'none');
+    // Disable closing via the "X" button; enforce Save/Cancel only
+    // closeAddFixedParamModal.addEventListener('click', () => addFixedParamModal.style.display = 'none');
     cancelFixedParamBtn.addEventListener('click', () => addFixedParamModal.style.display = 'none');
-    addFixedParamModal.addEventListener('click', e => {
-      if (e.target === addFixedParamModal) addFixedParamModal.style.display = 'none';
-    });
+    // Prevent closing by clicking outside the modal
+    // addFixedParamModal.addEventListener('click', e => {
+    //   if (e.target === addFixedParamModal) addFixedParamModal.style.display = 'none';
+    // });
 
     // Save new fixed parameter
     saveFixedParamBtn.addEventListener('click', () => {
