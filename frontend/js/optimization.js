@@ -62,7 +62,27 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       }
 
-      availableFieldNames = Array.from(fieldSet).sort();
+      // Normalize to FIELD-ONLY suggestions (drop section-field composites)
+      const normalized = new Set();
+      Array.from(fieldSet).forEach(name => {
+        let s = String(name || '');
+        // Handle known composite separators first
+        if (s.includes(' ?" ')) {
+          const parts = s.split(' ?" ');
+          s = parts[1] || parts[0] || s;
+        } else if (s.includes(' - ')) {
+          const parts = s.split(' - ');
+          s = parts.length > 1 ? parts.slice(-1)[0] : s;
+        } else if (s.includes(' – ')) {
+          const parts = s.split(' – ');
+          s = parts.length > 1 ? parts.slice(-1)[0] : s;
+        } else if (s.includes(' — ')) {
+          const parts = s.split(' — ');
+          s = parts.length > 1 ? parts.slice(-1)[0] : s;
+        }
+        normalized.add(s);
+      });
+      availableFieldNames = Array.from(normalized).sort();
 
       // Load existing parameter names for autocomplete
       const params = await window.electronAPI.getAlgorithmParameters();
@@ -787,7 +807,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Open add fixed parameter modal
     addFixedParamBtn.addEventListener('click', () => {
-      fixedParamNameInput.value = '';
+      // Always read the current DOM element in case autocomplete rewired the input
+      const nameEl = document.getElementById('fixedParamNameInput');
+      if (nameEl) nameEl.value = '';
       fixedParamMatchUsing.value = 'parameter_name';
       fixedParamTypeSelect.value = 'geographical';
       geoValuesList.innerHTML = '';
@@ -871,7 +893,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Save new fixed parameter
     saveFixedParamBtn.addEventListener('click', () => {
-      const name = fixedParamNameInput.value.trim();
+      // Grab the live element to avoid stale references from autocomplete cloning
+      const nameEl = document.getElementById('fixedParamNameInput');
+      const name = nameEl ? nameEl.value.trim() : '';
       const type = fixedParamTypeSelect.value;
       const matchUsing = fixedParamMatchUsing.value;
       
