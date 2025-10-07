@@ -415,3 +415,16 @@ ipcMain.handle('auth:navigateToMain', async () => {
 ipcMain.handle('append-repair', async (event, payload) => {
   return await backend.appendRepair(payload);
 });
+
+ipcMain.handle('excel:getFundingSettings', async (_evt, company, location) =>
+  excelClient.getFundingSettings(company, location)
+);
+ipcMain.handle('excel:saveFundingSettings', async (_evt, company, location, settings) =>
+  excelClient.saveFundingSettings(company, location, settings)
+);
+ipcMain.handle('excel:saveFundingSettingsForAssetType', async (_evt, company, location, assetType, settings) =>
+  excelClient.saveFundingSettingsForAssetType(company, location, assetType, settings)
+);
+ipcMain.handle('excel:getAllFundingSettings', async (_evt, company) =>
+  excelClient.getAllFundingSettings(company)
+);

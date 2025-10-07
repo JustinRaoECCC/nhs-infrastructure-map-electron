@@ -152,6 +152,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAllUsers: () => ipcRenderer.invoke('auth:getAllUsers'),
   navigateToMain: () => ipcRenderer.invoke('auth:navigateToMain'),
 
+  getFundingSettings: (company, location) => 
+    ipcRenderer.invoke('excel:getFundingSettings', company, location),
+  saveFundingSettings: (company, location, settings) => 
+    ipcRenderer.invoke('excel:saveFundingSettings', company, location, settings),
+  saveFundingSettingsForAssetType: (company, location, assetType, settings) => 
+    ipcRenderer.invoke('excel:saveFundingSettingsForAssetType', company, location, assetType, settings),
+  getAllFundingSettings: (company) =>
+    ipcRenderer.invoke('excel:getAllFundingSettings', company),
 });
 
 // --- BEGIN: appAlert (custom modal replacement for window.alert) ---

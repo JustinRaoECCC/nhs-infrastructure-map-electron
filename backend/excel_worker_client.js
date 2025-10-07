@@ -107,4 +107,10 @@ module.exports = {
   logoutAuthUser: (name) => call('logoutAuthUser', name),
   getAllAuthUsers: () => call('getAllAuthUsers'),
   hasAuthUsers: () => call('hasAuthUsers'),
+  getFundingSettings: (company, location) => call('getFundingSettings', company, location),
+  saveFundingSettings: (company, location, settings) => call('saveFundingSettings', company, location, settings),
+  saveFundingSettingsForAssetType: (company, location, assetType, settings) =>
+    call('saveFundingSettingsForAssetType', company, location, assetType, settings),
+  getAllFundingSettings: (company) =>
+    call('getAllFundingSettings', company),
 };

@@ -271,11 +271,20 @@
       // Hide footer only on Nuke
       if (footer) footer.style.display = (target === 'nuke') ? 'none' : '';
       
-      // Initialize Photo Links tab when first shown
-      if (target === 'photoLinks' && window.linkSettings && !window.linkSettings.initialized) {
-        window.linkSettings.init();
-        window.linkSettings.initialized = true;
+      // Initialize Station Info tab when first shown
+      if (target === 'stationInfo') {
+        // Initialize Photo Links
+        if (window.linkSettings && !window.linkSettings.initialized) {
+          window.linkSettings.init();
+          window.linkSettings.initialized = true;
+        }
+        // Initialize Funding Settings
+        if (window.fundingSettings && !window.fundingSettings.initialized) {
+          window.fundingSettings.init();
+          window.fundingSettings.initialized = true;
+        }
       }
+
     };
     btns.forEach(btn => btn.addEventListener('click', () => showTab(btn.dataset.tab)));
     // Initialize the correct state on first paint
@@ -297,6 +306,9 @@
 
     // Check if Photo Links tab has changes
     const linkHasChanges = window.linkSettings && window.linkSettings.hasChanges();
+    // Check for funding changes
+    const fundingHasChanges = window.fundingSettings && window.fundingSettings.hasChanges();
+
 
     // Always report "Saved changes" even if nothing changed
     if (!entries.length && !statusChanged.length && state.togglesChanged.size === 0 && !linkHasChanges) {
@@ -368,6 +380,16 @@
         ok++;
       } else {
         fail++;
+      }
+    }
+
+    // Funding Settings changes
+    if (fundingHasChanges && window.fundingSettings) {
+      const fundingResult = await window.fundingSettings.save();
+      if (fundingResult.success) {
+        ok += fundingResult.updated;
+      } else {
+        fail += fundingResult.failed;
       }
     }
 
@@ -494,6 +516,10 @@
         // Cancel Photo Links changes if any
         if (window.linkSettings) {
           window.linkSettings.cancel();
+        }
+        // Cancel Funding Settings changes
+        if (window.fundingSettings) {
+          window.fundingSettings.cancel();
         }
         // Reload other settings
         loadAndRender(root);

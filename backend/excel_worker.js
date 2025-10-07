@@ -1287,9 +1287,307 @@ async function writeLocationRows(company, location, sheetName, sections, headers
     ws.addRow(arr);
   }
 
+  // After writing the main data, ensure Funding Type Override Settings section exists
+  await ensureFundingSection(wb, ws);
+
   await wb.xlsx.writeFile(locPath);
   return { success:true, file: locPath, sheet: ws.name, added: rows.length };
 }
+
+// New function to ensure funding section exists
+async function ensureFundingSection(workbook, worksheet) {
+  // Find the rightmost column
+  const maxCol = worksheet.actualColumnCount || 0;
+  
+  // Check if funding section already exists
+  const row1 = worksheet.getRow(1);
+  let fundingExists = false;
+  
+  for (let c = 1; c <= maxCol; c++) {
+    const sectionName = takeText(row1.getCell(c));
+    if (sectionName === 'Funding Type Override Settings') {
+      fundingExists = true;
+      break;
+    }
+  }
+  
+  if (!fundingExists) {
+    // Add the funding section as the rightmost columns
+    const startCol = maxCol + 1;
+    
+    // Add section headers
+    row1.getCell(startCol).value = 'Funding Type Override Settings';
+    row1.getCell(startCol + 1).value = 'Funding Type Override Settings';
+    row1.getCell(startCol + 2).value = 'Funding Type Override Settings';
+    
+    // Add field headers
+    const row2 = worksheet.getRow(2);
+    row2.getCell(startCol).value = 'O&M';
+    row2.getCell(startCol + 1).value = 'Capital';
+    row2.getCell(startCol + 2).value = 'Decommission';
+    
+    // Initialize with blank values for all data rows
+    const lastRow = worksheet.actualRowCount || worksheet.rowCount || 2;
+    for (let r = 3; r <= lastRow; r++) {
+      const dataRow = worksheet.getRow(r);
+      dataRow.getCell(startCol).value = '';
+      dataRow.getCell(startCol + 1).value = '';
+      dataRow.getCell(startCol + 2).value = '';
+    }
+  }
+}
+
+// Add functions to read/write funding settings
+async function getFundingSettings(company, location) {
+  const filePath = getLocationFilePath(company, location);
+  if (!fs.existsSync(filePath)) {
+    return { om: '', capital: '', decommission: '' };
+  }
+  
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(filePath);
+  
+  // Get the first worksheet (or you could search for a specific sheet)
+  const ws = wb.worksheets[0];
+  if (!ws) return { om: '', capital: '', decommission: '' };
+  
+  // Find the funding columns
+  const row1 = ws.getRow(1);
+  const row2 = ws.getRow(2);
+  const maxCol = ws.actualColumnCount || 0;
+  
+  let omCol = -1, capitalCol = -1, decommissionCol = -1;
+  
+  for (let c = 1; c <= maxCol; c++) {
+    const section = takeText(row1.getCell(c));
+    const field = takeText(row2.getCell(c));
+    
+    if (section === 'Funding Type Override Settings') {
+      if (field === 'O&M') omCol = c;
+      else if (field === 'Capital') capitalCol = c;
+      else if (field === 'Decommission') decommissionCol = c;
+    }
+  }
+  
+  // Read the first data row's values (row 3)
+  const values = {
+    om: omCol > 0 ? takeText(ws.getRow(3).getCell(omCol)) : '',
+    capital: capitalCol > 0 ? takeText(ws.getRow(3).getCell(capitalCol)) : '',
+    decommission: decommissionCol > 0 ? takeText(ws.getRow(3).getCell(decommissionCol)) : ''
+  };
+  
+  return values;
+}
+
+async function saveFundingSettings(company, location, settings) {
+  const filePath = getLocationFilePath(company, location);
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+
+  if (!fs.existsSync(filePath)) {
+    // If you really want to create new books here, also add a default sheet,
+    // otherwise there's nothing to write into:
+    const tmp = wb.addWorksheet('Data');
+    await wb.xlsx.writeFile(filePath);
+  }
+
+  await wb.xlsx.readFile(filePath);
+
+  let touchedSheets = 0;
+
+  for (const ws of wb.worksheets) {
+    if (!ws || ws.rowCount < 2) continue;
+
+    // Make sure the Funding section exists on this sheet
+    await ensureFundingSection(wb, ws);
+
+    // Find columns each time (post-ensure)
+    const row1 = ws.getRow(1);
+    const row2 = ws.getRow(2);
+    const maxCol = Math.max(
+      ws.columnCount || 0,
+      row1.actualCellCount || row1.cellCount || 0,
+      row2.actualCellCount || row2.cellCount || 0
+    );
+
+    let omCol = -1, capitalCol = -1, decommissionCol = -1;
+    for (let c = 1; c <= maxCol; c++) {
+      const section = takeText(row1.getCell(c));
+      const field   = takeText(row2.getCell(c));
+      if (section === 'Funding Type Override Settings') {
+        if (field === 'O&M') omCol = c;
+        else if (field === 'Capital') capitalCol = c;
+        else if (field === 'Decommission') decommissionCol = c;
+      }
+    }
+
+    if (omCol < 0 && capitalCol < 0 && decommissionCol < 0) continue;
+
+    // Update all data rows on this sheet
+    const lastRow = ws.actualRowCount || ws.rowCount || 2;
+    for (let r = 3; r <= lastRow; r++) {
+      const dataRow = ws.getRow(r);
+      if ('om'           in settings && omCol          > 0) dataRow.getCell(omCol).value = settings.om ?? '';
+      if ('capital'      in settings && capitalCol     > 0) dataRow.getCell(capitalCol).value = settings.capital ?? '';
+      if ('decommission' in settings && decommissionCol> 0) dataRow.getCell(decommissionCol).value = settings.decommission ?? '';
+    }
+
+    touchedSheets++;
+  }
+
+  await wb.xlsx.writeFile(filePath);
+  return { success: touchedSheets > 0, updatedSheets: touchedSheets };
+}
+
+async function saveFundingSettingsForAssetType(company, location, assetType, settings) {
+  const filePath = getLocationFilePath(company, location);
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  
+  if (!fs.existsSync(filePath)) {
+    // Create new workbook if it doesn't exist
+    await wb.xlsx.writeFile(filePath);
+  }
+  
+  await wb.xlsx.readFile(filePath);
+  
+  // Find worksheets that contain this asset type
+  for (const ws of wb.worksheets) {
+    if (!ws || ws.rowCount < 2) continue;
+    
+    // Check if this sheet is for our asset type
+    const sheetName = ws.name;
+    const sheetParts = sheetName.split(' ');
+    
+    // Extract asset type from sheet name (everything except last word which is location)
+    if (sheetParts.length >= 2) {
+      const sheetAssetType = sheetParts.slice(0, -1).join(' ');
+      if (sheetAssetType.toLowerCase() !== assetType.toLowerCase()) continue;
+    }
+    
+    // Ensure funding section exists
+    await ensureFundingSection(wb, ws);
+    
+    // Find the funding columns
+    const row1 = ws.getRow(1);
+    const row2 = ws.getRow(2);
+    const maxCol = ws.actualColumnCount || 0;
+    
+    let omCol = -1, capitalCol = -1, decommissionCol = -1;
+    
+    for (let c = 1; c <= maxCol; c++) {
+      const section = takeText(row1.getCell(c));
+      const field = takeText(row2.getCell(c));
+      
+      if (section === 'Funding Type Override Settings') {
+        if (field === 'O&M') omCol = c;
+        else if (field === 'Capital') capitalCol = c;
+        else if (field === 'Decommission') decommissionCol = c;
+      }
+    }
+    
+    // Find Category/Asset Type column to verify rows
+    let categoryCol = -1;
+    for (let c = 1; c <= maxCol; c++) {
+      const field = takeText(row2.getCell(c)).toLowerCase();
+      if (field === 'category' || field === 'asset type' || field === 'type') {
+        categoryCol = c;
+        break;
+      }
+    }
+    
+    // Update rows that match the asset type
+    const lastRow = ws.actualRowCount || ws.rowCount || 2;
+    for (let r = 3; r <= lastRow; r++) {
+      const dataRow = ws.getRow(r);
+      
+      // Check if this row is for our asset type
+      if (categoryCol > 0) {
+        const rowAssetType = takeText(dataRow.getCell(categoryCol));
+        if (rowAssetType.toLowerCase() !== assetType.toLowerCase()) continue;
+      }
+      
+      // Update funding values
+      if (omCol > 0) dataRow.getCell(omCol).value = settings.om || '';
+      if (capitalCol > 0) dataRow.getCell(capitalCol).value = settings.capital || '';
+      if (decommissionCol > 0) dataRow.getCell(decommissionCol).value = settings.decommission || '';
+    }
+  }
+  
+  await wb.xlsx.writeFile(filePath);
+  return { success: true };
+}
+
+// Add function to get all funding settings for display
+async function getAllFundingSettings(company) {
+  const result = new Map();
+  const companyDir = getCompanyDir(company);
+  
+  if (!fs.existsSync(companyDir)) return result;
+  
+  const locationFiles = fs.readdirSync(companyDir)
+    .filter(f => f.endsWith('.xlsx') && !f.startsWith('~$'));
+  
+  for (const fileName of locationFiles) {
+    const location = path.basename(fileName, '.xlsx');
+    const filePath = path.join(companyDir, fileName);
+    
+    const _ExcelJS = getExcel();
+    const wb = new _ExcelJS.Workbook();
+    
+    try {
+      await wb.xlsx.readFile(filePath);
+    } catch (e) {
+      continue;
+    }
+    
+    // Check each worksheet
+    for (const ws of wb.worksheets) {
+      if (!ws || ws.rowCount < 3) continue;
+      
+      // Find funding columns
+      const row1 = ws.getRow(1);
+      const row2 = ws.getRow(2);
+      const maxCol = ws.actualColumnCount || 0;
+      
+      let omCol = -1, capitalCol = -1, decommissionCol = -1;
+      
+      for (let c = 1; c <= maxCol; c++) {
+        const section = takeText(row1.getCell(c));
+        const field = takeText(row2.getCell(c));
+        
+        if (section === 'Funding Type Override Settings') {
+          if (field === 'O&M') omCol = c;
+          else if (field === 'Capital') capitalCol = c;
+          else if (field === 'Decommission') decommissionCol = c;
+        }
+      }
+      
+      if (omCol > 0 || capitalCol > 0 || decommissionCol > 0) {
+        // Get values from first data row (they should all be the same)
+        const dataRow = ws.getRow(3);
+        const om = omCol > 0 ? takeText(dataRow.getCell(omCol)) : '';
+        const capital = capitalCol > 0 ? takeText(dataRow.getCell(capitalCol)) : '';
+        const decommission = decommissionCol > 0 ? takeText(dataRow.getCell(decommissionCol)) : '';
+        
+        // Determine asset type from sheet name
+        const sheetName = ws.name;
+        const sheetParts = sheetName.split(' ');
+        let assetType = '';
+        if (sheetParts.length >= 2) {
+          assetType = sheetParts.slice(0, -1).join(' ');
+        }
+        
+        const key = `${company}|${location}${assetType ? '|' + assetType : ''}`;
+        result.set(key, { om, capital, decommission });
+      }
+    }
+  }
+  
+  return Object.fromEntries(result);;
+}
+
 
 // Utility: pull a field from an object regardless of section prefix
 function pick(obj, fieldName) {
@@ -2571,6 +2869,10 @@ const handlers = {
   logoutAuthUser,
   getAllAuthUsers,
   hasAuthUsers,
+  getFundingSettings,
+  saveFundingSettings,
+  saveFundingSettingsForAssetType,
+  getAllFundingSettings,
 };
 
 parentPort.on('message', async (msg) => {

@@ -6,7 +6,7 @@
   <div class="settings-body">
     <div class="settings-tabs">
       <button class="tab-btn active" data-tab="mapPin">Map Pin</button>
-      <button class="tab-btn" data-tab="photoLinks">Photo Links</button>
+      <button class="tab-btn" data-tab="stationInfo">Station Info</button>
       <button class="tab-btn" data-tab="nuke">Nuke</button>
       <button class="tab-btn" data-tab="comingSoon" disabled>Coming Soon</button>
     </div>
@@ -97,16 +97,35 @@
 
     </div>
 
-    <!-- Photo Links Tab Panel -->
-    <div class="tab-panel" id="tab-photoLinks" data-tab="photoLinks" style="display:none;">
+    <!-- Station Info Tab Panel (replaces Photo Links) -->
+    <div class="tab-panel" id="tab-stationInfo" data-tab="stationInfo" style="display:none;">
       <p class="hint" style="opacity:.8;margin:.25rem 0 .5rem;">
-        Set photo folder locations for <strong>Locations</strong> and <strong>Asset Types</strong>. 
-        Asset Type links override Location links. Use UNC paths like: <code>\\server\share\folder</code>
+        Configure station-specific settings for this location.
       </p>
 
-      <div class="link-settings-container">
-        <div class="link-tree" id="linkTree">
-          <!-- Dynamically populated by JS -->
+      <!-- Photo Links Section (existing functionality) -->
+      <div class="settings-section">
+        <h3>Photo Links</h3>
+        <p class="hint" style="opacity:.8;margin:.25rem 0 .5rem;">
+          Set photo folder locations for <strong>Locations</strong> and <strong>Asset Types</strong>. 
+          Asset Type links override Location links. Use UNC paths like: <code>\\server\share\folder</code>
+        </p>
+        <div class="link-settings-container">
+          <div class="link-tree" id="linkTree">
+            <!-- Dynamically populated by JS -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Funding Type Override Settings Section (new) -->
+      <div class="settings-section" style="margin-top: 2rem;">
+        <h3>Funding Type Override Settings</h3>
+        <p class="hint" style="opacity:.8;margin:.25rem 0 .5rem;">
+          Set default funding type values at different levels. More specific settings override broader ones.
+          Values are saved to each location's Excel file.
+        </p>
+        <div class="funding-tree" id="fundingTree">
+          <!-- Dynamically populated similar to linkTree -->
         </div>
       </div>
     </div>
