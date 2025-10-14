@@ -622,12 +622,77 @@ async function setSettingBoolean(key, flag) {
   return { success:true };
 }
 
-// ─── Repairs I/O (Location-based sheet model) ─────────────────────────────────
+// ─── Repairs I/O (Unified per-location sheet model) ──────────────────────────
+// All repairs for a <location>.xlsx are stored in a single sheet named "Repairs".
+// Legacy sheets like "Cableway BC Repairs" are auto-migrated into "Repairs" on write.
+// "Repairs" is always kept as the LAST sheet in the workbook.
+
+function ensureRepairsHeader(ws) {
+  if (!ws.rowCount || ws.getRow(1).cellCount === 0) {
+    ws.addRow(REPAIRS_HEADERS);
+    return;
+  }
+  const r1 = ws.getRow(1);
+  const existing = (r1.values || []).slice(1).map(v => String(v ?? '').trim());
+  const same = REPAIRS_HEADERS.every((h, i) => (existing[i] || '').toLowerCase() === h.toLowerCase());
+  if (!same) r1.values = [, ...REPAIRS_HEADERS];
+}
+
+function moveSheetToEnd(wb, ws) {
+  const idx = wb.worksheets.findIndex(x => x === ws);
+  if (idx >= 0 && idx !== wb.worksheets.length - 1) {
+    wb.worksheets.splice(idx, 1);
+    wb.worksheets.push(ws);
+  }
+}
+
 /**
- * Get or create a repairs sheet in the location workbook
- * Sheet naming: "{AssetType} {Location} Repairs"
+ * Migrate any legacy "* Repairs" sheets into the unified "Repairs" sheet.
+ * Removes the legacy sheets after copying rows.
  */
-async function _ensureRepairsSheet(company, location, assetType) {
+function migrateLegacyRepairsSheetsInto(wb, target) {
+  const legacy = wb.worksheets.filter(s => {
+    const name = String(s?.name || '');
+    if (!name) return false;
+    if (lc(name) === lc(REPAIRS_SHEET)) return false;
+    return /\brepairs$/i.test(name);
+  });
+
+  if (!legacy.length) return;
+
+  // Build a fast map for header indices on target
+  ensureRepairsHeader(target);
+
+  for (const s of legacy) {
+    const headerRow = s.getRow(1);
+    const maxCol = s.actualColumnCount || headerRow.cellCount || 0;
+    const headerNames = [];
+    for (let c = 1; c <= maxCol; c++) headerNames.push(takeText(headerRow.getCell(c)));
+    const idxOf = (want) => headerNames.findIndex(h => (h || '').toLowerCase() === want.toLowerCase()) + 1;
+
+    const mapIdx = REPAIRS_HEADERS.map(h => idxOf(h)); // 1-based or 0 if missing
+    const lastRow = s.actualRowCount || s.rowCount || 1;
+
+    for (let r = 2; r <= lastRow; r++) {
+      const row = s.getRow(r);
+      const values = REPAIRS_HEADERS.map((h, i) => {
+        const ci = mapIdx[i];
+        return ci > 0 ? takeText(row.getCell(ci)) : '';
+      });
+      // Skip truly empty rows / missing Station ID
+      if (!String(values[1] || '').trim()) continue;
+      target.addRow(values);
+    }
+
+    wb.removeWorksheet(s.id);
+  }
+}
+
+/**
+ * Get or create the unified Repairs sheet for a location workbook
+ * (ignores assetType; kept for API compatibility).
+ */
+async function _ensureRepairsSheet(company, location, _assetType) {
   const _ExcelJS = getExcel();
   const companyDir = getCompanyDir(company);
   ensureDir(companyDir);
@@ -641,117 +706,100 @@ async function _ensureRepairsSheet(company, location, assetType) {
     await wb.xlsx.writeFile(filePath);
   }
 
-  // Sheet name format: "{AssetType} {Location} Repairs"
-  const repairsSheetName = `${normStr(assetType)} ${normStr(location)} Repairs`;
-  let ws = getSheet(wb, repairsSheetName);
+  let ws = getSheet(wb, REPAIRS_SHEET);
   if (!ws) {
-    ws = wb.addWorksheet(repairsSheetName);
+    ws = wb.addWorksheet(REPAIRS_SHEET);
   }
+  ensureRepairsHeader(ws);
 
-  // Ensure header row exists (one-row header model)
-  if (!ws.rowCount || ws.getRow(1).cellCount === 0) {
-    ws.addRow(REPAIRS_HEADERS);
-  } else {
-    const r1 = ws.getRow(1);
-    const existing = (r1.values || []).slice(1).map(v => String(v ?? '').trim());
-    const same = REPAIRS_HEADERS.every((h, i) => (existing[i] || '').toLowerCase() === h.toLowerCase());
-    if (!same) r1.values = [, ...REPAIRS_HEADERS];
-  }
-  return { wb, ws, filePath, sheetName: repairsSheetName };
+  // Migrate any legacy "* Repairs" sheets into this one
+  migrateLegacyRepairsSheetsInto(wb, ws);
+
+  // Ensure "Repairs" is the LAST sheet
+  moveSheetToEnd(wb, ws);
+
+  return { wb, ws, filePath, sheetName: REPAIRS_SHEET };
 }
 
 /**
- * List all repairs for a specific station from location workbook
+ * List all repairs for a specific station from the unified Repairs sheet.
+ * Backward compatible: if "Repairs" doesn't exist, falls back to legacy sheets.
  */
-async function listRepairsForStation(company, location, assetType, stationId) {
+async function listRepairsForStation(company, location, _assetType, stationId) {
   const filePath = getLocationFilePath(company, location);
   if (!fs.existsSync(filePath)) return [];
-  
+
   const _ExcelJS = getExcel();
   const wb = new _ExcelJS.Workbook();
   await wb.xlsx.readFile(filePath);
-  
-  const repairsSheetName = `${normStr(assetType)} ${normStr(location)} Repairs`;
-  const ws = getSheet(wb, repairsSheetName);
-  if (!ws) return [];
-  
-  const repairs = [];
-  const maxRow = ws.actualRowCount || ws.rowCount || 1;
-  
-  for (let r = 2; r <= maxRow; r++) {
-    const row = ws.getRow(r);
-    const sid = takeText(row.getCell(2)); // Station ID column
-    if (sid === stationId) {
-      repairs.push({
-        date: takeText(row.getCell(1)),
-        station_id: sid,
-        name: takeText(row.getCell(3)),
-        severity: takeText(row.getCell(4)),
-        priority: takeText(row.getCell(5)),
-        cost: takeText(row.getCell(6)),
-        category: takeText(row.getCell(7)),
-        type: takeText(row.getCell(8)),
-        days: takeText(row.getCell(9))
+
+  const out = [];
+  const addFromSheet = (ws) => {
+    if (!ws) return;
+    const headerRow = ws.getRow(1);
+    const maxCol = ws.actualColumnCount || headerRow.cellCount || 0;
+    // Build header→index map
+    const headers = [];
+    for (let c = 1; c <= maxCol; c++) headers.push(takeText(headerRow.getCell(c)));
+    const find = (name) => headers.findIndex(h => h.toLowerCase() === name.toLowerCase()) + 1;
+
+    const sidCol = find('Station ID');
+    if (sidCol < 1) return;
+
+    const last = ws.actualRowCount || ws.rowCount || 1;
+    for (let r = 2; r <= last; r++) {
+      const row = ws.getRow(r);
+      if (takeText(row.getCell(sidCol)) !== stationId) continue;
+      out.push({
+        date:      takeText(row.getCell(find('Date'))),
+        station_id: stationId,
+        name:      takeText(row.getCell(find('Repair Name'))),
+        severity:  takeText(row.getCell(find('Severity'))),
+        priority:  takeText(row.getCell(find('Priority'))),
+        cost:      takeText(row.getCell(find('Cost'))),
+        category:  takeText(row.getCell(find('Category'))),
+        type:      takeText(row.getCell(find('Type'))),
+        days:      takeText(row.getCell(find('Days'))),
       });
     }
+  };
+
+  // Prefer unified "Repairs"
+  let ws = getSheet(wb, REPAIRS_SHEET);
+  if (ws) {
+    addFromSheet(ws);
+    return out;
   }
-  
-  return repairs;
+
+  // Legacy fallback (read-only)
+  for (const s of wb.worksheets) {
+    if (s && /\brepairs$/i.test(s.name)) addFromSheet(s);
+  }
+  return out;
 }
 
 /**
- * Append a repair row to location workbook
+ * Append a repair row to the unified Repairs sheet
  */
-async function appendRepair(company, location, assetType, repair = {}) {
+async function appendRepair(company, location, _assetType, repair = {}) {
   await ensureLookupsReady();
-  const { wb, ws, filePath, sheetName } = await _ensureRepairsSheet(company, location, assetType);
+  const { wb, ws, filePath } = await _ensureRepairsSheet(company, location, null);
 
   const stationId = normStr(repair['Station ID'] || repair['station_id'] || repair['StationID'] || repair['ID']);
   if (!stationId) {
     return { success: false, message: 'Station ID is required in the repair payload.' };
   }
 
-  // Map common field variations to canonical names
-  const canonicalMap = {
-    'station id': 'Station ID',
-    'stationid': 'Station ID',
-    'id': 'Station ID',
-    'repair name': 'Repair Name',
-    'name': 'Repair Name',
-    'date': 'Date',
-    'severity': 'Severity',
-    'priority': 'Priority',
-    'cost': 'Cost',
-    'category': 'Category',
-    'type': 'Type',
-    'days': 'Days'
-  };
-  
-  function toCanonical(key) {
-    const lower = String(key || '').trim().toLowerCase();
-    return canonicalMap[lower] || key;
-  }
-
-  // Canonicalize header to: Date … Type
+  // Canonical header maintenance (same as before)
   const headerRow = ws.getRow(1);
   const maxCol = ws.actualColumnCount || headerRow.cellCount || 0;
   const cur = [];
   for (let c = 1; c <= maxCol; c++) cur.push(takeText(headerRow.getCell(c)));
 
-  // Union payload keys with canonical mapping
   const haveCI = new Set(cur.map(h => h.toLowerCase()));
-  for (const k of Object.keys(repair || {})) {
-    const canonical = toCanonical(k);
-    if (!canonical) continue;
-    const lower = canonical.toLowerCase();
-    if (!haveCI.has(lower)) { 
-      cur.push(canonical); 
-      haveCI.add(lower); 
-    }
-  }
+  const required = REPAIRS_HEADERS.slice(); // Date..Days
 
-  // Ensure canonical headers exist in correct order
-  const required = ['Date', 'Station ID', 'Repair Name', 'Severity', 'Priority', 'Cost', 'Category', 'Type', 'Days'];
+  // Ensure all required headers exist
   for (const req of required) {
     if (!haveCI.has(req.toLowerCase())) {
       cur.push(req);
@@ -759,50 +807,41 @@ async function appendRepair(company, location, assetType, repair = {}) {
     }
   }
 
-  // Reorder to canonical template: Date first, Days last, everything else in between
-  const standardOrder = ['Date', 'Station ID', 'Repair Name', 'Severity', 'Priority', 'Cost', 'Category', 'Type', 'Days'];
+  // Final header order = canonical + extras (if any)
+  const standardOrder = REPAIRS_HEADERS.slice();
   const standardSet = new Set(standardOrder.map(h => h.toLowerCase()));
   const extras = cur.filter(h => !standardSet.has(h.toLowerCase()));
   const headers = [...standardOrder, ...extras];
-
   ws.getRow(1).values = [, ...headers];
 
-  // Locate Station ID column index (1-based)
+  // Locate Station ID column
   const sidCol = headers.findIndex(h => (h || '').toLowerCase() === 'station id') + 1;
 
-  // Find the last row for this Station ID (grouped insertion)
+  // Find last row for this Station ID (for grouped insert)
   const lastRowIdx = ws.actualRowCount || ws.rowCount || 1;
   let lastForStation = 0;
   for (let r = 2; r <= lastRowIdx; r++) {
     const row = ws.getRow(r);
-    const cur = takeText(row.getCell(sidCol));
-    if (cur && cur.toLowerCase() === stationId.toLowerCase()) {
+    const curSid = takeText(row.getCell(sidCol));
+    if (curSid && curSid.toLowerCase() === stationId.toLowerCase()) {
       lastForStation = r;
     }
   }
 
   // Build row values aligned to headers
-  const today = new Date().toISOString().slice(0,10);
-  const getCI = (canonicalKey) => {
-    // Look for any variant of this canonical key in the repair object
-    const want = String(canonicalKey || '').toLowerCase();
-    for (const [k, v] of Object.entries(repair || {})) {
-      const canonical = toCanonical(k);
-      if (String(canonical).toLowerCase() === want) return v;
-    }
-    return undefined;
-  };
+  const today = new Date().toISOString().slice(0, 10);
+  const get = (k) => repair[k] !== undefined ? repair[k] : '';
   const newValues = headers.map(h => {
     const l = (h || '').toLowerCase();
-    if (l === 'date')        return getCI('Date') || today;
+    if (l === 'date')        return get('Date') || today;
     if (l === 'station id')  return stationId;
-    if (l === 'repair name') return getCI('Repair Name') || getCI('name') || '';
-    if (l === 'type')        return getCI('Type') || 'Repair';
-    const v = repair[h] !== undefined ? repair[h] : getCI(h);
-    return v !== undefined ? v : '';
+    if (l === 'repair name') return get('Repair Name') || get('name') || '';
+    if (l === 'type')        return get('Type') || 'Repair';
+    if (l === 'category')    return get('Category') || 'Capital'; // default as before
+    return get(h) || '';
   });
 
-  // Insert at proper position
+  // Insert grouped
   let insertedAt;
   if (lastForStation >= 2) {
     ws.spliceRows(lastForStation + 1, 0, newValues);
@@ -812,108 +851,143 @@ async function appendRepair(company, location, assetType, repair = {}) {
     insertedAt = newRow.number;
   }
 
+  // Keep Repairs last
+  moveSheetToEnd(wb, ws);
+
   await wb.xlsx.writeFile(filePath);
-  return { success: true, file: filePath, sheet: sheetName, insertedAt };
+  return { success: true, file: filePath, sheet: REPAIRS_SHEET, insertedAt };
 }
 
 /**
- * Get all repairs across all locations and asset types
+ * Get all repairs across all locations (unified model).
+ * If unified sheet exists, reads from it. Otherwise (legacy) reads from each "* Repairs" sheet.
+ * For convenience, attempts to derive assetType by scanning non-Repairs sheets (by Station ID → Category).
  */
 async function getAllRepairs() {
   ensureDir(COMPANIES_DIR);
   const _ExcelJS = getExcel();
   const allRepairs = [];
-  
-  // Traverse companies/*/
+
   const companies = fs.readdirSync(COMPANIES_DIR, { withFileTypes: true })
     .filter(d => d.isDirectory())
     .map(d => d.name);
-  
+
   for (const company of companies) {
     const companyDir = getCompanyDir(company);
     if (!fs.existsSync(companyDir)) continue;
-    
+
     const locationFiles = fs.readdirSync(companyDir)
       .filter(f => f.endsWith('.xlsx') && !f.startsWith('~$'))
       .map(f => path.join(companyDir, f));
-    
+
     for (const filePath of locationFiles) {
       const location = path.basename(filePath, '.xlsx');
-
-
       const wb = new _ExcelJS.Workbook();
-      try {
-        await wb.xlsx.readFile(filePath);
-      } catch (e) {
-        continue;
-      }
-    
-      // Look for repair sheets (ending with "Repairs")
-      for (const ws of wb.worksheets) {
-        if (!ws.name.endsWith('Repairs')) continue;
-      
-        // Extract asset type from sheet name
-        const match = ws.name.match(/^(.+)\s+\w+\s+Repairs$/);
-        if (!match) continue;
-        const assetType = match[1];
-      
-        const maxRow = ws.actualRowCount || ws.rowCount || 1;
-        for (let r = 2; r <= maxRow; r++) {
+      try { await wb.xlsx.readFile(filePath); } catch { continue; }
 
+      // Build StationID → AssetType (Category) map from non-Repairs sheets
+      const sidToAsset = new Map();
+      for (const ws of wb.worksheets) {
+        if (!ws || ws.rowCount < 2) continue;
+        if (ws.name && ws.name.toLowerCase().includes('repairs')) continue;
+
+        const twoRow = (ws.getRow(2)?.actualCellCount || 0) > 0;
+        const dataStart = twoRow ? 3 : 2;
+        const sidCol = findColumnByField(ws, 'Station ID');
+        let catCol = findColumnByField(ws, 'Category');
+        if (catCol < 1) catCol = findColumnByField(ws, 'Asset Type');
+        if (catCol < 1) catCol = findColumnByField(ws, 'Type');
+        if (sidCol < 1 || catCol < 1) continue;
+
+        const lastRow = ws.actualRowCount || ws.rowCount || dataStart - 1;
+        for (let r = dataStart; r <= lastRow; r++) {
           const row = ws.getRow(r);
-          const stationId = takeText(row.getCell(2));
+          const sid = takeText(row.getCell(sidCol));
+          const at  = takeText(row.getCell(catCol));
+          if (sid) sidToAsset.set(sid, at);
+        }
+      }
+
+      const addFromSheet = (ws) => {
+        if (!ws) return;
+        const headerRow = ws.getRow(1);
+        const maxCol = ws.actualColumnCount || headerRow.cellCount || 0;
+        const headers = [];
+        for (let c = 1; c <= maxCol; c++) headers.push(takeText(headerRow.getCell(c)));
+        const find = (name) => headers.findIndex(h => h.toLowerCase() === name.toLowerCase()) + 1;
+        const sidCol = find('Station ID');
+        if (sidCol < 1) return;
+
+        const last = ws.actualRowCount || ws.rowCount || 1;
+        for (let r = 2; r <= last; r++) {
+          const row = ws.getRow(r);
+          const stationId = takeText(row.getCell(sidCol));
           if (!stationId) continue;
-        
           allRepairs.push({
-            date: takeText(row.getCell(1)),
+            date:     takeText(row.getCell(find('Date'))),
             station_id: stationId,
-            name: takeText(row.getCell(3)),
-            severity: takeText(row.getCell(4)),
-            priority: takeText(row.getCell(5)),
-            cost: takeText(row.getCell(6)),
-            category: takeText(row.getCell(7)),
-            type: takeText(row.getCell(8)),
-            days: takeText(row.getCell(9)),
+            name:     takeText(row.getCell(find('Repair Name'))),
+            severity: takeText(row.getCell(find('Severity'))),
+            priority: takeText(row.getCell(find('Priority'))),
+            cost:     takeText(row.getCell(find('Cost'))),
+            category: takeText(row.getCell(find('Category'))),
+            type:     takeText(row.getCell(find('Type'))),
+            days:     takeText(row.getCell(find('Days'))),
             location,
-            assetType,
-            company
+            assetType: sidToAsset.get(stationId) || '',
+            company,
           });
+        }
+      };
+
+      // Prefer unified "Repairs"
+      const unified = getSheet(wb, REPAIRS_SHEET);
+      if (unified) {
+        addFromSheet(unified);
+      } else {
+        // Legacy fallback
+        for (const ws of wb.worksheets) {
+          if (ws && /\brepairs$/i.test(ws.name)) addFromSheet(ws);
         }
       }
     }
   }
-  
+
   return allRepairs;
 }
 
 /**
- * Save repairs for a station (replaces all repairs for that station)
+ * Save (replace) all repairs for a station into the unified "Repairs" sheet.
  */
-async function saveStationRepairs(company, location, assetType, stationId, repairs = []) {
+async function saveStationRepairs(company, location, _assetType, stationId, repairs = []) {
   await ensureLookupsReady();
-  const { wb, ws, filePath, sheetName } = await _ensureRepairsSheet(company, location, assetType);
-  
-  // Find and remove existing rows for this station
+  const { wb, ws, filePath } = await _ensureRepairsSheet(company, location, null);
+
+  // Ensure header
+  ensureRepairsHeader(ws);
+
+  // Locate Station ID column
+  const headerRow = ws.getRow(1);
+  const maxCol = ws.actualColumnCount || headerRow.cellCount || 0;
+  const headers = [];
+  for (let c = 1; c <= maxCol; c++) headers.push(takeText(headerRow.getCell(c)));
+  const sidCol = headers.findIndex(h => (h || '').toLowerCase() === 'station id') + 1;
+
+  // Remove existing rows for this station
   const maxRow = ws.actualRowCount || ws.rowCount || 1;
   const rowsToDelete = [];
-  
   for (let r = 2; r <= maxRow; r++) {
     const row = ws.getRow(r);
-    const sid = takeText(row.getCell(2));
-    if (sid === stationId) {
-      rowsToDelete.push(r);
-    }
+    if (takeText(row.getCell(sidCol)) === stationId) rowsToDelete.push(r);
   }
-  
-  // Delete from bottom to top
   for (let i = rowsToDelete.length - 1; i >= 0; i--) {
     ws.spliceRows(rowsToDelete[i], 1);
   }
-  
-  // Add new repairs
-  const today = new Date().toISOString().slice(0,10);
+
+  // Add new rows
+  const today = new Date().toISOString().slice(0, 10);
   for (const repair of repairs) {
-    const newValues = [
+    const rowVals = [
       repair.date || today,
       stationId,
       repair.name || '',
@@ -924,15 +998,18 @@ async function saveStationRepairs(company, location, assetType, stationId, repai
       repair.type || 'Repair',
       repair.days || ''
     ];
-    ws.addRow(newValues);
+    ws.addRow(rowVals);
   }
-  
+
+  // Keep "Repairs" as last
+  moveSheetToEnd(wb, ws);
+
   await wb.xlsx.writeFile(filePath);
-  return { success: true, file: filePath, sheet: sheetName, count: repairs.length };
+  return { success: true, file: filePath, sheet: REPAIRS_SHEET, count: repairs.length };
 }
 
 /**
- * Delete a repair by station ID and repair index
+ * Delete a single repair for a station by index (0-based), unified model.
  */
 async function deleteRepair(company, location, assetType, stationId, repairIndex) {
   const repairs = await listRepairsForStation(company, location, assetType, stationId);

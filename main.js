@@ -111,10 +111,21 @@ app.whenReady().then(() => {
   // Also normalize funding overrides in the background at boot
   try { excelClient.normalizeFundingOverrides?.(); } catch (_) {}
 
-  // Initialize auth and show login window
+  // Initialize auth and decide which window to show
   auth.initAuthWorkbook()
-    .catch(e => console.error('[auth.initAuthWorkbook] failed:', e))
-    .finally(() => createLoginWindow());
+    .then((res) => {
+      if (res && res.disabled) {
+        // Auth disabled: go straight to main window
+        createWindow();
+      } else {
+        createLoginWindow();
+      }
+    })
+    .catch(e => {
+      console.error('[auth.initAuthWorkbook] failed:', e);
+      // On error, fallback to login window
+      createLoginWindow();
+    });
 
   // Forward worker progress to all windows
   excelClient.onProgress((data) => {

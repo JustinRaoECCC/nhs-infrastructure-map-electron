@@ -4,6 +4,11 @@ const path = require('path');
 const crypto = require('crypto');
 const { ensureDir } = require('./utils/fs_utils');
 
+// Toggle to enable/disable authentication logic.
+// false means NO LOGIN
+// true means YES LOGIN
+const AUTH_ENABLED = false;
+
 const DATA_DIR = process.env.NHS_DATA_DIR || path.join(__dirname, '..', 'data');
 const AUTH_FILE = path.join(DATA_DIR, 'Login_Information.xlsx');
 
@@ -13,9 +18,25 @@ let sessionToken = null;
 // We'll use the excel worker client for all Excel operations
 const excelClient = require('./excel_worker_client');
 
+// Default dev user used when auth is disabled
+const DEV_USER = {
+  name: 'Developer',
+  email: 'developer@local',
+  admin: 'Yes',
+  permissions: 'All',
+  status: 'Active',
+  created: new Date().toISOString(),
+  lastLogin: ''
+};
+
 // Initialize auth workbook
 async function initAuthWorkbook() {
   try {
+    if (!AUTH_ENABLED) {
+      console.log('[auth] Auth disabled. Skipping workbook initialization.');
+      return { exists: true, disabled: true };
+    }
+
     ensureDir(DATA_DIR);
     
     if (fs.existsSync(AUTH_FILE)) {
@@ -50,6 +71,11 @@ function validateEmail(email) {
 // Create user
 async function createUser(userData) {
   try {
+    if (!AUTH_ENABLED) {
+      console.log('[auth] Auth disabled. createUser ignored.');
+      return { success: false, message: 'Authentication is disabled in backend/auth.js' };
+    }
+
     const { name, email, password, admin, permissions } = userData;
     
     console.log('[auth] Creating user:', name);
@@ -83,6 +109,19 @@ async function createUser(userData) {
 async function loginUser(name, password) {
   try {
     console.log('[auth] Login attempt for:', name);
+
+    if (!AUTH_ENABLED) {
+      // Bypass login and issue a dev session
+      currentUser = { ...DEV_USER, name: name || DEV_USER.name };
+      sessionToken = crypto.randomBytes(32).toString('hex');
+      console.log('[auth] Auth disabled. Bypassing login for:', currentUser.name);
+      return {
+        success: true,
+        user: currentUser,
+        token: sessionToken,
+        disabled: true
+      };
+    }
     
     if (!fs.existsSync(AUTH_FILE)) {
       return { success: false, message: 'No users exist. Please create an account.' };
@@ -116,6 +155,12 @@ async function logoutUser() {
   try {
     if (!currentUser) return { success: true };
 
+    if (!AUTH_ENABLED) {
+      currentUser = null;
+      sessionToken = null;
+      return { success: true, disabled: true };
+    }
+
     const result = await excelClient.logoutAuthUser(currentUser.name);
     
     currentUser = null;
@@ -131,6 +176,10 @@ async function logoutUser() {
 // Get all users
 async function getAllUsers() {
   try {
+    if (!AUTH_ENABLED) {
+      return [DEV_USER];
+    }
+
     if (!fs.existsSync(AUTH_FILE)) {
       return [];
     }
@@ -146,6 +195,8 @@ async function getAllUsers() {
 // Check if any users exist
 async function hasUsers() {
   try {
+    if (!AUTH_ENABLED) return true;
+
     if (!fs.existsSync(AUTH_FILE)) return false;
     
     const result = await excelClient.hasAuthUsers();
@@ -158,11 +209,15 @@ async function hasUsers() {
 
 // Get current user
 function getCurrentUser() {
+  if (!AUTH_ENABLED) {
+    return currentUser || DEV_USER;
+  }
   return currentUser;
 }
 
 // Verify session
 function verifySession(token) {
+  if (!AUTH_ENABLED) return true;
   return token === sessionToken && currentUser !== null;
 }
 
