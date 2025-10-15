@@ -1052,6 +1052,56 @@
 
   // ---- Import Repairs from Excel -----------------------------------------------
 
+  // === Import overlay (green progress bar) ======================================
+  // Reuses the same CSS classes the Excel boot overlay uses: .boot-overlay,
+  // .boot-card, .boot-title, .boot-status, .boot-bar, .boot-bar-fill, .boot-hidden
+  function ensureRepairsProgressOverlay() {
+    let overlay = document.getElementById('repairsBootOverlay');
+    if (overlay) {
+      const fill = overlay.querySelector('#repairsBootFill');
+      const text = overlay.querySelector('#repairsBootText');
+      return { overlay, fill, text };
+    }
+    overlay = document.createElement('div');
+    overlay.id = 'repairsBootOverlay';
+    overlay.className = 'boot-overlay boot-hidden';
+    overlay.innerHTML = `
+      <div class="boot-card">
+        <div class="boot-title">Importing repairs…</div>
+        <div id="repairsBootText" class="boot-status">Starting…</div>
+        <div class="boot-bar"><div id="repairsBootFill" class="boot-bar-fill" style="width:0%"></div></div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    const fill = overlay.querySelector('#repairsBootFill');
+    const text = overlay.querySelector('#repairsBootText');
+    return { overlay, fill, text };
+  }
+
+  function showRepairsProgress(pct = 5, msg = 'Preparing import…') {
+    const { overlay } = ensureRepairsProgressOverlay();
+    overlay.classList.remove('boot-hidden');
+    overlay.style.display = 'flex';
+    updateRepairsProgress(pct, msg);
+  }
+
+  function updateRepairsProgress(pct, msg) {
+    const { fill, text } = ensureRepairsProgressOverlay();
+    const clamped = Math.max(0, Math.min(100, Number(pct) || 0));
+    fill.style.width = clamped + '%';
+    text.textContent = msg || 'Importing…';
+  }
+
+  function hideRepairsProgress(finalMsg) {
+    if (finalMsg) updateRepairsProgress(100, finalMsg);
+    const { overlay } = ensureRepairsProgressOverlay();
+    // small delay for a smooth finish, matches your boot overlay behavior
+    setTimeout(() => {
+      overlay.classList.add('boot-hidden');
+    }, 250);
+  }
+  // ==============================================================================
+
   // detect whether the uploaded sheet includes a given column header
   // Usage: rowsHaveColumn(result.rows, ['Type', 'Repair/Maintenance', 'Work Type'])
   function rowsHaveColumn(rows, candidates) {
@@ -1230,36 +1280,50 @@
         }${errors.length > 5 ? '\n...' : ''}`);
       }
 
-      // Import the complete ones
+      // Import with progress overlay for large jobs
       let successCount = 0;
       let failCount = 0;
       const failReasons = [];
 
-      for (const repair of complete) {
-        const result = await importSingleRepair(repair);
-        if (result && result.success) successCount++;
-        else {
-          failCount++;
-          failReasons.push(`${repair.stationId}: ${result?.message || 'Unknown error'}`);
+      showRepairsProgress(5, 'Importing repairs…');
+      try {
+        // Phase A: import "complete" set
+        const totalA = complete.length;
+        for (let i = 0; i < totalA; i++) {
+          const repair = complete[i];
+          const res = await importSingleRepair(repair);
+          if (res && res.success) successCount++; else { failCount++; failReasons.push(`${repair.stationId}: ${res?.message || 'Unknown error'}`); }
+          const pct = 5 + Math.round(((i + 1) / Math.max(1, totalA)) * 55); // 5% -> 60%
+          updateRepairsProgress(pct, `Importing repairs… (${i + 1}/${totalA})`);
         }
-      }
 
-      // If any entries still missing required fields, let user fill those too
-      if (incomplete.length > 0) {
-        await promptForMissingFields(incomplete);
-        // Try importing whatever became complete after that second pass
-        const secondPass = [];
-        for (const r of incomplete) {
-          if (REQUIRED_KEYS.every(k => String(r[k] ?? '').trim())) secondPass.push(r);
-        }
-        for (const repair of secondPass) {
-          const result = await importSingleRepair(repair);
-          if (result && result.success) successCount++;
-          else {
-            failCount++;
-            failReasons.push(`${repair.stationId}: ${result?.message || 'Unknown error'}`);
+        // Phase B: handle previously incomplete entries (prompt already done earlier)
+        let secondPass = [];
+        if (incomplete.length > 0) {
+          await promptForMissingFields(incomplete);
+          secondPass = incomplete.filter(r => REQUIRED_KEYS.every(k => String(r[k] ?? '').trim()));
+          const totalB = secondPass.length;
+          for (let i = 0; i < totalB; i++) {
+            const repair = secondPass[i];
+            const res = await importSingleRepair(repair);
+            if (res && res.success) successCount++; else { failCount++; failReasons.push(`${repair.stationId}: ${res?.message || 'Unknown error'}`); }
+            const pct = 60 + Math.round(((i + 1) / Math.max(1, totalB)) * 20); // 60% -> 80%
+            updateRepairsProgress(pct, `Importing remaining… (${i + 1}/${totalB})`);
           }
         }
+
+        // Phase C: refresh data & UI
+        updateRepairsProgress(82, 'Refreshing tables…');
+        await loadRepairsData();
+        updateRepairsProgress(90, 'Updating workplan…');
+        if (window.populateWorkplanFromRepairs) window.populateWorkplanFromRepairs();
+        updateRepairsProgress(96, 'Finalizing…');
+      } catch (e) {
+        console.error('[importRepairs] progress import failed:', e);
+        failCount += 1;
+        failReasons.push(`Import aborted: ${String(e)}`);
+      } finally {
+        hideRepairsProgress('Done');
       }
 
       await loadRepairsData();
