@@ -24,8 +24,12 @@ function normalizeItem(raw) {
     days = '';
   }
   
-  // Normalize category
-  const category = /^o&?m$/i.test(item.category) ? 'O&M' : 'Capital';
+  // Normalize category: preserve Capital, O&M, Decommission; default to Capital
+  const rawCategory = String(item.category || item.Category || '').trim();
+  let category = 'Capital';
+  if (/^o&?m$/i.test(rawCategory)) category = 'O&M';
+  else if (/^decomm/i.test(rawCategory)) category = 'Decommission';
+  else if (/^cap/i.test(rawCategory)) category = 'Capital';
   
   // Normalize type
   const type = /^monitor/i.test(item.type) ? 'Monitoring' : 'Repair';

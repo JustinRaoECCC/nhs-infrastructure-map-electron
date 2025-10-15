@@ -913,6 +913,12 @@ async function appendRepair(company, location, _assetType, repair = {}) {
   const at = normStr(get('Asset Type') || repair.assetType || _assetType || '');
   // Pull O&M/Capital/Decommission from station workbook for this station/asset
   const funding = await lookupFundingOverridesFor(company, location, at, stationId);
+  // Determine which funding column to populate based on Category
+  const rawCat = normStr(get('Category') || get('category'));
+  let chosenCat = 'Capital';
+  if (/^o&?m$/i.test(rawCat)) chosenCat = 'O&M';
+  else if (/^decomm/i.test(rawCat)) chosenCat = 'Decommission';
+
   const newValues = headers.map(h => {
     const l = (h || '').toLowerCase();
     if (l === 'date')        return get('Date') || today;
@@ -921,9 +927,9 @@ async function appendRepair(company, location, _assetType, repair = {}) {
     if (l === 'repair name') return get('Repair Name') || get('name') || '';
     if (l === 'type')        return get('Type') || 'Repair';
     if (l === 'category')    return get('Category') || 'Capital'; // default as before
-    if (l === 'o&m')         return funding.om || '';
-    if (l === 'capital')     return funding.capital || '';
-    if (l === 'decommission')return funding.decommission || '';
+    if (l === 'o&m')         return chosenCat === 'O&M' ? (funding.om || '') : '';
+    if (l === 'capital')     return chosenCat === 'Capital' ? (funding.capital || '') : '';
+    if (l === 'decommission')return chosenCat === 'Decommission' ? (funding.decommission || '') : '';
     return get(h) || '';
   });
 
@@ -1076,6 +1082,13 @@ async function saveStationRepairs(company, location, _assetType, stationId, repa
   for (const repair of repairs) {
     const at = normStr(repair.assetType || _assetType || '');
     const funding = await lookupFundingOverridesFor(company, location, at, stationId);
+    const catRaw = normStr(repair.category || repair.Category || 'Capital');
+    const isOM = /^o&?m$/i.test(catRaw);
+    const isDec = /^decomm/i.test(catRaw);
+    const isCap = !isOM && !isDec;
+    const omOut  = isOM  ? (funding.om || '') : '';
+    const capOut = isCap ? (funding.capital || '') : '';
+    const decOut = isDec ? (funding.decommission || '') : '';
     const rowVals = [
       repair.date || today,
       stationId,
@@ -1087,9 +1100,9 @@ async function saveStationRepairs(company, location, _assetType, stationId, repa
       repair.category || 'Capital',
       repair.type || 'Repair',
       repair.days || '',
-      funding.om || '',
-      funding.capital || '',
-      funding.decommission || ''
+      omOut,
+      capOut,
+      decOut
     ];
     ws.addRow(rowVals);
   }

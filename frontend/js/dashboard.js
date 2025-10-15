@@ -1,4 +1,4 @@
-// frontend/js/dashboard.js
+﻿// frontend/js/dashboard.js
 (function () {
   'use strict';
 
@@ -11,15 +11,15 @@
   const hasStatsDOM = () => !!document.getElementById('statisticsPage');
 
   const getFieldValue = (row, fieldName) => {
-    // Finds "Inspection Frequency" or any "Section – Inspection Frequency" etc., case-insensitive
+    // Finds "Inspection Frequency" or any "Section â€“ Inspection Frequency" etc., case-insensitive
     const target = String(fieldName).toLowerCase();
     for (const k of Object.keys(row || {})) {
       if (!k) continue;
       if (String(k).toLowerCase() === target) return row[k];
     }
     for (const k of Object.keys(row || {})) {
-      if (k.includes(' – ')) {
-        const parts = k.split(' – ');
+      if (k.includes(' â€“ ')) {
+        const parts = k.split(' â€“ ');
         const last = parts[parts.length - 1];
         if (String(last).toLowerCase() === target) return row[k];
       }
@@ -252,7 +252,7 @@
     body.className = 'stat-card-body';
     const closeBtn = document.createElement('button');
     closeBtn.className = 'btn btn-ghost stat-card-close';
-    closeBtn.textContent = '✕';
+    closeBtn.textContent = 'âœ•';
     closeBtn.title = 'Remove';
     closeBtn.addEventListener('click', () => {
       wrap.remove();
@@ -307,7 +307,7 @@
     root.innerHTML = `
       <div class="stat-title">Stations by Inspection Frequency</div>
       <div class="chart" style="width:100%;" aria-label="Inspection Frequency chart"></div>
-      <div class="hint">Looks for a column named “Inspection Frequency” (any section).</div>
+      <div class="hint">Looks for a column named â€œInspection Frequencyâ€ (any section).</div>
     `;
     const chart = $('.chart', root);
 
@@ -346,7 +346,7 @@
         <input type="number" step="0.1" class="in-rad" placeholder="10" value="10">
         <button class="btn btn-primary btn-run">Compute</button>
       </div>
-      <div class="result"><strong>Stations in circle:</strong> <span class="out">—</span></div>
+      <div class="result"><strong>Stations in circle:</strong> <span class="out">â€”</span></div>
       <div class="hint">Uses the current filters. Change inputs and click Compute.</div>
     `;
     const out = $('.result .out', root);
@@ -372,7 +372,7 @@
       const lon = parseFloat(lonIn.value);
       const rad = Math.max(0, parseFloat(radIn.value));
       if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(rad)) {
-        out.textContent = '—';
+        out.textContent = 'â€”';
         return;
       }
       let n = 0;
@@ -389,7 +389,7 @@
     const update = () => {
       // try to seed reasonable center; do not auto-compute to avoid surprises
       seedDefaults();
-      out.textContent = '—';
+      out.textContent = 'â€”';
     };
 
     return addCard(root, update);
@@ -675,7 +675,7 @@
     if (typeof cost === 'number' && Number.isFinite(cost)) {
       return `$${cost.toLocaleString()}`;
     }
-    return String(cost || '—');
+    return String(cost || 'â€”');
   }
 
   function openGlobalRepairModal() {
@@ -746,6 +746,7 @@
             <select id="grCategory">
               <option value="Capital">Capital</option>
               <option value="O&M">O&M</option>
+              <option value="Decommission">Decommission</option>
             </select>
           </div>
           <div class="form-row">
@@ -1051,6 +1052,21 @@
 
   // ---- Import Repairs from Excel -----------------------------------------------
 
+  // detect whether the uploaded sheet includes a given column header
+  // Usage: rowsHaveColumn(result.rows, ['Type', 'Repair/Maintenance', 'Work Type'])
+  function rowsHaveColumn(rows, candidates) {
+    const norm = (s) => String(s || '').toLowerCase().replace(/\s+|[_()-]/g, '');
+    const targets = new Set((candidates || []).map(norm));
+    for (const r of rows || []) {
+      for (const k of Object.keys(r || {})) {
+        if (targets.has(norm(k))) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   async function openImportRepairsModal() {
     const modal = $('#importRepairsModal');
     if (!modal) return;
@@ -1068,7 +1084,7 @@
         <div id="irPreview" style="display:none;margin-top:16px;">
           <div style="margin-bottom:8px;"><strong>Preview:</strong> <span id="irCount"></span> repairs found</div>
           <div id="irMissingFields" style="display:none;margin-bottom:12px;padding:8px;background:#fff3cd;border:1px solid #ffc107;border-radius:4px;">
-            <strong>⚠️ Some repairs are missing required fields</strong>
+            <strong>âš ï¸ Some repairs are missing required fields</strong>
             <div style="margin-top:4px;font-size:0.9em;">You'll be prompted to fill in missing information after import.</div>
           </div>
         </div>
@@ -1096,29 +1112,69 @@
 
       try {
         const b64 = await fileToBase64(file);
-        const result = await window.electronAPI.importRepairsExcel(b64);
-        
-        if (!result.success || !result.rows || result.rows.length === 0) {
-          appAlert('No data found in the Excel file');
-          return;
+
+        // If workbook has multiple sheets, allow selecting which one to import
+        const sheetsResp = await window.electronAPI.excelListSheets(b64).catch(() => ({ success:false, sheets:[] }));
+        let sheetName = null;
+        if (sheetsResp && Array.isArray(sheetsResp.sheets) && sheetsResp.sheets.length) {
+          // Prefer a sheet that looks like repairs if present
+          sheetName = sheetsResp.sheets.find(s => /repair/i.test(s)) || sheetsResp.sheets[0];
+
+          // Inject/select sheet picker dynamically
+          let sheetPicker = document.getElementById('irSheetSelect');
+          if (!sheetPicker) {
+            const pickerWrap = document.createElement('div');
+            pickerWrap.className = 'form-row';
+            pickerWrap.innerHTML = `
+              <label>Sheet</label>
+              <select id="irSheetSelect"></select>
+            `;
+            fileInput.closest('.form-row').after(pickerWrap);
+            sheetPicker = pickerWrap.querySelector('#irSheetSelect');
+          }
+          sheetPicker.innerHTML = sheetsResp.sheets.map(s => `<option value="${esc(s)}" ${s===sheetName?'selected':''}>${esc(s)}</option>`).join('');
+          sheetPicker.onchange = async () => {
+            const sel = sheetPicker.value;
+            await parseAndPreview(b64, sel);
+          };
         }
 
-        // Map column headers to standardized field names
-        parsedRepairs = result.rows.map(row => mapRepairFields(row));
-        
-        // Check for missing fields
-        const hasMissing = parsedRepairs.some(r => !r.stationId || !r.name);
-        
-        countSpan.textContent = parsedRepairs.length;
-        preview.style.display = 'block';
-        missingDiv.style.display = hasMissing ? 'block' : 'none';
-        importBtn.disabled = false;
+        await parseAndPreview(b64, sheetName);
 
       } catch (err) {
         console.error('[importRepairs] parse failed:', err);
         appAlert('Failed to parse Excel file: ' + err.message);
       }
     });
+
+    async function parseAndPreview(b64, sheetName) {
+      const result = sheetName
+        ? await window.electronAPI.excelParseRowsFromSheet(b64, sheetName)
+        : await window.electronAPI.importRepairsExcel(b64);
+
+      if (!result.success || !result.rows || result.rows.length === 0) {
+        appAlert('No data found in the selected sheet');
+        return;
+      }
+
+      // NEW: detect if the sheet actually contains a "Type" column (or aliases)
+      const hasTypeColumn = rowsHaveColumn(result.rows, ['Type', 'Repair/Maintenance', 'Work Type']);
+
+      // Map column headers to standardized field names.
+      // If there is NO Type column at all, leave type blank so the missing-fields modal
+      // prompts per row (with "Apply to all remaining" available).
+      parsedRepairs = result.rows.map(row =>
+        mapRepairFields(row, { noTypeColumn: !hasTypeColumn })
+      );
+
+      // Check for missing fields (required ones)
+      const hasMissing = parsedRepairs.some(r => !r.stationId || !r.name);
+
+      countSpan.textContent = parsedRepairs.length;
+      preview.style.display = 'block';
+      missingDiv.style.display = hasMissing ? 'block' : 'none';
+      importBtn.disabled = false;
+    }
 
     importBtn.addEventListener('click', async () => {
       if (parsedRepairs.length === 0) return;
@@ -1129,6 +1185,8 @@
       const REQUIRED_KEYS = ['stationId', 'name'];
       const OPTIONAL_KEYS = ['category', 'type', 'severity', 'priority', 'cost', 'days'];
       const ALL_KEYS = [...REQUIRED_KEYS, ...OPTIONAL_KEYS];
+      // Type is per-item; can bulk-apply in prompt similarly to Category
+      
 
       // Split into "needs prompting" vs "already complete"
       const toPrompt = [];
@@ -1167,7 +1225,7 @@
       }
 
       if (errors.length > 0) {
-        await appAlert(`⚠️ Could not import ${errors.length} repair(s):\n\n${
+        await appAlert(`âš ï¸ Could not import ${errors.length} repair(s):\n\n${
           errors.slice(0, 5).join('\n')
         }${errors.length > 5 ? '\n...' : ''}`);
       }
@@ -1223,32 +1281,57 @@
   }
 
   // Map various column header names to standardized field names
-  function mapRepairFields(row) {
+  function mapRepairFields(row, opts = {}) {
+    const noTypeColumn = !!opts.noTypeColumn;
+
     const mapped = {
       stationId: pickField(row, ['Station Number', 'Site Number', 'Station ID', 'Site ID', 'ID']),
-      name: pickField(row, ['Repair Name', 'Name']),
-      severity: pickField(row, ['Severity Ranking', 'Severity']),
-      priority: pickField(row, ['Priority Ranking', 'Priority']),
-      cost: pickField(row, ['Repair Cost (K)', 'Repair Cost', 'Cost']),
-      days: pickField(row, ['Days']),
-      category: pickField(row, ['Category']),
-      type: pickField(row, ['Type']) || 'Repair'
+      name:      pickField(row, ['Repair Name', 'Name']),
+      severity:  pickField(row, ['Severity Ranking', 'Severity']),
+      priority:  pickField(row, ['Priority Ranking', 'Priority']),
+      cost:      pickField(row, ['Repair Cost (K)', 'Repair Cost', 'Cost']),
+      days:      pickField(row, ['Days']),
+      category:  pickField(row, ['Category']),
+      // NEW: If there is NO Type column in the sheet, leave blank to force a per-row prompt.
+      // If a Type column exists but the cell is blank, default to "Repair" (previous behavior).
+      type:      (function () {
+        const raw = (pickField(row, ['Type', 'Repair/Maintenance', 'Work Type']) || '').trim();
+        if (!raw) return noTypeColumn ? '' : 'Repair';
+        const t = raw.toLowerCase();
+        // Normalize common inputs
+        if (/(maintain|monitor)/.test(t)) return 'Monitoring'; // "Maintenance" -> "Monitoring" in app
+        return 'Repair';
+      })()
     };
-    
-    // Clean up cost if it has "(K)" in it
-    if (mapped.cost && String(mapped.cost).includes('K')) {
-      mapped.cost = String(mapped.cost).replace(/[^\d.]/g, '');
+
+    // Normalize common cost input formats without destroying ranges like "10-20" or "<2"
+    if (mapped.cost) {
+      const v = String(mapped.cost).trim();
+      // e.g., 12K or 12k -> 12000
+      const kMatch = v.match(/^\$?\s*([0-9]+(?:\.[0-9]+)?)\s*[kK]\s*$/);
+      if (kMatch) {
+        const n = parseFloat(kMatch[1]);
+        if (Number.isFinite(n)) mapped.cost = Math.round(n * 1000);
+      }
     }
-    
+
     return mapped;
   }
 
   // Helper to pick first non-empty value from multiple possible field names
   function pickField(row, candidates) {
+    // Robust lookup: case-insensitive and supports composite keys (Section â€“ Field)
     for (const name of candidates) {
-      const value = row[name];
-      if (value !== undefined && value !== null && String(value).trim() !== '') {
-        return String(value).trim();
+      const v = getFieldValue(row, name);
+      if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
+    }
+    // Fallback: try loose matching by normalized key
+    const norm = (s) => String(s || '').toLowerCase().replace(/\s+|[_()-]/g, '');
+    const keys = Object.keys(row || {});
+    for (const name of candidates) {
+      const target = norm(name);
+      for (const k of keys) {
+        if (norm(k) === target && String(row[k] ?? '').trim() !== '') return String(row[k]).trim();
       }
     }
     return '';
@@ -1259,8 +1342,9 @@
     const FIELD_DEFS = [
       { key: 'stationId', label: 'Station ID *', type: 'text', required: true },
       { key: 'name',      label: 'Repair Name *', type: 'text', required: true },
-      { key: 'category',  label: 'Category',      type: 'select', options: ['Capital', 'O&M'] },
+      { key: 'category',  label: 'Category',      type: 'select', options: ['Capital', 'O&M', 'Decommission'] },
       { key: 'type',      label: 'Type',          type: 'select', options: ['Repair', 'Monitoring'] },
+      { key: 'assetType', label: 'Asset Type',    type: 'select-dynamic' },
       { key: 'severity',  label: 'Severity',      type: 'text' },
       { key: 'priority',  label: 'Priority',      type: 'text' },
       { key: 'cost',      label: 'Cost',          type: 'number' },
@@ -1282,7 +1366,7 @@
         if (f.type === 'select') {
           const id = `mf_${f.key}`;
           const applyAllId = `mf_${f.key}_all`;
-          const applyAllHtml = (f.key === 'category' || f.key === 'type')
+          const applyAllHtml = (f.key === 'category' || f.key === 'type' || f.key === 'assetType')
             ? `<label style="margin-left:8px;font-size:0.9em;">
                 <input id="${applyAllId}" type="checkbox"> Apply to all remaining missing
               </label>`
@@ -1291,10 +1375,34 @@
             <div class="form-row">
               <label>${f.label}</label>
               <select id="${id}">
-                <option value="">Select…</option>
+                <option value="">Select</option>
                 ${f.options.map(o => `<option value="${o}">${o}</option>`).join('')}
               </select>
               ${applyAllHtml}
+            </div>
+          `;
+        }
+        if (f.type === 'select-dynamic') {
+          const id = `mf_${f.key}`;
+          const sid = String(repair.stationId || '').trim();
+          const ats = Array.from(new Set((stationsList || [])
+            .filter(s => String(s.station_id).trim().toLowerCase() === sid.toLowerCase())
+            .map(s => String(s.asset_type || '').trim())
+            .filter(Boolean)));
+          const optionsHtml = ats.map(o => `<option value="${o}">${o}</option>`).join('');
+          const header = ats.length ? 'Select' : 'None available';
+          const note = ats.length ? '' : '<div class="hint" style="font-size:0.85em;opacity:.75;">No known asset types for this Station ID in data.</div>';
+          const applyAllIdDyn = `mf_${f.key}_all`;
+          const applyAllHtmlDyn = `<label style="margin-left:8px;font-size:0.9em;"><input id="${applyAllIdDyn}" type="checkbox"> Apply to all remaining missing</label>`;
+          return `
+            <div class="form-row">
+              <label>${f.label}</label>
+              <select id="${id}">
+                <option value="">${header}</option>
+                ${optionsHtml}
+              </select>
+              ${applyAllHtmlDyn}
+              ${note}
             </div>
           `;
         }
@@ -1350,7 +1458,7 @@
             if (v) repair[f.key] = v;
 
             // Optional bulk apply for Category/Type
-            if ((f.key === 'category' || f.key === 'type') && v) {
+            if ((f.key === 'category' || f.key === 'type' || f.key === 'assetType') && v) {
               const allCb = document.getElementById(`mf_${f.key}_all`);
               if (allCb && allCb.checked) {
                 for (let j = i + 1; j < repairs.length; j++) {
@@ -1394,7 +1502,8 @@
       }
       
       const location = station.location_file || station.province || station.location;
-      const assetType = station.asset_type;
+      // Prefer user-provided asset type if present (to disambiguate dup Station IDs)
+      const assetType = String(repair.assetType || station.asset_type || '').trim();
       const company = station.company || '';
 
       if (!company) {
@@ -1406,10 +1515,17 @@
         return { success: false, message: 'Station missing location or asset type' };
       }
       
-      // Build repair payload
+      // Build repair payload with header-cased fields so backend writes proper columns
       const repairData = {
         'Station ID': repair.stationId,
         'Repair Name': repair.name,
+        'Severity': repair.severity || '',
+        'Priority': repair.priority || '',
+        'Cost': repair.cost || '',
+        'Category': String(repair.category ?? '').trim(),
+        'Type': repair.type || 'Repair',
+        'Days': repair.days || '',
+        // Aliases for compatibility with older paths
         name: repair.name,
         severity: repair.severity || '',
         priority: repair.priority || '',
@@ -1418,6 +1534,7 @@
         type: repair.type || 'Repair',
         days: repair.days || ''
       };
+      if (repair.assetType) repairData['Asset Type'] = String(repair.assetType).trim();
       
       const result = await window.electronAPI.appendRepair({ 
         company, 
@@ -1571,3 +1688,7 @@
   // Expose init for index loader
   window.initStatisticsView = initStatisticsView;
 })();
+
+
+
+
