@@ -43,13 +43,17 @@ const REPAIRS_SHEET = 'Repairs';
 const REPAIRS_HEADERS = [
   'Date',        // leftmost
   'Station ID',
+  'Asset Type',
   'Repair Name',
   'Severity',
   'Priority',
   'Cost',
   'Category',
   'Type',
-  'Days'
+  'Days',
+  'O&M',
+  'Capital',
+  'Decommission'
 ];
 
 // Funding helpers
@@ -155,6 +159,76 @@ function findColumnByField(ws, targetFieldName) {
     }
   }
   return -1;
+}
+
+
+// ─── Helper: read O&M/Capital/Decommission from station data sheet ─────────
+async function lookupFundingOverridesFor(company, location, assetType, stationId) {
+  const filePath = getLocationFilePath(company, location);
+  const _ExcelJS = getExcel();
+  const result = { om: '', capital: '', decommission: '' };
+  if (!fs.existsSync(filePath)) return result;
+  if (!assetType || !stationId) return result;
+
+  const wb = new _ExcelJS.Workbook();
+  try { await wb.xlsx.readFile(filePath); } catch { return result; }
+
+  const at = String(assetType).toLowerCase();
+  const isTwoRow = (ws) => (ws?.getRow(2)?.actualCellCount || 0) > 0;
+  const like = (name) => String(name || '').toLowerCase().includes(at);
+
+  // Candidate sheets: name contains asset type; exclude Repairs
+  const candidates = (wb.worksheets || [])
+    .filter(ws => ws && ws.name && like(ws.name) && !/\brepairs$/i.test(ws.name));
+
+  for (const ws of candidates) {
+    const sidCol = findColumnByField(ws, 'Station ID');
+    if (sidCol < 1) continue;
+
+    // Funding columns: prefer 2-row "Funding Type Override Settings" section, else plain field names
+    let omCol = -1, capCol = -1, decCol = -1;
+    const maxCol = ws.actualColumnCount || Math.max(ws.getRow(1).cellCount || 0, ws.getRow(2).cellCount || 0);
+    if (isTwoRow(ws)) {
+      const r1 = ws.getRow(1), r2 = ws.getRow(2);
+      for (let c = 1; c <= maxCol; c++) {
+        const sec = takeText(r1.getCell(c));
+        const fld = takeText(r2.getCell(c));
+        if (sec === 'Funding Type Override Settings') {
+          if (fld === 'O&M') omCol = c;
+          else if (fld === 'Capital') capCol = c;
+          else if (fld === 'Decommission') decCol = c;
+        }
+      }
+      // Fallback: match by field-only if section not present
+      if (omCol < 0 || capCol < 0 || decCol < 0) {
+        for (let c = 1; c <= maxCol; c++) {
+          const fld = takeText(r2.getCell(c));
+          if (fld === 'O&M' && omCol < 0) omCol = c;
+          if (fld === 'Capital' && capCol < 0) capCol = c;
+          if (fld === 'Decommission' && decCol < 0) decCol = c;
+        }
+      }
+    } else {
+      const r1 = ws.getRow(1);
+      for (let c = 1; c <= maxCol; c++) {
+        const fld = takeText(r1.getCell(c));
+        if (fld === 'O&M' && omCol < 0) omCol = c;
+        if (fld === 'Capital' && capCol < 0) capCol = c;
+        if (fld === 'Decommission' && decCol < 0) decCol = c;
+      }
+    }
+    const startRow = isTwoRow(ws) ? 3 : 2;
+    const lastRow = ws.actualRowCount || ws.rowCount || startRow;
+    for (let r = startRow; r <= lastRow; r++) {
+      const row = ws.getRow(r);
+      if (takeText(row.getCell(sidCol)) !== String(stationId)) continue;
+      if (omCol > 0) result.om = takeText(row.getCell(omCol));
+      if (capCol > 0) result.capital = takeText(row.getCell(capCol));
+      if (decCol > 0) result.decommission = takeText(row.getCell(decCol));
+      return result;
+    }
+  }
+  return result;
 }
 
 // ─── GI normalization helpers ─────────────────────────────────────────────
@@ -753,6 +827,7 @@ async function listRepairsForStation(company, location, _assetType, stationId) {
       out.push({
         date:      takeText(row.getCell(find('Date'))),
         station_id: stationId,
+        assetType: takeText(row.getCell(find('Asset Type'))),
         name:      takeText(row.getCell(find('Repair Name'))),
         severity:  takeText(row.getCell(find('Severity'))),
         priority:  takeText(row.getCell(find('Priority'))),
@@ -760,6 +835,10 @@ async function listRepairsForStation(company, location, _assetType, stationId) {
         category:  takeText(row.getCell(find('Category'))),
         type:      takeText(row.getCell(find('Type'))),
         days:      takeText(row.getCell(find('Days'))),
+        // NOTE: Funding triplet deliberately returned here but never displayed by frontend
+        om:        takeText(row.getCell(find('O&M'))),
+        capital_o: takeText(row.getCell(find('Capital'))),
+        decommission: takeText(row.getCell(find('Decommission'))),
       });
     }
   };
@@ -831,13 +910,20 @@ async function appendRepair(company, location, _assetType, repair = {}) {
   // Build row values aligned to headers
   const today = new Date().toISOString().slice(0, 10);
   const get = (k) => repair[k] !== undefined ? repair[k] : '';
+  const at = normStr(get('Asset Type') || repair.assetType || _assetType || '');
+  // Pull O&M/Capital/Decommission from station workbook for this station/asset
+  const funding = await lookupFundingOverridesFor(company, location, at, stationId);
   const newValues = headers.map(h => {
     const l = (h || '').toLowerCase();
     if (l === 'date')        return get('Date') || today;
     if (l === 'station id')  return stationId;
+    if (l === 'asset type')  return at;
     if (l === 'repair name') return get('Repair Name') || get('name') || '';
     if (l === 'type')        return get('Type') || 'Repair';
     if (l === 'category')    return get('Category') || 'Capital'; // default as before
+    if (l === 'o&m')         return funding.om || '';
+    if (l === 'capital')     return funding.capital || '';
+    if (l === 'decommission')return funding.decommission || '';
     return get(h) || '';
   });
 
@@ -923,6 +1009,7 @@ async function getAllRepairs() {
           const row = ws.getRow(r);
           const stationId = takeText(row.getCell(sidCol));
           if (!stationId) continue;
+          const atFromRepairs = takeText(row.getCell(find('Asset Type')));
           allRepairs.push({
             date:     takeText(row.getCell(find('Date'))),
             station_id: stationId,
@@ -934,7 +1021,7 @@ async function getAllRepairs() {
             type:     takeText(row.getCell(find('Type'))),
             days:     takeText(row.getCell(find('Days'))),
             location,
-            assetType: sidToAsset.get(stationId) || '',
+            assetType: atFromRepairs || sidToAsset.get(stationId) || '',
             company,
           });
         }
@@ -987,16 +1074,22 @@ async function saveStationRepairs(company, location, _assetType, stationId, repa
   // Add new rows
   const today = new Date().toISOString().slice(0, 10);
   for (const repair of repairs) {
+    const at = normStr(repair.assetType || _assetType || '');
+    const funding = await lookupFundingOverridesFor(company, location, at, stationId);
     const rowVals = [
       repair.date || today,
       stationId,
+      at,
       repair.name || '',
       repair.severity || '',
       repair.priority || '',
       repair.cost || '',
       repair.category || 'Capital',
       repair.type || 'Repair',
-      repair.days || ''
+      repair.days || '',
+      funding.om || '',
+      funding.capital || '',
+      funding.decommission || ''
     ];
     ws.addRow(rowVals);
   }

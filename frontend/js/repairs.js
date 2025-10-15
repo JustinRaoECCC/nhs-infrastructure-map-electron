@@ -2,6 +2,7 @@
 (() => {
   const CATS = ['Capital', 'O&M'];
   const TYPES = ['Repair', 'Monitoring'];
+  const AT_REQUIRED_MSG = 'Asset Type is required.';
 
   function fmtCost(v) {
     if (typeof v === 'number' && Number.isFinite(v)) {
@@ -78,7 +79,26 @@
     const m = document.querySelector('#repAddModal');
     if (!stateRef?.editMode) return; // gate on edit mode
     if (!m) return;
+    // Ensure an Asset Type field exists in the modal (inject once if missing)
+    if (!m.querySelector('#repAssetType')) {
+      // Try to place inside a form grid if present
+      const grid = m.querySelector('.form-grid') || m.querySelector('.form-row') || m;
+      const row = document.createElement('div');
+      row.className = 'form-row';
+      row.innerHTML = `
+        <label>Asset Type *</label>
+        <input id="repAssetType" type="text" placeholder="e.g. Cableway">
+      `;
+      // Insert near top
+      if (grid.firstChild) grid.insertBefore(row, grid.firstChild);
+      else grid.appendChild(row);
+    }
     m.style.display = 'flex';
+    // Pre-fill asset type from current station if known
+    const atEl = document.querySelector('#repAssetType');
+    if (atEl && stateRef?.__currentStationAssetType) {
+      atEl.value = stateRef.__currentStationAssetType;
+    }
     setTimeout(() => document.querySelector('#repName')?.focus(), 40);
   }
   function closeModal() {
@@ -88,6 +108,7 @@
   }
 
   function readForm() {
+    const assetType = String(document.querySelector('#repAssetType')?.value || '').trim();
     const name = String(document.querySelector('#repName')?.value || '').trim();
     const severity = String(document.querySelector('#repSeverity')?.value || '').trim();
     const priority = String(document.querySelector('#repPriority')?.value || '').trim();
@@ -103,10 +124,11 @@
 
     // date is auto-added on create
     const date = new Date().toISOString().slice(0, 10);
-    return { date, name, severity, priority, cost, category, type, days };
+    return { date, assetType, name, severity, priority, cost, category, type, days };
   }
 
   function validateForm(data) {
+    if (!data.assetType) return AT_REQUIRED_MSG;
     if (!data.name) return 'Repair Name is required.';
     if (!CATS.includes(data.category)) return 'Select a valid Category.';
     if (!TYPES.includes(data.type)) return 'Select a valid Type.';
@@ -128,6 +150,9 @@
       editMode: false,
     };
     stateRef = state;
+
+    // Remember the station's current asset type for defaulting the modal input
+    stateRef.__currentStationAssetType = (stn && stn.asset_type) ? String(stn.asset_type) : '';
 
     const repairsTbody = host.querySelector('#repairsTbody');
     const monitoringTbody = host.querySelector('#monitoringTbody');
@@ -159,7 +184,8 @@
       try {
         const arr = await window.electronAPI.listRepairs(stn.name, stn.station_id);
         state.items = Array.isArray(arr) ? arr.map(x => ({
-          date: x.date || '', // could be empty for legacy rows
+          date: x.date || '',
+          assetType: x.assetType || stateRef.__currentStationAssetType || '',
           name: x.name || '',
           severity: x.severity || '',
           priority: x.priority || '',

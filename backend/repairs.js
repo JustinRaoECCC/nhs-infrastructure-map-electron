@@ -45,7 +45,7 @@ function normalizeItem(raw) {
     type,
     days,
     location: String(item.location ?? '').trim(),
-    assetType: String(item.assetType ?? '').trim()
+    assetType: String(item.assetType || item['Asset Type'] || '').trim(),
   };
 }
 
@@ -102,8 +102,9 @@ async function saveRepairs(siteName, stationId, items) {
     const { company, location, assetType } = await resolveStationInfo(stationId);
     
     // Normalize items
-    const normalizedItems = Array.isArray(items) 
-      ? items.map(item => normalizeItem({ ...item, location, assetType }))
+    // Respect per-item Asset Type if provided, else fall back to station's asset type
+    const normalizedItems = Array.isArray(items)
+      ? items.map(item => normalizeItem({ ...item, location, assetType: item?.assetType || item?.['Asset Type'] || assetType }))
       : [];
     
     // Save to Excel

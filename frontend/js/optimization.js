@@ -143,13 +143,12 @@ document.addEventListener('DOMContentLoaded', () => {
   // Autocomplete functionality
   function setupAutocomplete(input, suggestions) {
     let currentFocus = -1;
-    
-    input.addEventListener('input', function() {
+    let listDiv = null;
+
+    function buildList(filterVal) {
       closeAllLists();
-      if (!this.value) return;
-      
-      const val = this.value.toLowerCase();
-      const listDiv = document.createElement('div');
+
+      listDiv = document.createElement('div');
       listDiv.setAttribute('class', 'autocomplete-items');
       listDiv.style.position = 'absolute';
       listDiv.style.top = '100%';
@@ -161,60 +160,57 @@ document.addEventListener('DOMContentLoaded', () => {
       listDiv.style.border = '1px solid #d4d4d4';
       listDiv.style.borderTop = 'none';
       listDiv.style.zIndex = '99';
+
+      input.parentNode.style.position = 'relative';
+      input.parentNode.appendChild(listDiv);
+
+      const val = (filterVal || '').toLowerCase();
       
-      this.parentNode.style.position = 'relative';
-      this.parentNode.appendChild(listDiv);
-      
-      let count = 0;
+      // No MAX cap — show all (container is scrollable)
+
       for (let suggestion of suggestions) {
-        if (suggestion.toLowerCase().includes(val) && count < 10) {
+        const s = String(suggestion ?? '');
+        const sLower = s.toLowerCase();
+        if (!val || sLower.includes(val)) {
           const itemDiv = document.createElement('div');
           itemDiv.style.padding = '10px';
           itemDiv.style.cursor = 'pointer';
           itemDiv.style.backgroundColor = '#fafafa';
-          
-          // Highlight matching part
-          const matchIndex = suggestion.toLowerCase().indexOf(val);
-          const beforeMatch = suggestion.substr(0, matchIndex);
-          const match = suggestion.substr(matchIndex, val.length);
-          const afterMatch = suggestion.substr(matchIndex + val.length);
-          
-          itemDiv.innerHTML = beforeMatch + '<strong>' + match + '</strong>' + afterMatch;
-          itemDiv.addEventListener('click', function() {
-            input.value = suggestion;
-            closeAllLists();
+
+          if (val) {
+            const idx = sLower.indexOf(val);
+            const before = s.slice(0, idx);
+            const match = s.slice(idx, idx + val.length);
+            const after = s.slice(idx + val.length);
+            itemDiv.innerHTML = `${before}<strong>${match}</strong>${after}`;
+          } else {
+            itemDiv.textContent = s;
+          }
+
+          // Prevent the input from blurring before we handle the click
+          itemDiv.addEventListener('mousedown', function (e) {
+            e.preventDefault();
           });
-          itemDiv.addEventListener('mouseenter', function() {
+          itemDiv.addEventListener('click', function () {
+            input.value = s;
+            closeAllLists();
+            // Ensure any listeners react to this programmatic change
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+          });
+
+          itemDiv.addEventListener('mouseenter', function () {
             removeActive(listDiv.getElementsByTagName('div'));
             this.classList.add('autocomplete-active');
           });
-          
+
           listDiv.appendChild(itemDiv);
-          count++;
         }
       }
-    });
-    
-    input.addEventListener('keydown', function(e) {
-      let items = this.parentNode.querySelector('.autocomplete-items');
-      if (items) items = items.getElementsByTagName('div');
-      
-      if (e.keyCode === 40) { // Down arrow
-        currentFocus++;
-        addActive(items);
-      } else if (e.keyCode === 38) { // Up arrow
-        currentFocus--;
-        addActive(items);
-      } else if (e.keyCode === 13) { // Enter
-        e.preventDefault();
-        if (currentFocus > -1 && items) {
-          items[currentFocus].click();
-        }
-      } else if (e.keyCode === 27) { // Escape
-        closeAllLists();
-      }
-    });
-    
+
+      currentFocus = -1;
+    }
+
     function addActive(items) {
       if (!items) return;
       removeActive(items);
@@ -222,26 +218,77 @@ document.addEventListener('DOMContentLoaded', () => {
       if (currentFocus < 0) currentFocus = items.length - 1;
       items[currentFocus].classList.add('autocomplete-active');
     }
-    
+
     function removeActive(items) {
-      for (let item of items) {
-        item.classList.remove('autocomplete-active');
-      }
+      for (let item of items) item.classList.remove('autocomplete-active');
     }
-    
+
     function closeAllLists() {
       const items = document.getElementsByClassName('autocomplete-items');
       for (let item of items) {
-        item.parentNode.removeChild(item);
+        if (item && item.parentNode) item.parentNode.removeChild(item);
       }
       currentFocus = -1;
     }
-    
-    document.addEventListener('click', function(e) {
-      if (e.target !== input) {
+
+    // OPEN on focus/click (even if empty)
+    input.addEventListener('focus', () => buildList(input.value));
+    input.addEventListener('click', () => {
+      const open = input.parentNode.querySelector('.autocomplete-items');
+      if (!open) buildList(input.value);
+    });
+
+    // Do NOT instantly close when the input momentarily loses focus to the list
+    input.addEventListener('blur', (e) => {
+      // If the newly focused element is inside our wrapper, keep the list
+      const wrapper = input.parentNode;
+      const next = e.relatedTarget;
+      if (!next || !wrapper.contains(next)) {
+        // Delay a tick so item click can run first if needed
+        setTimeout(() => {
+          // If focus didn't move back into wrapper, close
+          if (!document.activeElement || !wrapper.contains(document.activeElement)) {
+            closeAllLists();
+          }
+        }, 0);
+      }
+    });
+
+    // FILTER while typing
+    input.addEventListener('input', function () {
+      buildList(this.value);
+    });
+
+    // Keyboard controls
+    input.addEventListener('keydown', function (e) {
+      let items = this.parentNode.querySelector('.autocomplete-items');
+      if (items) items = items.getElementsByTagName('div');
+
+      if (e.keyCode === 40) { // Down
+        currentFocus++;
+        addActive(items);
+      } else if (e.keyCode === 38) { // Up
+        currentFocus--;
+        addActive(items);
+      } else if (e.keyCode === 13) { // Enter
+        e.preventDefault();
+        if (currentFocus > -1 && items && items[currentFocus]) {
+          items[currentFocus].click();
+        }
+      } else if (e.keyCode === 27) { // Esc
         closeAllLists();
       }
     });
+
+    // Only close when clicking COMPLETELY OUTSIDE the wrapper (input + list)
+    document.addEventListener('mousedown', function (e) {
+      const wrapper = input.parentNode;
+      if (!wrapper) return;
+      if (!wrapper.contains(e.target)) {
+        // Use mousedown so we close before focus moves elsewhere
+        closeAllLists();
+      }
+    }, true);
   }
 
   function resetOptimizationViews() {
@@ -544,6 +591,7 @@ document.addEventListener('DOMContentLoaded', () => {
                style="flex:1; padding:0.5em;" value="${value}" />
         <button class="deleteGeoValueBtn" style="color:red;">×</button>
       `;
+
       row.querySelector('.deleteGeoValueBtn').addEventListener('click', () => row.remove());
       return row;
     }
