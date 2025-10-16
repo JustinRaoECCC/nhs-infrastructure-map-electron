@@ -612,7 +612,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const geographicalFields = document.getElementById('geographicalFields');
     const temporalFields = document.getElementById('temporalFields');
     const monetaryFields = document.getElementById('monetaryFields');
-    const designationFields = document.getElementById('designationFields');
 
     // Toggle constraint fields AND match using based on type
     fixedParamTypeSelect.addEventListener('change', () => {
@@ -621,14 +620,13 @@ document.addEventListener('DOMContentLoaded', () => {
       if (type === 'geographical') geographicalFields.style.display = 'block';
       if (type === 'temporal') temporalFields.style.display = 'block';
       if (type === 'monetary') monetaryFields.style.display = 'block';
-      if (type === 'designation') designationFields.style.display = 'block';
 
       // Show SPLIT condition controls only for monetary
       splitConditionContainer.style.display = (type === 'monetary') ? 'block' : 'none';
       splitFields.style.display = (type === 'monetary' && enableSplitCondition.checked) ? 'block' : 'none';
       
       // Only show "Match Using" for types that have a field_name
-      const hasFieldName = type === 'monetary' || type === 'designation';
+      const hasFieldName = (type === 'monetary');
       matchUsingContainer.style.display = hasFieldName ? 'block' : 'none';
     });
 
@@ -705,11 +703,6 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
           infoHTML += `<div><strong>Split:</strong> Off</div>`;
         }
-      } else if (param.type === 'designation') {
-        const matchLabel = param.match_using === 'field_name' ? 'Field Name' : 'Fixed Parameter Name';
-        infoHTML += `<div><strong>Match Using:</strong> ${matchLabel}</div>
-                     <div><strong>Condition:</strong> ${param.condition}</div>
-                     <div><strong>Field:</strong> ${param.field_name}</div>`;
       }
 
       // Show IF condition if it exists
@@ -717,6 +710,14 @@ document.addEventListener('DOMContentLoaded', () => {
         infoHTML += `<div style="margin-top:0.5em; padding:0.5em; background:#fff3cd; border-left:3px solid #ffc107;">
                       <strong>IF Condition:</strong><br/>
                       ${param.if_condition.field} ${param.if_condition.operator} "${param.if_condition.value}"
+                    </div>`;
+      }
+
+      // Show IF Split (same styling as IF Condition) when split is enabled
+      if (param.split_condition && param.split_condition.enabled) {
+        infoHTML += `<div style="margin-top:0.5em; padding:0.5em; background:#fff3cd; border-left:3px solid #ffc107;">
+                      <strong>IF Split:</strong><br/>
+                      Source = "${param.split_condition.source}"
                     </div>`;
       }
 
@@ -743,8 +744,6 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (param.type === 'monetary') {
           yearsHTML += `<label style="font-size:0.9em;">Budget:</label><br/>
                         <input type="number" class="year-value" value="${yearData.value || ''}" style="width:100%; padding:0.3em;"/>`;
-        } else if (param.type === 'designation') {
-          yearsHTML += `<div style="font-size:0.9em; color:#666;">Active this year</div>`;
         }
         
         yearsHTML += `</div>`;
@@ -945,9 +944,7 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('monetaryValue').value = '';
       document.getElementById('monetaryUnit').value = '';
       document.getElementById('monetaryCumulative').checked = false;
-      document.getElementById('designationCondition').value = 'None';
-      document.getElementById('designationFieldName').value = '';
-      
+
       // Reset IF condition
       document.getElementById('enableIfCondition').checked = false;
       document.getElementById('ifConditionFields').style.display = 'none';
@@ -989,19 +986,17 @@ document.addEventListener('DOMContentLoaded', () => {
       // Inputs we may (un)wire
       let fpName = document.getElementById('fixedParamNameInput');
       let monField = document.getElementById('monetaryFieldName');
-      let desigField = document.getElementById('designationFieldName');
 
       // 1) Geographical & Temporal → suggest on Fixed Parameter Name only (UNION of field + parameter names)
       if (type === 'geographical' || type === 'temporal') {
         if (fpName)  fpName  = applyAutocomplete(fpName, availableAllNames);
         if (monField) monField = unwireAutocomplete(monField);
-        if (desigField) desigField = unwireAutocomplete(desigField);
         return;
       }
 
-      // 2) Monetary & Designation → suggest ONLY on selection from "Match Using"
-      if (type === 'monetary' || type === 'designation') {
-        const fieldInput = (type === 'monetary') ? monField : desigField;
+      // 2) Monetary → suggest ONLY on selection from "Match Using"
+      if (type === 'monetary') {
+        const fieldInput = monField;
 
         if (matchUsing === 'field_name') {
           // Wire Field Name to FIELD suggestions, unwire Fixed Parameter Name
@@ -1106,15 +1101,6 @@ document.addEventListener('DOMContentLoaded', () => {
           };
         }
         param.years[currentYear] = { value: parseFloat(value) };
-      } else if (type === 'designation') {
-        param.match_using = matchUsing;
-        param.condition = document.getElementById('designationCondition').value;
-        param.field_name = document.getElementById('designationFieldName').value.trim();
-        if (!param.field_name) {
-          appAlert('Please enter a field name for the designation constraint');
-          return;
-        }
-        param.years[currentYear] = {};
       }
 
       fixedParamContainer.appendChild(makeFixedParamDisplayRow(param));
@@ -1186,6 +1172,21 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderOpt1Results(result) {
       opt1Results.innerHTML = '';
 
+      const formatCurrency = (n) => {
+        const num = Number(n || 0);
+        if (!isFinite(num)) return '';
+        return '$' + num.toLocaleString(undefined, { maximumFractionDigits: 0 });
+      };
+      // Collect all split keys present (with positive amounts) to make dynamic columns
+      const splitKeysSet = new Set();
+      (result.ranking || []).forEach(item => {
+        const sa = item.split_amounts || {};
+        for (const [k, v] of Object.entries(sa)) {
+          if (Number(v) > 0) splitKeysSet.add(k);
+        }
+      });
+      const splitKeys = Array.from(splitKeysSet).sort((a,b) => a.localeCompare(b));
+
       const summary = document.createElement('div');
       summary.className = 'opt-header';
       summary.innerHTML = `
@@ -1206,6 +1207,8 @@ document.addEventListener('DOMContentLoaded', () => {
             <th>Location</th>
             <th>Asset Type</th>
             <th>Repair</th>
+            <th>Cost</th>
+            ${splitKeys.map(k => `<th>Split: ${k}</th>`).join('')}
             <th>Score</th>
           </tr>
         </thead>
@@ -1214,15 +1217,26 @@ document.addEventListener('DOMContentLoaded', () => {
       
       const tbody = table.querySelector('tbody');
       (result.ranking || []).forEach(item => {
+        const cost = Number(item.cost || 0);
         const tr = document.createElement('tr');
-        tr.innerHTML = `
+        let html = `
           <td class="rank">${item.rank}</td>
           <td>${item.station_id || ''}</td>
           <td>${item.location || ''}</td>
           <td>${item.asset_type || ''}</td>
           <td>${item.repair_name || ''}</td>
+          <td class="num">${formatCurrency(cost)}</td>
+        `;
+        // per-source split columns (blank when zero/nonexistent)
+        const sa = item.split_amounts || {};
+        splitKeys.forEach(k => {
+          const v = Number(sa[k] || 0);
+          html += `<td class="num">${v > 0 ? formatCurrency(v) : ''}</td>`;
+        });
+        html += `
           <td class="num">${Number(item.score).toFixed(2)}%</td>
         `;
+        tr.innerHTML = html;
         tbody.appendChild(tr);
       });
 
@@ -1237,10 +1251,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (runOpt2Btn) {
       runOpt2Btn.addEventListener('click', async () => {
-        if (!window._scoredRepairs) {
-          opt2Results.innerHTML = '<div class="opt-error">⚠️ Please run Optimization 1 first.</div>';
-          return;
-        }
 
         const stationList = await window.electronAPI.getStationData();
         const stationDataMap = {};
@@ -1249,10 +1259,19 @@ document.addEventListener('DOMContentLoaded', () => {
           if (stationId) stationDataMap[stationId] = station;
         });
 
-        opt2Results.innerHTML = '<div class="opt-note">Grouping repairs into trips...</div>';
+        opt2Results.innerHTML = '<div class="opt-note">Grouping repairs into trips (no prioritization)...</div>';
+
+        // Allow running directly on raw repairs if Optimization 1 hasn't been run
+        let scored = Array.isArray(window._scoredRepairs) ? window._scoredRepairs : null;
+        let raw = null;
+        if (!scored || !scored.length) {
+          const allRepairs = await window.electronAPI.getAllRepairs();
+          raw = Array.isArray(allRepairs) ? allRepairs : [];
+        }
 
         const result = await window.electronAPI.groupRepairsIntoTrips({
-          scored_repairs: window._scoredRepairs,
+          scored_repairs: scored || [],
+          repairs: raw || [],
           station_data: stationDataMap
         });
 
@@ -1269,6 +1288,12 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderOpt2Results(result) {
       opt2Results.innerHTML = '';
 
+      const formatCurrency = (n) => {
+        const num = Number(n || 0);
+        if (!isFinite(num)) return '$0';
+        return '$' + num.toLocaleString(undefined, { maximumFractionDigits: 0 });
+      };
+
       const summary = document.createElement('div');
       summary.className = 'opt-header';
       summary.innerHTML = `
@@ -1276,18 +1301,29 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="opt-summary">
           <span class="chip">Total Trips: ${result.trips.length}</span>
         </div>
+        <div class="opt-note" style="margin-top:.5rem;">
+          <strong>Note:</strong> This step <em>only groups</em> by <code>Trip Location × Access Type</code>.
+          It does <em>not</em> use scores or apply any prioritization/order from Optimization 1.
+          Trips are listed by total days (descending).
+        </div>
       `;
       opt2Results.appendChild(summary);
 
       result.trips.forEach((trip, idx) => {
         const tripSection = document.createElement('section');
         tripSection.className = 'opt-trip';
+        // build split total chips (skip zeros/nonexistent)
+        const splitTotals = trip.total_split_costs || {};
+        const splitKeys = Object.keys(splitTotals).filter(k => Number(splitTotals[k]) > 0).sort();
+        const splitChips = splitKeys.map(k => `<span class="chip">${k}: ${formatCurrency(splitTotals[k])}</span>`).join('');
         tripSection.innerHTML = `
           <div class="trip-title">Trip ${idx + 1}: ${trip.trip_location} (${trip.access_type})</div>
           <div class="trip-summary">
             <span class="chip">Total Days: ${trip.total_days}</span>
             <span class="chip">Stations: ${trip.stations.length}</span>
             <span class="chip">Repairs: ${trip.repairs.length}</span>
+            <span class="chip">Total Cost: ${formatCurrency(trip.total_cost || 0)}</span>
+            ${splitChips}
           </div>
         `;
 

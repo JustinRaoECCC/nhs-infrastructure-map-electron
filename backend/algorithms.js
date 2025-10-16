@@ -195,6 +195,18 @@ function findFieldAnywhere(repair, station, fieldName) {
   return null;
 }
 
+// Prefer the Cost value coming directly from the Repairs sheet (repair object only)
+function _extractRepairCost(repair) {
+  if (!repair || typeof repair !== 'object') return 0;
+  for (const [k, v] of Object.entries(repair)) {
+    if (_canon(k) === 'cost') {
+      const num = _tryFloat(v);
+      return num == null ? 0 : num;
+    }
+  }
+  return 0;
+}
+
 async function _loadParams() {
   if (typeof lookupsRepo.getAlgorithmParameters === 'function') {
     return await lookupsRepo.getAlgorithmParameters();
@@ -231,6 +243,13 @@ async function optimizeWorkplan({ repairs = [], station_data = {}, param_overall
     const location = repair.location ?? '';
     const assetType = repair.assetType ?? '';
     const station = station_data[stationId] || {};
+    const cost = _extractRepairCost(repair);
+    const splitMap = _getRepairSplitMap(repair, station_data) || {};
+    const splitAmounts = Object.create(null);
+    for (const [src, mul] of Object.entries(splitMap)) {
+      const amt = Number.isFinite(mul) ? cost * mul : 0;
+      if (amt > 0) splitAmounts[src] = amt;
+    }
 
     const perParam = Object.create(null);
     let presentSum = 0;
@@ -282,6 +301,8 @@ async function optimizeWorkplan({ repairs = [], station_data = {}, param_overall
       repair_name: repairName,
       location,
       asset_type: assetType,
+      cost,
+      split_amounts: splitAmounts,
       score: Math.round(score * 10000) / 100,
       details: breakdown,
       original_repair: repair
@@ -313,23 +334,29 @@ async function optimizeWorkplan({ repairs = [], station_data = {}, param_overall
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Group scored repairs into trips by Trip Location and Access Type
+ * Group repairs into trips by Trip Location and Access Type.
+ * NOTE: This is **just grouping** and applies **no prioritization** or ordering
+ * based on Optimization 1 scores. It can accept either:
+ *   - scored_repairs: [{ original_repair, score, ... }]
+ *   - repairs:        [rawRepairObjects]
+ * If scored_repairs is empty, it will group raw repairs directly.
  */
-async function groupRepairsIntoTrips({ scored_repairs = [], station_data = {} } = {}) {
+async function groupRepairsIntoTrips({ scored_repairs = [], repairs = [], station_data = {} } = {}) {
   console.log('[groupRepairsIntoTrips] scored_repairs=', scored_repairs.length);
 
-  if (!scored_repairs.length) {
-    return {
-      success: false,
-      message: 'No scored repairs provided',
-      trips: []
-    };
+  // Accept raw repairs if scored ones were not provided
+  const inputRepairs = (Array.isArray(scored_repairs) && scored_repairs.length)
+    ? scored_repairs
+    : (Array.isArray(repairs) ? repairs.map(r => ({ original_repair: r })) : []);
+
+  if (!inputRepairs.length) {
+    return { success: false, message: 'No repairs provided', trips: [] };
   }
 
   // Group by trip_location + access_type
   const tripGroups = new Map();
 
-  for (const scoredRepair of scored_repairs) {
+  for (const scoredRepair of inputRepairs) {
     const repair = scoredRepair.original_repair;
     const stationId = repair.station_id;
     const station = station_data[stationId] || {};
@@ -339,8 +366,7 @@ async function groupRepairsIntoTrips({ scored_repairs = [], station_data = {} } 
     const accessType = findFieldAnywhere(repair, station, 'Access Type') || 'Unknown';
     const cityOfTravel = findFieldAnywhere(repair, station, 'City of Travel') || '';
     const timeToSite = findFieldAnywhere(repair, station, 'Time to Site (hr)') || '';
-    const siteName = findFieldAnywhere(repair, station, 'Site Name') || 
-                     findFieldAnywhere(repair, station, 'name') || '';
+    const siteName = findFieldAnywhere(repair, station, 'Station Name') || '';
 
     const tripKey = `${tripLocation}|||${accessType}`;
     
@@ -358,8 +384,11 @@ async function groupRepairsIntoTrips({ scored_repairs = [], station_data = {} } 
 
     // Track unique stations
     if (!trip.stations.has(stationId)) {
+      // Keep the full original station row so downstream constraints (Opt-3)
+      // can see fields like "Access Type", regions, budgets, etc.
       trip.stations.set(stationId, {
-        station_id: stationId,
+        ...station,                 // full station metadata
+        station_id: stationId,      // ensure canonical key present
         site_name: siteName,
         city_of_travel: cityOfTravel,
         time_to_site: timeToSite,
@@ -376,20 +405,39 @@ async function groupRepairsIntoTrips({ scored_repairs = [], station_data = {} } 
   
   for (const [tripKey, tripData] of tripGroups.entries()) {
     let totalDays = 0;
+    let totalCost = 0;
+    const tripSplitTotals = Object.create(null);
     const stationsArray = [];
 
     for (const [stationId, stationInfo] of tripData.stations.entries()) {
       let stationDays = 0;
+      let stationCost = 0;
       
       // Sum days for all repairs at this station
       for (const repair of stationInfo.repairs) {
         const days = _tryFloat(repair.days || repair.Days) || 0;
         stationDays += days;
+        stationCost += _extractRepairCost(repair);
+
+        // Split totals (per repair)
+        const splitMap = _getRepairSplitMap(repair, station_data) || {};
+        const baseCost = _extractRepairCost(repair);
+        if (baseCost > 0) {
+          for (const [src, mul] of Object.entries(splitMap)) {
+            if (!Number.isFinite(mul)) continue;
+            const add = baseCost * mul;
+            if (add <= 0) continue;
+            tripSplitTotals[src] = (tripSplitTotals[src] || 0) + add;
+          }
+        }
+
       }
 
       stationInfo.total_days = stationDays;
+      stationInfo.total_cost = stationCost;
       stationInfo.repair_count = stationInfo.repairs.length;
       totalDays += stationDays;
+      totalCost += stationCost;
       
       stationsArray.push(stationInfo);
     }
@@ -398,6 +446,8 @@ async function groupRepairsIntoTrips({ scored_repairs = [], station_data = {} } 
       trip_location: tripData.trip_location,
       access_type: tripData.access_type,
       total_days: totalDays,
+      total_cost: totalCost,
+      total_split_costs: tripSplitTotals,
       repairs: tripData.repairs,
       stations: stationsArray
     });
@@ -408,6 +458,7 @@ async function groupRepairsIntoTrips({ scored_repairs = [], station_data = {} } 
 
   return {
     success: true,
+    notes: 'Grouping only. No prioritization or ordering by scores.',
     trips,
     total_trips: trips.length
   };
@@ -443,13 +494,16 @@ function checkIfCondition(repair, param, station_data) {
   }
 }
 
-function checkGeographicalConstraint(repair, param, station_data) {
+function checkGeographicalConstraint(repair, param, station_data, year) {
   if (!checkIfCondition(repair, param, station_data)) {
     return true;
   }  
   
   const paramName = _canon(param.name);
-  const allowedValues = (param.values || []).map(v => _canon(v));
+  // Prefer year-specific allowed values if provided; fall back to base list.
+  const yearVals =
+    (param.years && year && param.years[year] && param.years[year].values) || null;
+  const allowedValues = (yearVals || param.values || []).map(v => _canon(v));
   const station = station_data[repair.station_id] || {};
   
   const value = findFieldAnywhere(repair, station, paramName);
@@ -542,6 +596,11 @@ function checkMonetaryConstraint(repair, param, station_data, year) {
 async function assignTripsToYears({ trips = [], fixed_parameters = [] } = {}) {
   console.log('[assignTripsToYears] trips=', trips.length, 'fixed_parameters=', fixed_parameters.length);
 
+  // Drop legacy/unsupported types (e.g., "designation") to be safe.
+  fixed_parameters = (fixed_parameters || []).filter(p =>
+    p && (p.type === 'geographical' || p.type === 'temporal' || p.type === 'monetary')
+  );
+
   if (!trips.length) {
     return {
       success: false,
@@ -576,6 +635,8 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [] } = {}) {
   trips.forEach(trip => {
     trip.stations.forEach(station => {
       if (!stationDataMap[station.station_id]) {
+        // Each trip's station now carries the full station row (from Opt-2).
+        // Keep it as-is so findFieldAnywhere can access all columns.
         stationDataMap[station.station_id] = station;
       }
     });
@@ -627,7 +688,7 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [] } = {}) {
         
         for (const param of fixed_parameters) {
           if (param.type === 'geographical') {
-            if (!checkGeographicalConstraint(originalRepair, param, stationDataMap)) {
+            if (!checkGeographicalConstraint(originalRepair, param, stationDataMap, year)) {
               canAssign = false;
               break;
             }

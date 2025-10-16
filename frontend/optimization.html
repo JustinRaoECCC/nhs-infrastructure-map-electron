@@ -61,7 +61,6 @@
       <p class="section-description">
         Group scored repairs by trip location and access type.
         <br/>
-        <strong>⚠️ Note:</strong> You must run Optimization 1 first.
       </p>
       <button id="runOpt2Btn" class="btn btn-primary">Run Optimization 2</button>
       
@@ -145,7 +144,6 @@
           <option value="geographical">Geographical</option>
           <option value="temporal">Temporal</option>
           <option value="monetary">Monetary</option>
-          <option value="designation">Designation</option>
         </select>
       </div>
 
@@ -228,21 +226,6 @@
         </div>
       </div>
 
-      <!-- Designation Fields -->
-      <div id="designationFields" class="constraint-fields" style="display:none; margin-top:1em;">
-        <div style="margin-bottom:0.5em;">
-          <label>Condition</label><br/>
-          <select id="designationCondition" style="width:100%; padding:0.5em;">
-            <option value="None">None (filter out if present)</option>
-            <option value="Only">Only (keep only if present)</option>
-          </select>
-        </div>
-        <div>
-          <label>Field Name</label><br/>
-          <input type="text" id="designationFieldName" placeholder="Start typing to see suggestions..." style="width:100%; padding:0.5em;"/>
-        </div>
-      </div>
-
       <!-- SPLIT Condition (Monetary only) -->
       <div id="splitConditionContainer" style="display:none; margin-top:1.2em; padding-top:1em; border-top:2px solid #ddd;">
         <div style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.5em;">
@@ -299,7 +282,7 @@
           
           <div>
             <label>Value</label><br/>
-            <input type="text" id="ifValue" placeholder="e.g., O&M, Capital, Active" style="width:100%; padding:0.5em;"/>
+            <input type="text" id="ifValue" placeholder="e.g., O&M, Capital, Decommission" style="width:100%; padding:0.5em;"/>
           </div>
         </div>
       </div>
