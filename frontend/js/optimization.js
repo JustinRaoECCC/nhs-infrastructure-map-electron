@@ -20,6 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let availableFieldNames = [];
   let availableParameterNames = [];
   let availableAllNames = [];
+  let availableSplitSources = [];
 
   function uniqCaseInsensitive(arr) {
     const seen = new Set();
@@ -29,6 +30,46 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!seen.has(key)) { seen.add(key); out.push(s); }
     }
     return out;
+  }
+
+  // Parse split strings like "50%F-50%P", "100%P(OTH)", "84%H-192%W(D"
+  // Returns an array of source tokens, e.g., ["F","P"], ["P(OTH)"], ["H","W(D"]
+  function parseSplitSources(str) {
+    if (!str) return [];
+    const segments = String(str).split(/\s*-\s*/);
+    const out = [];
+    for (const seg of segments) {
+      // capture "<number>%<source...>"
+      const m = String(seg).match(/(-?\d+(?:\.\d+)?)%\s*([A-Za-z0-9()[\]\/\-\s]+)$/);
+      if (m && m[2]) {
+        out.push(m[2].trim());
+      }
+    }
+    return out;
+  }
+
+  // Collect split sources by scanning O&M / Capital / Decommission columns in repairs
+  async function loadAvailableSplitSources() {
+    try {
+      const repairs = await window.electronAPI.getAllRepairs();
+      const set = new Set();
+      const get = (obj, key) => {
+        if (!obj) return undefined;
+        // exact then loose match
+        if (key in obj) return obj[key];
+        const found = Object.keys(obj).find(k => String(k).trim().toLowerCase() === String(key).trim().toLowerCase());
+        return found ? obj[found] : undefined;
+      };
+      (repairs || []).forEach(r => {
+        ['O&M', 'Capital', 'Decommission'].forEach(col => {
+          const v = get(r, col);
+          parseSplitSources(v).forEach(s => set.add(s));
+        });
+      });
+      availableSplitSources = uniqCaseInsensitive(Array.from(set)).sort();
+    } catch (e) {
+      console.error('Failed to load split sources:', e);
+    }
   }
 
   async function loadAvailableFields() {
@@ -138,6 +179,23 @@ document.addEventListener('DOMContentLoaded', () => {
     return _cloneInput(input);
   }
 
+  // Install ONE global "click-away" handler for all autocompletes.
+  // This prevents multiple per-input document listeners from racing each other
+  // and closing the list before an item click can set the input value.
+  (function installGlobalAutocompleteCloserOnce () {
+    if (window.__acCloserInstalled) return;
+    window.__acCloserInstalled = true;
+    document.addEventListener(
+      'mousedown',
+      (e) => {
+        // If click is inside ANY autocomplete wrapper or list, keep it open.
+        if (e.target.closest('.autocomplete-wrapper') || e.target.closest('.autocomplete-items')) return;
+        _clearAutocompleteLists();
+      },
+      true
+    );
+  })();
+
   // ───────────────────────────────── end helpers ─────────────────────────────────
 
   // Autocomplete functionality
@@ -161,6 +219,7 @@ document.addEventListener('DOMContentLoaded', () => {
       listDiv.style.borderTop = 'none';
       listDiv.style.zIndex = '99';
 
+      input.parentNode.classList.add('autocomplete-wrapper');
       input.parentNode.style.position = 'relative';
       input.parentNode.appendChild(listDiv);
 
@@ -193,6 +252,7 @@ document.addEventListener('DOMContentLoaded', () => {
           });
           itemDiv.addEventListener('click', function () {
             input.value = s;
+            input.focus();
             closeAllLists();
             // Ensure any listeners react to this programmatic change
             input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -280,15 +340,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 
-    // Only close when clicking COMPLETELY OUTSIDE the wrapper (input + list)
-    document.addEventListener('mousedown', function (e) {
-      const wrapper = input.parentNode;
-      if (!wrapper) return;
-      if (!wrapper.contains(e.target)) {
-        // Use mousedown so we close before focus moves elsewhere
-        closeAllLists();
-      }
-    }, true);
   }
 
   function resetOptimizationViews() {
@@ -323,6 +374,8 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Load available fields for autocomplete
     await loadAvailableFields();
+    // Load split sources for monetary "SPLIT" condition
+    await loadAvailableSplitSources();
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -551,6 +604,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const fixedParamMatchUsing = document.getElementById('fixedParamMatchUsing');
     const matchUsingContainer = document.getElementById('matchUsingContainer');
 
+    // SPLIT Condition UI
+    const splitConditionContainer = document.getElementById('splitConditionContainer');
+    const enableSplitCondition = document.getElementById('enableSplitCondition');
+    const splitFields = document.getElementById('splitFields');    
     // Constraint-specific fields
     const geographicalFields = document.getElementById('geographicalFields');
     const temporalFields = document.getElementById('temporalFields');
@@ -565,6 +622,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (type === 'temporal') temporalFields.style.display = 'block';
       if (type === 'monetary') monetaryFields.style.display = 'block';
       if (type === 'designation') designationFields.style.display = 'block';
+
+      // Show SPLIT condition controls only for monetary
+      splitConditionContainer.style.display = (type === 'monetary') ? 'block' : 'none';
+      splitFields.style.display = (type === 'monetary' && enableSplitCondition.checked) ? 'block' : 'none';
       
       // Only show "Match Using" for types that have a field_name
       const hasFieldName = type === 'monetary' || type === 'designation';
@@ -609,6 +670,13 @@ document.addEventListener('DOMContentLoaded', () => {
       if (param.type === 'monetary' || param.type === 'temporal') {
         row.dataset.cumulative = param.cumulative ? 'true' : 'false';
       }
+      // Store IF and SPLIT condition in dataset for extraction
+      if (param.if_condition) {
+        row.dataset.ifCondition = JSON.stringify(param.if_condition);
+      }
+      if (param.split_condition) {
+        row.dataset.splitCondition = JSON.stringify(param.split_condition);
+      }
 
       const years = param.years ? Object.keys(param.years).sort() : [];
       
@@ -632,6 +700,11 @@ document.addEventListener('DOMContentLoaded', () => {
                      <div><strong>Conditional:</strong> ${param.conditional}</div>
                      <div><strong>Unit:</strong> ${param.unit}</div>
                      <div><strong>Mode:</strong> ${param.cumulative ? 'Cumulative Budget' : 'Per Repair'}</div>`;
+        if (param.split_condition && param.split_condition.enabled) {
+          infoHTML += `<div><strong>Split:</strong> On &nbsp; <span style="opacity:0.8;">Source:</span> ${param.split_condition.source}</div>`;
+        } else {
+          infoHTML += `<div><strong>Split:</strong> Off</div>`;
+        }
       } else if (param.type === 'designation') {
         const matchLabel = param.match_using === 'field_name' ? 'Field Name' : 'Fixed Parameter Name';
         infoHTML += `<div><strong>Match Using:</strong> ${matchLabel}</div>
@@ -836,10 +909,11 @@ document.addEventListener('DOMContentLoaded', () => {
       });
 
       // Extract IF condition if displayed
-      const rowData = row.dataset.ifCondition;
-      if (rowData) {
-        param.if_condition = JSON.parse(rowData);
-      }
+      const ifData = row.dataset.ifCondition;
+      if (ifData) param.if_condition = JSON.parse(ifData);
+      // Extract SPLIT condition if stored
+      const splitData = row.dataset.splitCondition;
+      if (splitData) param.split_condition = JSON.parse(splitData);
       
       return param;
     }
@@ -888,6 +962,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Setup autocomplete based on match_using selection
       setupFixedParamAutocomplete();
+
+      // Reset SPLIT condition defaults
+      const splitSourceInput = document.getElementById('splitSourceInput');
+      if (splitSourceInput) splitSourceInput.value = '';
+      enableSplitCondition.checked = false;
+      splitFields.style.display = 'none';
+    });
+
+    // Toggle SPLIT field visibility
+    enableSplitCondition.addEventListener('change', () => {
+      const type = fixedParamTypeSelect.value;
+      splitFields.style.display = (type === 'monetary' && enableSplitCondition.checked) ? 'block' : 'none';
     });
 
     function setupFixedParamAutocomplete() {
@@ -897,6 +983,9 @@ document.addEventListener('DOMContentLoaded', () => {
       // Always wire IF-condition field to FIELD names
       const ifFieldInput = document.getElementById('ifFieldName');
       if (ifFieldInput) applyAutocomplete(ifFieldInput, availableFieldNames);
+      // SPLIT source suggestions
+      const splitSourceInput = document.getElementById('splitSourceInput');
+      if (splitSourceInput) applyAutocomplete(splitSourceInput, availableSplitSources);
       // Inputs we may (un)wire
       let fpName = document.getElementById('fixedParamNameInput');
       let monField = document.getElementById('monetaryFieldName');
@@ -1003,6 +1092,18 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!param.field_name || !value) {
           appAlert('Please fill in all monetary constraint fields');
           return;
+        }
+        // SPLIT condition (optional)
+        if (enableSplitCondition.checked) {
+          const src = (document.getElementById('splitSourceInput').value || '').trim();
+          if (!src) {
+            appAlert('Please enter a Source for the SPLIT condition, or disable the SPLIT condition.');
+            return;
+          }
+          param.split_condition = {
+            enabled: true,
+            source: src
+          };
         }
         param.years[currentYear] = { value: parseFloat(value) };
       } else if (type === 'designation') {

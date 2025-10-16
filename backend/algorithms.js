@@ -14,6 +14,88 @@ const _tryFloat = (s) => {
   return Number.isFinite(v) ? v : null;
 };
 
+// ───────── temporal unit helpers (hours as canonical base) ─────────
+const _normalizeUnit = (u) => {
+  const s = _canon(u);
+  if (!s) return null;
+  // hours
+  if (/^(h|hr|hrs|hour|hours)$/.test(s)) return 'hours';
+  // days
+  if (/^(d|day|days)$/.test(s)) return 'days';
+  // weeks
+  if (/^(w|wk|wks|week|weeks)$/.test(s)) return 'weeks';
+  // months (assume 30-day months)
+  if (/^(mo|mon|mons|month|months)$/.test(s)) return 'months';
+  // years (assume 365-day years)
+  if (/^(y|yr|yrs|year|years)$/.test(s)) return 'years';
+  return null;
+};
+
+const _detectUnitFromFieldName = (name) => {
+  const s = _canon(name);
+  if (!s) return null;
+  if (/(^|\W)(h|hr|hrs|hour|hours)(\W|$)/.test(s)) return 'hours';
+  if (/(^|\W)(d|day|days)(\W|$)/.test(s)) return 'days';
+  if (/(^|\W)(w|wk|wks|week|weeks)(\W|$)/.test(s)) return 'weeks';
+  if (/(^|\W)(mo|mon|mons|month|months)(\W|$)/.test(s)) return 'months';
+  if (/(^|\W)(y|yr|yrs|year|years)(\W|$)/.test(s)) return 'years';
+  return null;
+};
+
+const _toHours = (num, unitLike) => {
+  const u = _normalizeUnit(unitLike) || 'hours';
+  switch (u) {
+    case 'hours':  return num;
+    case 'days':   return num * 24;
+    case 'weeks':  return num * 24 * 7;
+    case 'months': return num * 24 * 30;   // approx
+    case 'years':  return num * 24 * 365;  // approx
+    default:       return num;             // if unknown, pass through
+  }
+};
+
+// ===== monetary SPLIT helpers =====
+// Parse split strings like "50%F-50%P", "100%P(OTH)", "84%H-192%W(D"
+// Returns a map of canonicalized source -> multiplier (e.g., {"f":0.5,"p":0.5})
+function _parseSplitSpec(spec) {
+  if (!spec) return null;
+  const parts = String(spec).split(/\s*-\s*/);
+  const out = Object.create(null);
+  let found = false;
+  for (const seg of parts) {
+    const m = String(seg).match(/(-?\d+(?:\.\d+)?)%\s*([A-Za-z0-9()[\]\/\-\s]+)$/);
+    if (!m) continue;
+    const pct = Number(m[1]);
+    if (!Number.isFinite(pct)) continue;
+    const src = _canon(m[2] || '');
+    if (!src) continue;
+    out[src] = (pct / 100);
+    found = true;
+  }
+  return found ? out : null;
+}
+
+// Determine which category column (O&M / Capital / Decommission) has a value and parse it.
+function _getRepairSplitMap(repair, station_data) {
+  // prefer repair fields; use findFieldAnywhere so case/variant-insensitive
+  const om = findFieldAnywhere(repair, station_data[repair.station_id] || {}, 'O&M');
+  const cap = findFieldAnywhere(repair, station_data[repair.station_id] || {}, 'Capital');
+  const dec = findFieldAnywhere(repair, station_data[repair.station_id] || {}, 'Decommission');
+  const spec = om || cap || dec || null;
+  return _parseSplitSpec(spec);
+}
+
+// Apply split multiplier when configured on a monetary fixed parameter.
+function _applyMonetarySplitIfAny(amount, param, repair, station_data) {
+  if (!param || !param.split_condition || !param.split_condition.enabled) return amount;
+  const srcRaw = param.split_condition.source;
+  if (!srcRaw) return amount;
+  const splitMap = _getRepairSplitMap(repair, station_data) || null;
+  if (!splitMap) return amount;
+  const mul = splitMap[_canon(srcRaw)];
+  return amount * (Number.isFinite(mul) ? mul : 0); // if missing source => 0 contribution
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // OPTIMIZATION 1 - REPAIR SCORING (Soft Parameters)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -402,7 +484,18 @@ function checkTemporalConstraint(repair, param, station_data, year) {
   const constraintValue = _tryFloat(yearConstraint.value);
   if (constraintValue === null) return true;
   
-  return _compare(param.conditional || '<=', repairNum, constraintValue);
+  // ── Unit-aware comparison: convert both sides to hours ──
+  // Prefer unit from field name; fall back to the param's configured unit.
+  const repairUnit =
+    _detectUnitFromFieldName(param.name) ||
+    _normalizeUnit(param.unit) ||
+    'hours';
+  const constraintUnit = _normalizeUnit(param.unit) || repairUnit;
+
+  const repairHours = _toHours(repairNum, repairUnit);
+  const constraintHours = _toHours(constraintValue, constraintUnit);
+
+  return _compare(param.conditional || '<=', repairHours, constraintHours);
 }
 
 function _compare(op, a, b) {
@@ -431,6 +524,8 @@ function checkMonetaryConstraint(repair, param, station_data, year) {
   
   const repairCost = _tryFloat(value);
   if (repairCost === null) return false;
+  // Apply SPLIT multiplier if configured (monetary only)
+  const adjustedCost = _applyMonetarySplitIfAny(repairCost, param, repair, station_data);
   
   const yearConstraint = param.years && param.years[year];
   if (!yearConstraint) return true;
@@ -438,7 +533,7 @@ function checkMonetaryConstraint(repair, param, station_data, year) {
   const budget = _tryFloat(yearConstraint.value);
   if (budget === null) return true;
   
-  return _compare(param.conditional || '<=', repairCost, budget);
+  return _compare(param.conditional || '<=', adjustedCost, budget);
 }
 
 /**
@@ -504,9 +599,11 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [] } = {}) {
         };
       } else if (param.type === 'temporal' && param.years && param.years[year]) {
         const key = _canon(param.name);
+        const rawTotal = _tryFloat(param.years[year].value) || 0;
+        const totalHours = _toHours(rawTotal, _normalizeUnit(param.unit) || _detectUnitFromFieldName(param.name) || 'hours');
         yearlyTemporal[year][key] = {
-          total: _tryFloat(param.years[year].value) || 0,
-          used: 0,
+          total: totalHours,     // store in hours
+          used: 0,               // track in hours
           cumulative: !!param.cumulative
         };
       }
@@ -567,13 +664,21 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [] } = {}) {
             if (param.type === 'monetary') {
               const fieldName = _canon(param.field_name);
               const value = findFieldAnywhere(originalRepair, station, fieldName);
-              const amount = _tryFloat(value) || 0;
+              let amount = _tryFloat(value) || 0;
+              // Apply SPLIT multiplier if configured
+              amount = _applyMonetarySplitIfAny(amount, param, originalRepair, stationDataMap);
               tripTotals[fieldName] = (tripTotals[fieldName] || 0) + amount;
             } else if (param.type === 'temporal') {
               const fieldName = _canon(param.name);
               const value = findFieldAnywhere(originalRepair, station, fieldName);
               const amount = _tryFloat(value) || 0;
-              tripTotals[fieldName] = (tripTotals[fieldName] || 0) + amount;
+              // Convert each repair's temporal value to hours before summing
+              const repairUnit =
+                _detectUnitFromFieldName(param.name) ||
+                _normalizeUnit(param.unit) ||
+                'hours';
+              const hours = _toHours(amount, repairUnit);
+              tripTotals[fieldName] = (tripTotals[fieldName] || 0) + hours;
             }
           }
         }

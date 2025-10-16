@@ -2,6 +2,8 @@
 let currentStationData = null;
 let hasUnsavedChanges = false;
 let generalInfoUnlocked = false;
+// FUNDING LOCK: can not change this section name
+const FUNDING_SECTION_NAME = 'Funding Type Override Settings';
 
 // Helper
 function escapeHtml(str) {
@@ -337,6 +339,8 @@ function createEditableSection(sectionName, fields) {
   sectionDiv.className = 'station-section editable-section';
   sectionDiv.dataset.sectionName = sectionName;
 
+  const isFundingSection = String(sectionName).trim() === FUNDING_SECTION_NAME; // FUNDING LOCK
+
   const headerDiv = document.createElement('div');
   headerDiv.className = 'section-header';
   headerDiv.style.display = 'flex';
@@ -347,54 +351,47 @@ function createEditableSection(sectionName, fields) {
   titleInput.type = 'text';
   titleInput.className = 'section-title-input';
   titleInput.value = sectionName;
+  titleInput.dataset.originalTitle = sectionName; // FUNDING LOCK: keep original for save-time
   titleInput.addEventListener('input', markUnsavedChanges);
 
   const actionsDiv = document.createElement('div');
   actionsDiv.className = 'section-actions';
 
-  // IMPROVED: Ensure button is properly configured
   const editToggleBtn = document.createElement('button');
   editToggleBtn.className = 'btn btn-outline btn-sm js-section-edit';
   editToggleBtn.textContent = 'Edit section';
-  editToggleBtn.type = 'button'; // Explicitly set type to prevent form submission
+  editToggleBtn.type = 'button';
   editToggleBtn.setAttribute('aria-pressed', 'false');
-  editToggleBtn.style.pointerEvents = 'auto'; // Ensure clickable
-  editToggleBtn.style.zIndex = '10'; // Ensure above other elements
-  
-  // Add a direct click handler as backup (in addition to delegated handler)
+  editToggleBtn.style.pointerEvents = 'auto';
+  editToggleBtn.style.zIndex = '10';
   editToggleBtn.addEventListener('click', function(e) {
-    // This is a backup in case delegation fails
     if (!e.defaultPrevented) {
-      console.log('[Edit Section] Direct handler triggered for:', sectionName);
       e.preventDefault();
       e.stopPropagation();
       const section = this.closest('.station-section');
-      if (section) {
-        setSectionEditing(section, !isSectionEditing(section));
-      }
+      if (section) setSectionEditing(section, !isSectionEditing(section));
     }
   });
 
   const addFieldBtn = document.createElement('button');
-  addFieldBtn.className = 'btn btn-ghost btn-sm edit-only'; // HIDDEN until editing
+  addFieldBtn.className = 'btn btn-ghost btn-sm edit-only';
   addFieldBtn.textContent = '+ Add Field';
-  addFieldBtn.type = 'button'; // Explicitly set type
+  addFieldBtn.type = 'button';
   addFieldBtn.addEventListener('click', (e) => {
     e.preventDefault();
     addFieldToSection(sectionDiv);
   });
 
   const deleteSectionBtn = document.createElement('button');
-  deleteSectionBtn.className = 'btn btn-danger btn-sm edit-only'; // HIDDEN until editing
+  deleteSectionBtn.className = 'btn btn-danger btn-sm edit-only';
   deleteSectionBtn.textContent = 'Delete Section';
   deleteSectionBtn.title = 'Delete Section';
-  deleteSectionBtn.type = 'button'; // Explicitly set type
+  deleteSectionBtn.type = 'button';
   deleteSectionBtn.addEventListener('click', (e) => {
     e.preventDefault();
     deleteSection(sectionDiv);
   });
 
-  // order: [Edit/Exit][Add Field][Delete Section]
   actionsDiv.appendChild(editToggleBtn);
   actionsDiv.appendChild(addFieldBtn);
   actionsDiv.appendChild(deleteSectionBtn);
@@ -407,7 +404,7 @@ function createEditableSection(sectionName, fields) {
 
   // Create field rows
   Object.entries(fields).forEach(([fieldName, value]) => {
-    const fieldRow = createEditableField(fieldName, value);
+    const fieldRow = createEditableField(fieldName, value, { isFundingSection }); // FUNDING LOCK: pass context
     fieldsDiv.appendChild(fieldRow);
   });
 
@@ -417,20 +414,27 @@ function createEditableSection(sectionName, fields) {
   // ensure starts in non-editing state
   setSectionEditing(sectionDiv, false);
 
-  // Protect Funding Type Override Settings section schema: no rename/add/delete
-  if (String(sectionName).trim() === 'Funding Type Override Settings') {
+  // FUNDING LOCK: make schema immutable (no rename/add/delete), values still editable
+  if (isFundingSection) {
+    sectionDiv.dataset.locked = 'funding';
+    sectionDiv.dataset.allowedFields = Object.keys(fields).join('|'); // for save-time enforcement
     // Lock section title
     titleInput.readOnly = true;
     titleInput.disabled = true;
     // Hide add/delete controls
     addFieldBtn.style.display = 'none';
     deleteSectionBtn.style.display = 'none';
+    // Lock all field labels + remove per-field delete buttons
+    sectionDiv.querySelectorAll('.field-label-input').forEach(inp => { inp.readOnly = true; inp.disabled = true; });
+    sectionDiv.querySelectorAll('.field-row .btn-danger').forEach(btn => { btn.style.display = 'none'; });
   }
 
   return sectionDiv;
 }
 
-function createEditableField(fieldName, value) {
+function createEditableField(fieldName, value, opts = {}) {
+  const isFundingSection = !!opts.isFundingSection; // FUNDING LOCK
+
   const fieldDiv = document.createElement('div');
   fieldDiv.className = 'field-row';
   fieldDiv.dataset.fieldName = fieldName;
@@ -439,6 +443,7 @@ function createEditableField(fieldName, value) {
   labelInput.type = 'text';
   labelInput.className = 'field-label-input';
   labelInput.value = fieldName;
+  labelInput.dataset.originalLabel = fieldName; // FUNDING LOCK: keep original for save-time
   labelInput.addEventListener('input', markUnsavedChanges);
 
   const valueInput = document.createElement('input');
@@ -453,15 +458,13 @@ function createEditableField(fieldName, value) {
   deleteBtn.textContent = '✕';
   deleteBtn.title = 'Delete Field';
   deleteBtn.addEventListener('click', () => deleteField(fieldDiv));
-  // If in protected Funding section, disable label edits and hide delete button
-  try {
-    const parentSectionName = fieldDiv.closest('.station-section')?.dataset?.sectionName || '';
-    if (parentSectionName === 'Funding Type Override Settings') {
-      labelInput.readOnly = true;
-      labelInput.disabled = true;
-      deleteBtn.style.display = 'none';
-    }
-  } catch (_) {}
+
+  // FUNDING LOCK: labels not editable, cannot delete
+  if (isFundingSection) {
+    labelInput.readOnly = true;
+    labelInput.disabled = true;
+    deleteBtn.style.display = 'none';
+  }
 
   fieldDiv.appendChild(labelInput);
   fieldDiv.appendChild(valueInput);
@@ -471,18 +474,35 @@ function createEditableField(fieldName, value) {
 }
 
 function addFieldToSection(sectionDiv) {
+  // FUNDING LOCK: block new fields in the funding section
+  const isFunding = sectionDiv?.dataset.locked === 'funding' ||
+                    String(sectionDiv?.dataset.sectionName || '').trim() === FUNDING_SECTION_NAME;
+  if (isFunding) {
+    appAlert('You cannot add new fields to "Funding Type Override Settings".');
+    return;
+  }
+
   const fieldsContainer = sectionDiv.querySelector('.section-fields');
   const newField = createEditableField('New Field', '');
   fieldsContainer.appendChild(newField);
-  
+
   const labelInput = newField.querySelector('.field-label-input');
   labelInput.focus();
   labelInput.select();
-  
+
   markUnsavedChanges();
 }
 
 async function deleteField(fieldDiv) {
+  // FUNDING LOCK: block field deletion in funding section
+  const sectionDiv = fieldDiv.closest('.station-section');
+  const isFunding = sectionDiv?.dataset.locked === 'funding' ||
+                    String(sectionDiv?.dataset.sectionName || '').trim() === FUNDING_SECTION_NAME;
+  if (isFunding) {
+    appAlert('Fields in "Funding Type Override Settings" cannot be removed.');
+    return;
+  }
+
   const ok = await appConfirm('Are you sure you want to delete this field?');
   if (!ok) return;
   fieldDiv.remove();
@@ -490,6 +510,14 @@ async function deleteField(fieldDiv) {
 }
 
 async function deleteSection(sectionDiv) {
+  // FUNDING LOCK: block section deletion
+  const isFunding = sectionDiv?.dataset.locked === 'funding' ||
+                    String(sectionDiv?.dataset.sectionName || '').trim() === FUNDING_SECTION_NAME;
+  if (isFunding) {
+    appAlert('"Funding Type Override Settings" cannot be deleted.');
+    return;
+  }
+
   const sectionName = sectionDiv.dataset.sectionName;
   const ok = await appConfirm(`Are you sure you want to delete the "${sectionName}" section?`);
   if (!ok) return;
@@ -785,29 +813,54 @@ async function saveStationChanges(assetType) {
     // Collect new section data
     const sections = container.querySelectorAll('.editable-section');
     const uiSections = new Map(); // Map of section name -> array of field names in UI order
-    
+
     sections.forEach(sectionDiv => {
-      const sectionTitle = sectionDiv.querySelector('.section-title-input').value.trim();
+      const titleEl = sectionDiv.querySelector('.section-title-input');
+      const rawTitle = (titleEl?.value || '').trim();
+      const isFunding = sectionDiv?.dataset.locked === 'funding' || rawTitle === FUNDING_SECTION_NAME;
+
+      // FUNDING LOCK: use original title (or canonical) regardless of UI text
+      const sectionTitle = isFunding
+        ? (titleEl?.dataset.originalTitle || FUNDING_SECTION_NAME)
+        : rawTitle;
+
+      const allowed = isFunding
+        ? new Set((sectionDiv.dataset.allowedFields || '').split('|').filter(Boolean))
+        : null;
+
       const fieldRows = sectionDiv.querySelectorAll('.field-row');
-      
+
       if (!uiSections.has(sectionTitle)) {
         uiSections.set(sectionTitle, []);
       }
 
       fieldRows.forEach(fieldRow => {
-        const fieldName = fieldRow.querySelector('.field-label-input').value.trim();
-        const fieldValue = fieldRow.querySelector('.field-value-input').value.trim();
-        
+        const labelEl = fieldRow.querySelector('.field-label-input');
+        const rawFieldName = (labelEl?.value || '').trim();
+        const originalFieldName = labelEl?.dataset.originalLabel || rawFieldName;
+
+        // FUNDING LOCK: enforce original field names only; ignore any extras
+        if (isFunding) {
+          if (allowed && !allowed.has(originalFieldName)) {
+            return; // skip unauthorized new field
+          }
+        }
+
+        const fieldName = isFunding ? originalFieldName : rawFieldName;
+
+        const valueEl = fieldRow.querySelector('.field-value-input');
+        const fieldValue = (valueEl?.value || '').trim();
+
         if (sectionTitle && fieldName) {
           const compositeKey = `${sectionTitle} – ${fieldName}`;
           updatedData[compositeKey] = fieldValue;
-          
+
           // Track UI field order
           uiSections.get(sectionTitle).push(fieldName);
-
         }
       });
     });
+
 
     // Build schema STRICTLY from what's in the UI (deletions included).
     let schemaData;

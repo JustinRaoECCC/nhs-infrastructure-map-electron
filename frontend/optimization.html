@@ -224,7 +224,7 @@
         </div>
         <div>
           <label>Unit</label><br/>
-          <input type="text" id="monetaryUnit" placeholder="e.g., $, CAD, USD" style="width:100%; padding:0.5em;"/>
+          <input type="text" id="monetaryUnit" placeholder="$" style="width:100%; padding:0.5em;"/>
         </div>
       </div>
 
@@ -240,6 +240,35 @@
         <div>
           <label>Field Name</label><br/>
           <input type="text" id="designationFieldName" placeholder="Start typing to see suggestions..." style="width:100%; padding:0.5em;"/>
+        </div>
+      </div>
+
+      <!-- SPLIT Condition (Monetary only) -->
+      <div id="splitConditionContainer" style="display:none; margin-top:1.2em; padding-top:1em; border-top:2px solid #ddd;">
+        <div style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.5em;">
+          <input type="checkbox" id="enableSplitCondition" style="cursor:pointer;"/>
+          <label for="enableSplitCondition" style="cursor:pointer; font-weight:bold;">Add SPLIT Condition (Optional)</label>
+        </div>
+        <p style="font-size:0.9em; color:#666; margin:0 0 1em 0;">
+          When enabled, the monetary <em>field value</em> for each repair will be multiplied by the percentage
+          associated with the selected <strong>Source</strong> parsed from the repair’s category column
+          (<code>O&amp;M</code>, <code>Capital</code>, or <code>Decommission</code>) before comparison to the limit.
+        </p>
+       <div id="splitFields" style="display:none; padding:0.8em; background:#f8f9fa; border-radius:4px;">
+          <div style="margin-bottom:0.5em;">
+            <label>Source</label><br/>
+            <input
+              type="text"
+              id="splitSourceInput"
+              placeholder="Type or pick a Source (e.g., F, P, P(OTH), P(BCH), etc."
+              style="width:100%; padding:0.5em;"
+            />
+            <div style="font-size:0.85em; color:#666; margin-top:0.4em;">
+              Suggestions are collected from the <strong>O&amp;M</strong>, <strong>Capital</strong>, and
+              <strong>Decommission</strong> columns in your repairs sheet (e.g., split strings like
+              <code>50%F-50%P</code> or <code>100%P(OTH)</code>).
+            </div>
+          </div>
         </div>
       </div>
 
