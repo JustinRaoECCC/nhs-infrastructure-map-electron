@@ -3801,402 +3801,577 @@ html.modal-open, body.modal-open { overflow: hidden; }
   }
 }
 
-/* =========================
-   Global & Layout
-   ========================= */
-:root{
+/* ================================
+   Optimization Dashboard Styles
+   (scoped to .nhs-dashboard)
+   ================================ */
+
+.nhs-dashboard {
   --bg: #ffffff;
+  --bg-subtle: #f7f9fc;
   --text: #1f2937;
   --muted: #6b7280;
   --border: #e5e7eb;
-  --chip-bg: #f3f4f6;
-  --chip-text: #111827;
-  --primary: #2563eb;
-  --primary-contrast: #ffffff;
-  --table-stripe: #fafafa;
-  --warn: #fff3cd;
-  --warn-border: #ffc107;
-  --ghost-bg: #ffffff;
-  --ghost-border: #dddddd;
-  --shadow: 0 6px 24px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.06);
-}
-
-@media (prefers-color-scheme: dark){
-  :root{
-    --bg: #0b0e14;
-    --text: #e5e7eb;
-    --muted: #a1a1aa;
-    --border: #232732;
-    --chip-bg: #121827;
-    --chip-text: #e5e7eb;
-    --primary: #60a5fa;
-    --primary-contrast: #0b0e14;
-    --table-stripe: #10131a;
-    --warn: #2b2211;
-    --warn-border: #eab308;
-    --ghost-bg: #0b0e14;
-    --ghost-border: #303547;
-    --shadow: 0 6px 24px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.35);
-  }
-}
-
-.nhs-dashboard{
+  --border-2: #d1d5db;
+  --primary: #2a6df4;
+  --primary-600: #1f5ae0;
+  --primary-50: #eef4ff;
+  --success: #16a34a;
+  --warning: #f59e0b;
+  --danger: #dc2626;
+  --chip: #eef2f7;
+  --chip-text: #223043;
+  --table-head: #f1f5f9;
+  --shadow: 0 2px 10px rgba(17, 24, 39, 0.08);
   color: var(--text);
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji",
+    "Segoe UI Emoji", "Segoe UI Symbol";
+}
+
+/* Layout */
+.nhs-dashboard .opt-container {
   background: var(--bg);
-  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
-}
-
-/* =========================
-   Tabs
-   ========================= */
-.dashboard-tabs{
-  display:flex;
-  gap:.5rem;
-  border-bottom:1px solid var(--border);
-  margin-bottom:1rem;
-  flex-wrap:wrap;
-}
-
-.dashboard-tab{
-  appearance:none;
-  border:none;
-  background:transparent;
-  padding:.6rem 1rem;
-  border-radius:.6rem .6rem 0 0;
-  color:var(--muted);
-  cursor:pointer;
-  font-weight:600;
-}
-
-.dashboard-tab.active{
-  color:var(--text);
-  background:var(--chip-bg);
-  border:1px solid var(--border);
-  border-bottom-color: transparent;
-}
-
-.dashboard-content{ display:none; }
-.dashboard-content.active{ display:block; }
-
-/* =========================
-   Common Blocks & Utilities
-   ========================= */
-.opt-container{
-  background:var(--bg);
-}
-
-.separator{
-  border:none;
-  border-top:1px solid var(--border);
-  margin:1.25rem 0;
-}
-
-.top-pane{ margin-bottom:1rem; }
-.actions{ display:flex; gap:.5rem; flex-wrap:wrap; }
-
-.opt-header{
-  display:flex;
-  align-items:flex-start;
-  justify-content:space-between;
-  gap:1rem;
-  margin-bottom:1rem;
-}
-
-.opt-title{
-  font-size:1.25rem;
-  font-weight:700;
-  letter-spacing:.2px;
-}
-
-.opt-summary{
-  display:flex;
-  gap:.5rem;
-  flex-wrap:wrap;
-  align-items:center;
-}
-
-.chip{
-  display:inline-flex;
-  align-items:center;
-  gap:.35rem;
-  font-size:.85rem;
-  padding:.35rem .55rem;
-  border-radius:999px;
-  background:var(--chip-bg);
-  color:var(--chip-text);
-  border:1px solid var(--border);
-  white-space:nowrap;
-}
-
-.opt-note{
-  background:var(--chip-bg);
-  border:1px solid var(--border);
-  padding:.75rem .9rem;
-  border-radius:.6rem;
-  color:var(--muted);
-}
-
-.opt-error{
-  background:rgba(220,38,38,.07);
-  border:1px solid rgba(220,38,38,.3);
-  padding:.75rem .9rem;
-  border-radius:.6rem;
-  color:#dc2626;
-}
-
-/* =========================
-   Buttons
-   ========================= */
-.btn{
-  appearance:none;
-  border:1px solid var(--border);
-  background:var(--ghost-bg);
-  color:var(--text);
-  padding:.55rem .9rem;
-  border-radius:.6rem;
-  cursor:pointer;
-  font-weight:600;
-  box-shadow:none;
-  transition:transform .06s ease, box-shadow .2s ease, background .2s ease;
-}
-.btn:hover{ box-shadow: var(--shadow); transform: translateY(-1px); }
-
-.btn-primary{
-  background:var(--primary);
-  color:var(--primary-contrast);
-  border-color:transparent;
-}
-.btn-primary:hover{ filter:brightness(.98); }
-
-.btn-ghost{
-  background:var(--ghost-bg);
-  color:var(--text);
-  border:1px solid var(--ghost-border);
-}
-
-/* Small round info button variant used in Opt-2 */
-.info-btn{
-  padding:.35rem .55rem;
-  line-height:1;
-}
-
-/* =========================
-   Tables (Optimization 1/2/3)
-   ========================= */
-.opt-table{
-  width:100%;
-  border-collapse:separate;
-  border-spacing:0;
-  overflow:hidden;
-  border:1px solid var(--border);
-  border-radius:.75rem;
-  margin-top:.75rem;
-  /* keep columns perfectly aligned between thead/tbody */
-  table-layout: fixed;
-}
-
-.opt-table thead th{
-  text-align:center !important;
-  font-weight:700;
-  font-size:.9rem;
-  padding:.75rem .9rem;
-  background:var(--chip-bg);
-  border-bottom:1px solid var(--border);
-  position:sticky;
-  top:0;
-  z-index:1;
-  vertical-align:middle !important;
-  white-space:nowrap;
-}
-
-.opt-table tbody td{
-  padding:.7rem .9rem;
-  border-bottom:1px solid var(--border);
-  vertical-align:middle !important;
-  text-align:center !important;
-  white-space:nowrap;
-}
-
-.opt-table tbody tr:nth-child(odd){
-  background:var(--table-stripe);
-}
-
-.opt-table .num{
-  /* enforce center even if an older rule tries to right-align it */
-  text-align:center !important;
-  font-variant-numeric: tabular-nums;
-}
-
-/* Allow responsive scroll for wide tables */
-.opt-table-container{
-  width:100%;
-  overflow:auto;
-  border-radius:.75rem;
-}
-
-/* =========================
-   Trip Sections (Opt-2/3)
-   ========================= */
-.opt-trip{
-  border:1px solid var(--border);
-  border-radius:.9rem;
-  padding:1rem;
-  margin:1rem 0;
-  background:var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.1rem;
   box-shadow: var(--shadow);
 }
 
-.trip-title{
-  font-weight:800;
-  font-size:1.05rem;
-  margin-bottom:.35rem;
+/* Tabs */
+.nhs-dashboard .dashboard-tabs {
+  display: flex;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: 0.6rem 0.2rem;
 }
 
-.trip-summary{
-  display:flex;
-  flex-wrap:wrap;
-  align-items:center;
-  gap:.5rem;
-  margin-bottom:.5rem;
+.nhs-dashboard .dashboard-tab {
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: 2px solid transparent;
+  border-radius: 10px 10px 0 0;
+  padding: 0.55rem 0.9rem;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 160ms ease;
 }
 
-/* =========================
-   Optimization 2 Controls
-   ========================= */
-.opt2-controls{
-  display:flex;
-  gap:.6rem;
-  flex-wrap:wrap;
-  align-items:center;
-  margin:.5rem 0 1rem 0;
+.nhs-dashboard .dashboard-tab:hover {
+  color: var(--text);
+  background: var(--bg-subtle);
 }
 
-.opt2-label{ font-weight:600; }
-
-.opt2-select{
-  padding:.45rem .6rem;
-  border:1px solid var(--border);
-  border-radius:.6rem;
-  background:var(--bg);
-  color:var(--text);
+.nhs-dashboard .dashboard-tab.active {
+  color: var(--primary-600);
+  background: var(--primary-50);
+  border-color: var(--border);
+  border-bottom-color: var(--primary);
 }
 
-/* =========================
-   Modals (Info dialogs)
-   ========================= */
-.modal{
-  position:fixed;
-  inset:0;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  background:rgba(0,0,0,.35);
-  z-index:1000;
-  padding:1rem;
+/* Content visibility */
+.nhs-dashboard .dashboard-content { display: none; padding: 1rem 0.25rem; }
+.nhs-dashboard .dashboard-content.active { display: block; }
+
+/* Headings & helpers */
+.nhs-dashboard h2 {
+  margin: 0 0 0.4rem 0;
+  font-size: 1.25rem;
 }
 
-.modal-content{
-  background:var(--bg);
-  color:var(--text);
-  border:1px solid var(--border);
-  border-radius:.9rem;
+.nhs-dashboard h3 { margin: 0.6rem 0; font-size: 1.05rem; }
+
+.nhs-dashboard .section-description {
+  color: var(--muted);
+  margin: 0.15rem 0 0.8rem 0;
+}
+
+.nhs-dashboard .top-pane {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem;
+}
+
+.nhs-dashboard .bottom-pane {
+  background: var(--bg);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 0.75rem;
+}
+
+.nhs-dashboard .separator {
+  border: none;
+  height: 1px;
+  background: var(--border);
+  margin: 1rem 0;
+}
+
+/* Actions & Buttons */
+.nhs-dashboard .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.75rem; }
+
+.nhs-dashboard .btn {
+  appearance: none;
+  background: #fff;
+  color: var(--text);
+  border: 1px solid var(--border-2);
+  border-radius: 10px;
+  padding: 0.5rem 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 80ms ease, background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.02);
+}
+.nhs-dashboard .btn:hover { background: #fafafa; transform: translateY(-0.5px); }
+.nhs-dashboard .btn:active { transform: translateY(0); }
+
+.nhs-dashboard .btn-primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.nhs-dashboard .btn-primary:hover { background: var(--primary-600); border-color: var(--primary-600); }
+
+.nhs-dashboard .btn-ghost {
+  background: #fff;
+  border-color: var(--border-2);
+  color: var(--text);
+}
+.nhs-dashboard .btn-ghost:hover { background: var(--bg-subtle); }
+
+.nhs-dashboard .btn:disabled,
+.nhs-dashboard .btn[disabled] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Opt headers & chips */
+.nhs-dashboard .opt-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.6rem 0.2rem 0.9rem 0.2rem;
+}
+
+.nhs-dashboard .opt-title {
+  font-weight: 800;
+  font-size: 1.1rem;
+}
+
+.nhs-dashboard .opt-summary { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+
+.nhs-dashboard .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.55rem;
+  background: var(--chip);
+  color: var(--chip-text);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+/* Notes / Alerts */
+.nhs-dashboard .opt-note,
+.nhs-dashboard .opt-error {
+  border-radius: 10px;
+  padding: 0.75rem 0.9rem;
+  margin: 0.5rem 0;
+  border: 1px solid;
+}
+
+.nhs-dashboard .opt-note {
+  background: #f0f7ff;
+  border-color: #cfe2ff;
+  color: #0b3b8e;
+}
+
+.nhs-dashboard .opt-error {
+  background: #fff2f2;
+  border-color: #ffcccc;
+  color: var(--danger);
+  font-weight: 700;
+}
+
+/* Tables */
+.nhs-dashboard .opt-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  font-size: 0.94rem;
+}
+
+.nhs-dashboard .opt-table thead th {
+  background: var(--table-head);
+  color: #111827;
+  text-align: left;
+  padding: 0.6rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.nhs-dashboard .opt-table tbody td {
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.nhs-dashboard .opt-table tbody tr:hover {
+  background: #fafcff;
+}
+
+.nhs-dashboard .opt-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.nhs-dashboard .opt-table .rank {
+  font-weight: 800;
+  text-align: center;
+}
+
+/* Parameter rows (Soft Parameters UI) */
+.nhs-dashboard .param-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1.8fr auto auto auto;
+  gap: 0.5rem;
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.6rem;
+  margin: 0.5rem 0;
+}
+
+.nhs-dashboard .param-row input[type="text"],
+.nhs-dashboard .param-row input[type="number"],
+.nhs-dashboard .param-row select {
+  width: 100%;
+  padding: 0.45rem 0.5rem;
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.nhs-dashboard .param-weight-display {
+  min-width: 2.5rem;
+  text-align: center;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.nhs-dashboard .param-percentage {
+  width: 4.5rem !important;
+  text-align: right;
+}
+
+.nhs-dashboard .deleteParamBtn {
+  appearance: none;
+  border: 1px solid #f2c5c5;
+  background: #fff5f5;
+  color: var(--danger);
+  border-radius: 8px;
+  width: 2rem; height: 2rem;
+  line-height: 1.9rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+.nhs-dashboard .deleteParamBtn:hover { background: #ffe9e9; }
+
+/* Fixed Parameter cards */
+.nhs-dashboard .fixed-param-row {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: 12px;
+  padding: 0.9rem;
   box-shadow: var(--shadow);
-  padding:1rem 1.2rem 1.2rem;
-  max-height:85vh;
-  overflow:auto;
 }
 
-.close-modal{
-  float:right;
-  font-size:1.6rem;
-  line-height:1;
-  cursor:pointer;
-  opacity:.7;
-}
-.close-modal:hover{ opacity:1; }
-
-/* =========================
-   Optimization 1 table tweaks
-   ========================= */
-#opt1Results .rank{
-  font-weight:800;
+.nhs-dashboard .fixed-param-row h4 {
+  margin: 0;
+  font-size: 1.05rem;
 }
 
-/* =========================
-   Small callouts (warnings)
-   ========================= */
-.callout-warn{
-  background: rgba(220,38,38,0.08);   /* soft red background */
-  border-left: 3px solid #dc2626;     /* strong red bar */
-  padding: .75rem 1rem;
-  border-radius: .5rem;
-  font-weight: 500;
+.nhs-dashboard .fixed-param-row .year-column {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
 }
 
-/* =========================
-   Responsive
-   ========================= */
-@media (max-width: 920px){
-  .opt-header{
-    flex-direction:column;
-    align-items:flex-start;
+.nhs-dashboard .fixed-param-row textarea,
+.nhs-dashboard .fixed-param-row input[type="number"],
+.nhs-dashboard .fixed-param-row input[type="text"],
+.nhs-dashboard .fixed-param-row select {
+  width: 100%;
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  padding: 0.45rem 0.5rem;
+  background: #fff;
+}
+
+.nhs-dashboard .fixed-param-row .deleteFixedParamBtn {
+  color: var(--danger);
+  background: #fff5f5;
+  border: 1px solid #f5c2c2;
+  border-radius: 10px;
+  width: 2rem; height: 2rem;
+  cursor: pointer;
+}
+.nhs-dashboard .fixed-param-row .deleteFixedParamBtn:hover { background: #ffe9e9; }
+
+/* Controls rows */
+.nhs-dashboard .opt2-controls,
+.nhs-dashboard .opt3-controls {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0.5rem 0 1rem 0;
+}
+
+.nhs-dashboard .opt2-label,
+.nhs-dashboard .opt3-label { font-weight: 600; }
+
+.nhs-dashboard .opt2-select,
+.nhs-dashboard .opt3-input,
+.nhs-dashboard .opt3-controls select,
+.nhs-dashboard .opt3-controls input[type="number"] {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  background: #fff;
+}
+
+/* Info buttons + add buttons */
+.nhs-dashboard .info-btn {
+  border: 1px solid var(--border-2);
+  background: #fff;
+  padding: 0.35rem 0.55rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.nhs-dashboard .info-btn:hover { background: #f7f7f7; }
+
+.nhs-dashboard .btn.btn-add {
+  padding: 0.25rem 0.55rem;
+  border: 1px solid var(--primary);
+  color: var(--primary);
+  background: #fff;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.nhs-dashboard .btn.btn-add:hover { background: var(--primary-50); }
+
+/* Trip cards (Opt-2 & Opt-3) */
+.nhs-dashboard .opt-trip {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: 12px;
+  padding: 0.9rem;
+  margin: 1rem 0;
+  box-shadow: var(--shadow);
+}
+
+.nhs-dashboard .trip-title {
+  font-weight: 800;
+  margin-bottom: 0.5rem;
+  font-size: 1.02rem;
+}
+
+.nhs-dashboard .trip-summary {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.7rem;
+}
+
+/* Warning callout (Opt-3) */
+.nhs-dashboard .callout-warn {
+  border: 1px solid #ffe08a;
+  background: #fff8e1;
+  color: #7a4d00;
+  padding: 0.9rem;
+  border-radius: 12px;
+  margin: 0.6rem 0 1rem 0;
+}
+
+/* Expand/collapse */
+.nhs-dashboard .toggle {
+  border: 1px solid var(--border-2);
+  background: #fff;
+  border-radius: 6px;
+  width: 1.8em;
+  height: 1.8em;
+  line-height: 1.6em;
+  text-align: center;
+  cursor: pointer;
+}
+.nhs-dashboard .nested-wrap {
+  padding: 0.6rem 0.4rem;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.nhs-dashboard .nested-table { margin: 0.4rem 0 0.2rem 1.6rem; }
+.nhs-dashboard .nested-table.deepest { margin-left: 3.2rem; }
+
+/* Autocomplete */
+.nhs-dashboard .autocomplete-wrapper { position: relative; }
+.nhs-dashboard .autocomplete-items {
+  position: absolute;
+  top: 100%;
+  left: 0; right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--border-2);
+  border-top: none;
+  border-radius: 0 0 10px 10px;
+  box-shadow: var(--shadow);
+  z-index: 1002;
+}
+
+.nhs-dashboard .autocomplete-items div {
+  padding: 10px;
+  cursor: pointer;
+  background-color: #fafafa;
+  border-bottom: 1px solid var(--border);
+}
+.nhs-dashboard .autocomplete-items div:last-child { border-bottom: 0; }
+.nhs-dashboard .autocomplete-items div:hover { background-color: #e9e9e9; }
+.nhs-dashboard .autocomplete-active { background-color: #1e90ff !important; color: #ffffff; }
+
+/* Modals */
+.nhs-dashboard .modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 24, 39, 0.45);
+  display: none; /* opened via inline style or JS → display:flex */
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 1000;
+}
+
+.nhs-dashboard .modal-content {
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  padding: 1rem;
+  max-height: 85vh;
+  overflow: auto;
+}
+
+.nhs-dashboard .modal .modal-header {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.nhs-dashboard .close-modal {
+  float: right;
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  background: #fff5f5;
+  border: 1px solid #f5c2c2;
+  color: var(--danger);
+  border-radius: 8px;
+  width: 2rem; height: 2rem;
+  text-align: center;
+}
+.nhs-dashboard .close-modal:hover { background: #ffe9e9; }
+
+/* Inputs general */
+.nhs-dashboard input[type="text"],
+.nhs-dashboard input[type="number"],
+.nhs-dashboard select,
+.nhs-dashboard textarea {
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
+  background: #fff;
+  color: var(--text);
+}
+
+.nhs-dashboard input:focus,
+.nhs-dashboard select:focus,
+.nhs-dashboard textarea:focus,
+.nhs-dashboard .btn:focus,
+.nhs-dashboard .dashboard-tab:focus {
+  outline: 3px solid rgba(42, 109, 244, 0.25);
+  outline-offset: 2px;
+}
+
+/* Utility */
+.nhs-dashboard .muted { color: var(--muted); }
+
+@media (max-width: 900px) {
+  .nhs-dashboard .param-row {
+    grid-template-columns: 1fr 1fr;
+    grid-auto-rows: minmax(44px, auto);
+  }
+  .nhs-dashboard .opt-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .nhs-dashboard .trip-summary { gap: 0.35rem; }
+}
+
+@media (max-width: 640px) {
+  .nhs-dashboard .dashboard-tabs {
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+  .nhs-dashboard .opt-table thead th,
+  .nhs-dashboard .opt-table tbody td {
+    padding: 0.5rem;
   }
 }
 
-@media (max-width: 640px){
-  .dashboard-tabs{ gap:.25rem; }
-  .dashboard-tab{ padding:.5rem .7rem; }
-  .opt-table thead{ font-size:.85rem; }
-  .opt-table tbody td, .opt-table thead th{ padding:.6rem .65rem; }
+/* Fix: warning callout table alignment */
+.nhs-dashboard .callout-warn .opt-table thead th { 
+  position: static;   /* turn off sticky header only here */
 }
 
-/* =========================
-   Autocomplete (from existing JS)
-   ========================= */
-.autocomplete-items{
-  background:var(--bg) !important;
-  border:1px solid var(--border) !important;
-  border-top:none !important;
-  box-shadow: var(--shadow);
-}
-.autocomplete-items div{
-  border-bottom:1px solid var(--border);
-}
-.autocomplete-active{
-  background-color: var(--primary) !important;
-  color: var(--primary-contrast) !important;
-}
-.autocomplete-items div:hover{
-  background-color: rgba(0,0,0,.04);
+.nhs-dashboard .callout-warn .opt-table {
+  margin-top: .5rem;
+  overflow: hidden;   /* keeps rounded corners tidy */
 }
 
-/* =========================
-   Helpers
-   ========================= */
-code{
-  background:var(--chip-bg);
-  padding:.1rem .35rem;
-  border-radius:.35rem;
-  border:1px solid var(--border);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  font-size:.9em;
+.nhs-dashboard .callout-warn .opt-table th,
+.nhs-dashboard .callout-warn .opt-table td {
+  vertical-align: middle;
 }
 
-/* Optimization 3 Controls */
-.opt3-controls{
-  display:flex;
-  gap:.6rem;
-  flex-wrap:wrap;
-  align-items:center;
-  margin:.5rem 0 1rem 0;
+/* Fix: warning callout table alignment */
+.nhs-dashboard .callout-warn .opt-table {
+  margin-top: .5rem;
 }
-.opt3-label{ font-weight:600; }
-.opt3-input{
-  width:6rem;
-  padding:.45rem .6rem;
-  border:1px solid var(--border);
-  border-radius:.6rem;
-  background:var(--bg);
-  color:var(--text);
+
+.nhs-dashboard .callout-warn .opt-table thead th { 
+  position: static;
+  vertical-align: middle;
 }
-.opt-table td.num { font-weight: 600; }
+
+.nhs-dashboard .callout-warn .opt-table tbody td {
+  vertical-align: middle;
+}
+
+/* Fix: all table cells should align middle by default */
+.nhs-dashboard .opt-table thead th,
+.nhs-dashboard .opt-table tbody td {
+  vertical-align: middle;
+}

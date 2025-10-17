@@ -1425,7 +1425,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         opt3Results.innerHTML = '<div class="opt-note">Assigning trips to years...</div>';
 
-        const topPercent = Math.min(100, Math.max(0, parseFloat(opt3TopPercentInput?.value ?? '20') || 0));
+        const topPercent = Math.min(100, Math.max(0, parseFloat(opt3TopPercentInput?.value ?? '0') || 0));
 
         const result = await window.electronAPI.assignTripsToYears({
           trips: window._tripsData,
@@ -1438,39 +1438,326 @@ document.addEventListener('DOMContentLoaded', () => {
           return;
         }
 
-        renderOpt3Results(result);
+        // cache for later interactive updates
+        window._opt3Result = result;
+        // station data map for nested rendering + add-to-year
+        const stationList = await window.electronAPI.getStationData();
+        window._stationDataMap = {};
+        (stationList || []).forEach(station => {
+          const stationId = station.station_id || station['Station ID'] || station.id;
+          if (stationId) window._stationDataMap[stationId] = station;
+        });
+        renderOpt3Results(window._opt3Result);
       });
+    }
+
+    // ───────────────────────── helpers (Opt-3 UI) ─────────────────────────
+    const _canon = (s) => String(s ?? '').trim().toLowerCase();
+    const _tryFloat = (s) => {
+      const v = Number(String(s ?? '').replace(/,/g, '').trim());
+      return Number.isFinite(v) ? v : 0;
+    };
+    const _normalizeUnit = (u) => {
+      const s = _canon(u);
+      if (!s) return 'hours';
+      if (/^(h|hr|hrs|hour|hours)$/.test(s)) return 'hours';
+      if (/^(d|day|days)$/.test(s)) return 'days';
+      if (/^(w|wk|wks|week|weeks)$/.test(s)) return 'weeks';
+      if (/^(mo|mon|mons|month|months)$/.test(s)) return 'months';
+      if (/^(y|yr|yrs|year|years)$/.test(s)) return 'years';
+      return 'hours';
+    };
+    const _toHours = (num, unit) => {
+      switch (_normalizeUnit(unit)) {
+        case 'hours': return num;
+        case 'days': return num * 24;
+        case 'weeks': return num * 24 * 7;
+        case 'months': return num * 24 * 30;
+        case 'years': return num * 24 * 365;
+        default: return num;
+      }
+    };
+    const _fromHours = (hrs, unit) => {
+      switch (_normalizeUnit(unit)) {
+        case 'hours': return hrs;
+        case 'days': return hrs / 24;
+        case 'weeks': return hrs / (24 * 7);
+        case 'months': return hrs / (24 * 30);
+        case 'years': return hrs / (24 * 365);
+        default: return hrs;
+      }
+    };
+    function formatCurrency(n) {
+      const num = Number(n || 0);
+      if (!isFinite(num)) return '$0';
+      return '$' + num.toLocaleString(undefined, { maximumFractionDigits: 0 });
+    }
+    function findFieldAnywhere(repair, station, fieldName) {
+      const canon = _canon(fieldName);
+      for (const [k, v] of Object.entries(repair || {})) {
+        if (_canon(k) === canon) return v;
+      }
+      for (const [k, v] of Object.entries(station || {})) {
+        if (_canon(k) === canon) return v;
+      }
+      return null;
+    }
+    function getSplitMapFromRepair(repair) {
+      const station = window._stationDataMap?.[repair.station_id] || {};
+      const get = (obj, key) => {
+        if (!obj) return undefined;
+        if (key in obj) return obj[key];
+        const found = Object.keys(obj).find(k => _canon(k) === _canon(key));
+        return found ? obj[found] : undefined;
+      };
+      const spec = get(repair, 'O&M') || get(station, 'O&M') ||
+                   get(repair, 'Capital') || get(station, 'Capital') ||
+                   get(repair, 'Decommission') || get(station, 'Decommission') || null;
+      if (!spec) return {};
+      const out = {};
+      String(spec).split(/\s*-\s*/).forEach(seg => {
+        const m = String(seg).match(/(-?\d+(?:\.\d+)?)%\s*([A-Za-z0-9()[\]\/\-\s]+)$/);
+        if (!m) return;
+        const pct = Number(m[1]);
+        const src = _canon(m[2] || '');
+        if (Number.isFinite(pct) && src) out[src] = pct / 100;
+      });
+      return out;
+    }
+
+    // apply in-memory mutation: add a standalone repair to a year, regrouping
+    function addStandaloneRepairToYear(targetYear, sr, result) {
+      const year = String(targetYear);
+      const key = sr && (Number.isInteger(sr.row_index) ? `idx:${sr.row_index}` :
+                   `sid:${sr?.original_repair?.station_id ?? ''}::name:${sr?.original_repair?.name ?? sr?.original_repair?.repair_name ?? ''}`);
+      if (!key) return;
+      const feasible = (result.feasible_years?.[key] || []).includes(year);
+      if (!feasible) return; // guard
+
+      // find/create trip by trip_location × access_type
+      const tl = sr._trip_location || '';
+      const at = sr._access_type || '';
+      // avoid inline assignment to keep const bindings immutable
+      if (!result.assignments[year]) {
+        result.assignments[year] = [];
+      }
+      let trips = result.assignments[year];
+      let trip = trips.find(t => t.trip_location === tl && t.access_type === at);
+      if (!trip) {
+        trip = {
+          trip_location: tl,
+          access_type: at,
+          total_days: 0,
+          total_cost: 0,
+          total_split_costs: {},
+          repairs: [],
+          stations: [],
+          priority_mode: result.assignments[Object.keys(result.assignments)[0]]?.[0]?.priority_mode || 'tripmean',
+          priority_metrics: { mean: 0, max: 0, median: 0, scores: [] },
+          priority_score: 0
+        };
+        trips.push(trip);
+      }
+
+      // station container
+      const r = sr.original_repair;
+      const sid = r.station_id;
+      const stationRow = window._stationDataMap?.[sid] || {};
+      let st = trip.stations.find(s => s.station_id === sid);
+      if (!st) {
+        st = {
+          ...stationRow,
+          station_id: sid,
+          site_name: findFieldAnywhere(r, stationRow, 'Station Name') || stationRow['Station Name'] || '',
+          city_of_travel: findFieldAnywhere(r, stationRow, 'City of Travel') || '',
+          time_to_site: findFieldAnywhere(r, stationRow, 'Time to Site (hr)') || '',
+          repairs: [],
+          total_days: 0,
+          total_cost: 0,
+          repair_count: 0
+        };
+        trip.stations.push(st);
+      }
+      // push repair
+      st.repairs.push(r);
+      st.repair_count += 1;
+      const days = _tryFloat(r.days || r.Days) || 0;
+      const cost = _tryFloat(r.cost || findFieldAnywhere(r, stationRow, 'Cost')) || 0;
+      st.total_days += days;
+      st.total_cost += cost;
+      trip.total_days += days;
+      trip.total_cost += cost;
+      // split totals
+      const smap = getSplitMapFromRepair(r);
+      for (const [src, mul] of Object.entries(smap)) {
+        if (!Number.isFinite(mul)) continue;
+        const add = cost * mul;
+        if (add > 0) trip.total_split_costs[src] = (trip.total_split_costs[src] || 0) + add;
+      }
+     // add to trip repair list
+      trip.repairs.push(sr);
+      // recompute trip metrics
+      const scores = (trip.repairs || []).map(x => Number(x.score) || 0).sort((a,b)=>b-a);
+      const mean = scores.length ? (scores.reduce((a,b)=>a+b,0) / scores.length) : 0;
+      const max  = scores[0] || 0;
+      const median = scores.length ? (scores.length % 2 ? scores[(scores.length-1)/2]
+                                       : (scores[scores.length/2 - 1] + scores[scores.length/2]) / 2) : 0;
+      trip.priority_metrics = { mean, max, median, scores };
+      trip.priority_score = (trip.priority_mode === 'tripmax') ? max : mean;
+
+      // update year summary
+      // ensure a mutable year summary object (no inline assignment in const init)
+      if (!result.year_summaries[year]) {
+        result.year_summaries[year] = { total_cost: 0, total_days: 0, total_split_costs: {} };
+      }
+      let ysum = result.year_summaries[year];
+      ysum.total_cost += cost;
+      ysum.total_days += days;
+      for (const [src, v] of Object.entries(smap)) {
+        const add = cost * (Number(v) || 0);
+        if (add > 0) ysum.total_split_costs[src] = (ysum.total_split_costs[src] || 0) + add;
+      }
+
+      // update constraints_state (cumulative only)
+      const usage = result.per_repair_usage?.[key] || { monetary:{}, temporal:{} };
+      // make sure constraints_state for this year exists before mutation
+      if (!result.constraints_state[year]) {
+        result.constraints_state[year] = { budgets: {}, temporal: {} };
+      }
+      const cs = result.constraints_state[year];
+      if (cs) {
+        for (const [k, v] of Object.entries(cs.budgets || {})) {
+          if (!v.cumulative) continue;
+          const need = Number(usage.monetary?.[k] || 0);
+          v.used += need; v.remaining = Math.max(0, (v.total || 0) - (v.used || 0));
+        }
+        for (const [k, v] of Object.entries(cs.temporal || {})) {
+          if (!v.cumulative) continue;
+          const need = Number(usage.temporal?.[k] || 0);
+          v.used += need; v.remaining = Math.max(0, (v.total || 0) - (v.used || 0));
+        }
+      }
+      // mark as assigned to this year
+      const alias = `sid:${r.station_id ?? ''}::name:${r.name ?? r.repair_name ?? ''}`;
+      result.assigned_keys_by_year[year] = Array.from(
+        new Set([...(result.assigned_keys_by_year[year] || []), key, alias])
+      );
+      // remove this year from feasible for both primary and alias keys
+      result.feasible_years[key] = (result.feasible_years[key] || []).filter(y => y !== year);
+      result.feasible_years[alias] = (result.feasible_years[alias] || []).filter(y => y !== year);
+      // tighten feasibility for other repairs due to cumulative capacity
+      for (const [rk, yrs] of Object.entries(result.feasible_years || {})) {
+        if (!Array.isArray(yrs) || !yrs.includes(year)) continue;
+        const u = result.per_repair_usage?.[rk] || { monetary:{}, temporal:{} };
+        const cs2 = result.constraints_state?.[year];
+        let stillOk = true;
+        if (cs2) {
+          for (const [k, v] of Object.entries(cs2.budgets || {})) {
+            if (!v.cumulative) continue;
+            if ((Number(u.monetary?.[k] || 0)) > v.remaining) { stillOk = false; break; }
+          }
+          if (stillOk) {
+            for (const [k, v] of Object.entries(cs2.temporal || {})) {
+              if (!v.cumulative) continue;
+              if ((Number(u.temporal?.[k] || 0)) > v.remaining) { stillOk = false; break; }
+            }
+          }
+        }
+        if (!stillOk) result.feasible_years[rk] = yrs.filter(y => y !== year);
+      }
+
+      // ── remove from Warning table immediately ───────────────────────────
+      // When a repair is manually added to any year, prune it from the
+      // "Top-X% not in Year 1" warnings list so the UI updates instantly.
+      if (result.warnings && Array.isArray(result.warnings.missing_in_year1)) {
+        const sidNow = r.station_id ?? '';
+        const nameNow = r.name ?? r.repair_name ?? '';
+        result.warnings.missing_in_year1 = result.warnings.missing_in_year1.filter(
+          w => (w.station_id ?? '') !== sidNow || (w.repair_name ?? '') !== nameNow
+        );
+      }
+
     }
 
     function renderOpt3Results(result) {
       opt3Results.innerHTML = '';
     
-      const formatCurrency = (n) => {
-        const num = Number(n || 0);
-        if (!isFinite(num)) return '$0';
-        return '$' + num.toLocaleString(undefined, { maximumFractionDigits: 0 });
-      };
+      const constraintCols = (result.constraint_columns || []).filter(c => c.type === 'monetary' || c.type === 'temporal');
 
       // Warnings block: high-priority repairs missing from Year 1
       if (result.warnings && result.warnings.missing_in_year1 && result.warnings.missing_in_year1.length) {
         const w = result.warnings;
         const warnBox = document.createElement('div');
         warnBox.className = 'callout-warn';
-        const items = w.missing_in_year1
-          .slice(0, 50) // prevent overly long lists in UI
-          .map(m => {
-            const score = Number(m.score || 0).toFixed(2);
-            const tripInfo = (m.trip_location || m.access_type)
-              ? ` — <em>Trip: ${m.trip_location || 'Unknown'}${m.access_type ? ' · ' + m.access_type : ''}</em>`
-              : '';
-            return `<li><strong>${m.station_id || ''}</strong> — ${m.repair_name || ''} <span style="opacity:.8;">(score: ${score})</span>${tripInfo}</li>`;
-          })
-          .join('');
+        // derive the earliest assigned calendar year for display (e.g., 2025)
+        const assignedYearsSorted = Object.keys(result.assignments || {})
+          .map(y => parseInt(y, 10))
+          .filter(n => Number.isFinite(n))
+          .sort((a, b) => a - b);
+        const firstYearLabel = assignedYearsSorted.length ? assignedYearsSorted[0] : 'the first year';
         warnBox.innerHTML = `
-          <div style="font-weight:700; margin-bottom:.35rem;">Warning: Top ${w.top_percent}% repairs not in Year 1</div>
-          <div style="opacity:.8; margin-bottom:.4rem;">${w.missing_in_year1.length} / ${w.total_top_repairs} high-priority repairs were not included in Year 1’s assigned trips.</div>
-          <ul style="margin:.25rem 0 .25rem 1.1rem; line-height:1.4;">${items}</ul>
+          <div style="font-weight:700; margin-bottom:.35rem;">Warning: Top ${w.top_percent}% repairs not in ${firstYearLabel}</div>
+          <div style="opacity:.8; margin-bottom:.8rem;">${w.missing_in_year1.length} / ${w.total_top_repairs} high-priority repairs were not included in ${firstYearLabel} assigned trips.</div>
         `;
+        // Heads-up table with constraint columns + Add buttons
+        const tbl = document.createElement('table');
+        tbl.className = 'opt-table';
+        const yearHeaders = Object.keys(result.assignments || {}).sort();
+        tbl.innerHTML = `
+          <thead>
+            <tr>
+              <th>Station</th><th>Repair</th><th>Score</th>
+              ${constraintCols.map(c => `<th>${c.label}</th>`).join('')}
+              <th>Add to Year</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        `;
+        const tb = tbl.querySelector('tbody');
+        w.missing_in_year1.slice(0, 200).forEach(m => {
+          const sr = (window._opt3Result?.assignments && (() => {
+            // we don't keep a direct pointer; rebuild a pseudo scored repair object for usage & feasibility lookups
+            return null;
+          })()) || null;
+          const key = `sid:${m.station_id ?? ''}::name:${m.repair_name ?? ''}`;
+          const usage = result.per_repair_usage?.[key] || { monetary:{}, temporal:{} };
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${m.station_id || ''}</td>
+            <td>${m.repair_name || ''}</td>
+            <td class="num">${Number(m.score || 0).toFixed(2)}</td>
+            ${constraintCols.map(c => {
+              if (c.type === 'monetary') return `<td class="num">${formatCurrency(usage.monetary?.[_canon(c.field_name)] || 0)}</td>`;
+              const hrs = Number(usage.temporal?.[_canon(c.name)] || 0);
+              const disp = _fromHours(hrs, c.unit);
+              return `<td class="num">${disp.toFixed(2)} ${c.unit}</td>`;
+            }).join('')}
+            <td class="add-buttons" data-key="${key}"></td>
+          `;
+          tb.appendChild(tr);
+          // add buttons only for feasible years
+          const cell = tr.querySelector('.add-buttons');
+          const feas = result.feasible_years?.[key] || [];
+          feas.sort().forEach(y => {
+            const btn = document.createElement('button');
+            btn.className = 'btn btn-add';
+            btn.textContent = `Add to Year ${y}`;
+            btn.addEventListener('click', () => {
+              // locate the original scored repair object in any trip
+              let found = null;
+              for (const t of (window._tripsData || [])) {
+                const f = (t.repairs || []).find(r => (r.original_repair?.station_id ?? '') === (m.station_id ?? '') &&
+                                                     ((r.original_repair?.name ?? r.original_repair?.repair_name ?? '') === (m.repair_name ?? '')));
+                if (f) { found = f; break; }
+              }
+              if (!found) return;
+              addStandaloneRepairToYear(y, found, window._opt3Result);
+              renderOpt3Results(window._opt3Result);
+            });
+            cell.appendChild(btn);
+          });
+        });
+        warnBox.appendChild(tbl);
         opt3Results.appendChild(warnBox);
       }
 
@@ -1487,7 +1774,22 @@ document.addEventListener('DOMContentLoaded', () => {
         const splitTotals = ysum.total_split_costs || {};
         const splitKeys = Object.keys(splitTotals).filter(k => Number(splitTotals[k]) > 0).sort();
         const splitChips = splitKeys.map(k => `<span class="chip">${k}: ${formatCurrency(splitTotals[k])}</span>`).join('');
-        
+        // Remaining chips (highlighted)
+        const cs = result.constraints_state?.[year] || { budgets:{}, temporal:{} };
+        const remainChips = [];
+        constraintCols.forEach(c => {
+          if (c.type === 'monetary') {
+            const b = cs.budgets?.[_canon(c.key)] || cs.budgets?.[_canon(c.field_name)];
+            if (!b) return;
+            remainChips.push(`<span class="chip chip-remaining"><strong>${c.label} Remaining:</strong> ${formatCurrency(b.remaining || 0)}</span>`);
+          } else if (c.type === 'temporal') {
+            const t = cs.temporal?.[_canon(c.key)] || cs.temporal?.[_canon(c.name)];
+            if (!t) return;
+            const disp = _fromHours(Number(t.remaining || 0), c.unit);
+            remainChips.push(`<span class="chip chip-remaining"><strong>${c.label} Remaining:</strong> ${disp.toFixed(2)} ${c.unit}</span>`);
+          }
+        });
+
         const yearSection = document.createElement('section');
         yearSection.className = 'opt-trip';
         yearSection.innerHTML = `
@@ -1497,14 +1799,17 @@ document.addEventListener('DOMContentLoaded', () => {
             <span class="chip">Total Days: ${ysum.total_days}</span>
             <span class="chip">Total Cost: ${formatCurrency(ysum.total_cost)}</span>
             ${splitChips}
+            ${remainChips.join('')}
           </div>
         `;
 
+        // Expandable trips → stations → repairs
         const table = document.createElement('table');
         table.className = 'opt-table';
         table.innerHTML = `
           <thead>
             <tr>
+              <th></th>
               <th>Priority</th>
               <th>Trip Location</th>
               <th>Access Type</th>
@@ -1512,15 +1817,32 @@ document.addEventListener('DOMContentLoaded', () => {
               <th>Days</th>
               <th>Stations</th>
               <th>Score</th>
+              ${constraintCols.map(c => `<th>${c.label}</th>`).join('')}
             </tr>
           </thead>
           <tbody></tbody>
         `;
-
         const tbody = table.querySelector('tbody');
         trips.forEach((trip, idx) => {
+          // aggregate constraint usage at trip level from per-repair usage
+          const agg = {};
+          constraintCols.forEach(c => agg[_canon(c.label)] = 0);
+          (trip.repairs || []).forEach(sr => {
+            const key = Number.isInteger(sr.row_index) ? `idx:${sr.row_index}` :
+                        `sid:${sr?.original_repair?.station_id ?? ''}::name:${sr?.original_repair?.name ?? sr?.original_repair?.repair_name ?? ''}`;
+            const u = result.per_repair_usage?.[key] || { monetary:{}, temporal:{} };
+            constraintCols.forEach(c => {
+              if (c.type === 'monetary') agg[_canon(c.label)] += Number(u.monetary?.[_canon(c.key)] || u.monetary?.[_canon(c.field_name)] || 0);
+              else {
+                const hrs = Number(u.temporal?.[_canon(c.key)] || u.temporal?.[_canon(c.name)] || 0);
+                agg[_canon(c.label)] += _fromHours(hrs, c.unit);
+              }
+            });
+          });
           const tr = document.createElement('tr');
+          tr.className = 'tr-trip';
           tr.innerHTML = `
+            <td><button class="toggle" aria-label="Expand trip">▸</button></td>
             <td>${idx + 1}</td>
             <td>${trip.trip_location}</td>
             <td>${trip.access_type}</td>
@@ -1528,10 +1850,121 @@ document.addEventListener('DOMContentLoaded', () => {
             <td>${trip.total_days}</td>
             <td>${trip.stations.length}</td>
             <td class="num">${Number(trip.priority_score || 0).toFixed(2)}</td>
+            ${constraintCols.map(c => {
+              const val = agg[_canon(c.label)];
+              return `<td class="num">${c.type === 'monetary' ? formatCurrency(val) : `${val.toFixed(2)} ${c.unit}`}</td>`;
+            }).join('')}
           `;
           tbody.appendChild(tr);
+          // nested stations container row
+          const nestRow = document.createElement('tr');
+          const nestCell = document.createElement('td');
+          nestCell.colSpan = 8 + constraintCols.length + 1;
+          const stationsWrap = document.createElement('div');
+          stationsWrap.className = 'nested-wrap';
+          stationsWrap.style.display = 'none';
+          // stations table
+          const stTable = document.createElement('table');
+          stTable.className = 'opt-table nested-table';
+          stTable.innerHTML = `
+            <thead>
+              <tr>
+                <th></th>
+                <th>Station ID</th><th>Site</th><th>City</th><th>Time to Site (hr)</th>
+                <th>Repairs</th><th>Days</th>
+                ${constraintCols.map(c => `<th>${c.label}</th>`).join('')}
+              </tr>
+            </thead>
+            <tbody></tbody>
+          `;
+          const stBody = stTable.querySelector('tbody');
+          trip.stations.forEach(st => {
+            const sTr = document.createElement('tr');
+            sTr.className = 'tr-station';
+            // aggregate constraints per station
+            const sAgg = {};
+            constraintCols.forEach(c => sAgg[_canon(c.label)] = 0);
+            (st.repairs || []).forEach(rp => {
+              const key = `sid:${rp.station_id ?? ''}::name:${rp.name ?? rp.repair_name ?? ''}`;
+              const u = result.per_repair_usage?.[key] || { monetary:{}, temporal:{} };
+              constraintCols.forEach(c => {
+                if (c.type === 'monetary') sAgg[_canon(c.label)] += Number(u.monetary?.[_canon(c.key)] || u.monetary?.[_canon(c.field_name)] || 0);
+                else {
+                  const hrs = Number(u.temporal?.[_canon(c.key)] || u.temporal?.[_canon(c.name)] || 0);
+                  sAgg[_canon(c.label)] += _fromHours(hrs, c.unit);
+                }
+              });
+            });
+            sTr.innerHTML = `
+              <td><button class="toggle" aria-label="Expand station">▸</button></td>
+              <td>${st.station_id}</td>
+              <td>${st.site_name || ''}</td>
+              <td>${st.city_of_travel || ''}</td>
+              <td>${st.time_to_site || ''}</td>
+              <td>${st.repair_count}</td>
+              <td>${st.total_days}</td>
+              ${constraintCols.map(c => {
+                const val = sAgg[_canon(c.label)];
+                return `<td class="num">${c.type === 'monetary' ? formatCurrency(val) : `${val.toFixed(2)} ${c.unit}`}</td>`;
+              }).join('')}
+            `;
+            stBody.appendChild(sTr);
+            // nested repairs table
+            const rNestRow = document.createElement('tr');
+            const rCell = document.createElement('td');
+            rCell.colSpan = 7 + constraintCols.length + 1;
+            const rTable = document.createElement('table');
+            rTable.className = 'opt-table nested-table deepest';
+            rTable.innerHTML = `
+              <thead>
+                <tr>
+                  <th>Repair</th><th>Days</th><th>Cost</th>
+                  ${constraintCols.map(c => `<th>${c.label}</th>`).join('')}
+                </tr>
+              </thead>
+              <tbody></tbody>
+            `;
+            const rBody = rTable.querySelector('tbody');
+            (st.repairs || []).forEach(rp => {
+              const key = `sid:${rp.station_id ?? ''}::name:${rp.name ?? rp.repair_name ?? ''}`;
+              const u = result.per_repair_usage?.[key] || { monetary:{}, temporal:{} };
+              const d = _tryFloat(rp.days || rp.Days) || 0;
+              const cst = _tryFloat(rp.cost || findFieldAnywhere(rp, window._stationDataMap?.[rp.station_id], 'Cost')) || 0;
+              const rr = document.createElement('tr');
+              rr.innerHTML = `
+                <td>${rp.name || rp.repair_name || ''}</td>
+                <td>${d}</td>
+                <td class="num">${formatCurrency(cst)}</td>
+                ${constraintCols.map(c => {
+                  if (c.type === 'monetary') return `<td class="num">${formatCurrency(u.monetary?.[_canon(c.key)] || u.monetary?.[_canon(c.field_name)] || 0)}</td>`;
+                  const hrs = Number(u.temporal?.[_canon(c.key)] || u.temporal?.[_canon(c.name)] || 0);
+                  return `<td class="num">${_fromHours(hrs, c.unit).toFixed(2)} ${c.unit}</td>`;
+                }).join('')}
+              `;
+              rBody.appendChild(rr);
+            });
+            rCell.appendChild(rTable);
+            rNestRow.appendChild(rCell);
+            rNestRow.style.display = 'none';
+            stBody.appendChild(rNestRow);
+            // station toggle
+            sTr.querySelector('.toggle')?.addEventListener('click', () => {
+              const open = rNestRow.style.display !== 'none';
+              rNestRow.style.display = open ? 'none' : '';
+              sTr.querySelector('.toggle').textContent = open ? '▸' : '▾';
+            });
+          });
+          stationsWrap.appendChild(stTable);
+          nestCell.appendChild(stationsWrap);
+          nestRow.appendChild(nestCell);
+          tbody.appendChild(nestRow);
+          // trip toggle
+          tr.querySelector('.toggle')?.addEventListener('click', () => {
+            const open = stationsWrap.style.display !== 'none';
+            stationsWrap.style.display = open ? 'none' : '';
+            tr.querySelector('.toggle').textContent = open ? '▸' : '▾';
+          });
         });
-
         yearSection.appendChild(table);
         opt3Results.appendChild(yearSection);
       });
@@ -1552,6 +1985,27 @@ document.addEventListener('DOMContentLoaded', () => {
     .autocomplete-items div:hover {
       background-color: #e9e9e9;
     }
+    /* Emphasis chips for remaining capacity */
+    .chip-remaining {
+      background: #fff3cd !important;
+     border: 1px solid #f0ad4e !important;
+      font-weight: 700 !important;
+    }
+    /* Expand/collapse toggles + nested tables */
+    .toggle {
+      border: 1px solid #ccc;
+      background: #fff;
+      border-radius: 4px;
+      width: 1.8em; height: 1.8em;
+      line-height: 1.6em;
+      text-align: center;
+      cursor: pointer;
+    }
+    .nested-wrap { padding: .6rem .4rem; background: #fafafa; border: 1px solid #eee; border-radius: 6px; }
+    .nested-table { margin: .4rem 0 .2rem 1.6rem; }
+    .nested-table.deepest { margin-left: 3.2rem; }
+    .btn.btn-add { padding: .25rem .5rem; border: 1px solid #3c78d8; color:#3c78d8; background:#fff; border-radius:6px; cursor:pointer; }
+    .btn.btn-add:hover { background:#f0f6ff; }
   `;
   document.head.appendChild(style);
 

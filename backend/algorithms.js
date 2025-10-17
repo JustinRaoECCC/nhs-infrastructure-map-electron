@@ -614,12 +614,11 @@ function checkMonetaryConstraint(repair, param, station_data, year) {
   const fieldName = _canon(param.field_name);
   const station = station_data[repair.station_id] || {};
   
+  // Read and parse numeric; allow 0 as a valid value.
   const value = findFieldAnywhere(repair, station, fieldName);
-  
-  if (!value) return false;
-  
   const repairCost = _tryFloat(value);
   if (repairCost === null) return false;
+
   // Apply SPLIT multiplier if configured (monetary only)
   const adjustedCost = _applyMonetarySplitIfAny(repairCost, param, repair, station_data);
   
@@ -717,6 +716,31 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
   // Track yearly budgets/constraints
   const yearlyBudgets = {};
   const yearlyTemporal = {};
+  // Describe which constraints should be surfaced in UI (monetary/temporal only)
+  const constraint_columns = [];
+  for (const p of (fixed_parameters || [])) {
+    if (!p) continue;
+    if (p.type === 'monetary') {
+      constraint_columns.push({
+        type: 'monetary',
+        key: _canon(p.field_name),
+        field_name: p.field_name,
+        label: (p.split_condition && p.split_condition.enabled && p.split_condition.source) ? String(p.split_condition.source) : p.field_name,
+        unit: p.unit || '$',
+        cumulative: !!p.cumulative,
+        split_source: (p.split_condition && p.split_condition.enabled) ? _canon(p.split_condition.source) : null
+      });
+    } else if (p.type === 'temporal') {
+      constraint_columns.push({
+        type: 'temporal',
+        key: _canon(p.name),
+        name: p.name,
+        label: p.name,
+        unit: _normalizeUnit(p.unit) || 'hours', // display unit preference
+        cumulative: !!p.cumulative
+      });
+    }
+  }
   
   for (const year of years) {
     yearlyBudgets[year] = {};
@@ -728,7 +752,11 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
         yearlyBudgets[year][key] = {
           total: _tryFloat(param.years[year].value) || 0,
           used: 0,
-          cumulative: !!param.cumulative
+          cumulative: !!param.cumulative,
+          label: (param.split_condition && param.split_condition.enabled && param.split_condition.source) ? String(param.split_condition.source) : param.field_name,
+          unit: param.unit || '$',
+          split_source: (param.split_condition && param.split_condition.enabled) ? _canon(param.split_condition.source) : null,
+          type: 'monetary'
         };
       } else if (param.type === 'temporal' && param.years && param.years[year]) {
         const key = _canon(param.name);
@@ -737,7 +765,10 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
         yearlyTemporal[year][key] = {
           total: totalHours,     // store in hours
           used: 0,               // track in hours
-          cumulative: !!param.cumulative
+          cumulative: !!param.cumulative,
+          display_unit: _normalizeUnit(param.unit) || _detectUnitFromFieldName(param.name) || 'hours',
+          type: 'temporal',
+          label: param.name
         };
       }
     }
@@ -878,6 +909,22 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
     assignments[nextYear] = unassigned;
   }
 
+  // Build {year -> Set(repairKey)} for quick membership tests
+  const assigned_keys_by_year = {};
+  for (const [yr, tripsInYear] of Object.entries(assignments)) {
+    const s = new Set();
+    for (const t of tripsInYear || []) {
+      for (const sr of (t.repairs || [])) {
+        const k1 = getRepairKey(sr);
+        const r = sr?.original_repair || {};
+        const k2 = `sid:${r.station_id ?? ''}::name:${r.name ?? r.repair_name ?? ''}`;
+        s.add(k1);
+        s.add(k2);
+      }
+    }
+    assigned_keys_by_year[yr] = Array.from(s);
+  }
+
   // Build lookup of repair -> trip context using the SAME key function
   const tripLookup = new Map();
   for (const t of trips) {
@@ -927,11 +974,103 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
     };
   }
 
+  // ── Constraints state with remaining amounts for UI ──────────────────────
+  const constraints_state = {};
+  for (const y of Object.keys(yearlyBudgets)) {
+    const b = {};
+    for (const [k, o] of Object.entries(yearlyBudgets[y] || {})) {
+      b[k] = { ...o, remaining: Math.max(0, (o.total || 0) - (o.used || 0)) };
+    }
+    const t = {};
+    for (const [k, o] of Object.entries(yearlyTemporal[y] || {})) {
+      t[k] = { ...o, remaining: Math.max(0, (o.total || 0) - (o.used || 0)) };
+    }
+    constraints_state[y] = { budgets: b, temporal: t };
+  }
+
+  // ── Per-repair consumption & feasible years (for "Add to Year" buttons) ─
+  const per_repair_usage = {};  // key/alias -> { monetary:{fieldKey:amount}, temporal:{nameKey:hours} }
+  const feasible_years = {};    // key/alias -> [years...]
+  for (const sr of allScoredRepairs) {
+    const r = sr?.original_repair || {};
+    const key = getRepairKey(sr);
+    const alias = `sid:${r.station_id ?? ''}::name:${r.name ?? r.repair_name ?? ''}`;
+    const station = stationDataMap[r.station_id] || {};
+    // collect usage
+    const mUse = Object.create(null);
+    const tUse = Object.create(null);
+    for (const c of constraint_columns) {
+      if (c.type === 'monetary') {
+        const raw = findFieldAnywhere(r, station, c.field_name);
+        const base = _tryFloat(raw) || 0;
+        let mul = 1;
+        if (c.split_source) {
+          const smap = _getRepairSplitMap(r, stationDataMap) || {};
+          const mm = smap[c.split_source];
+          mul = Number.isFinite(mm) ? mm : 0;
+        }
+        const amt = base * mul;
+        mUse[c.key] = amt;
+      } else if (c.type === 'temporal') {
+        const raw = findFieldAnywhere(r, station, c.name);
+        const val = _tryFloat(raw) || 0;
+        const ru = _detectUnitFromFieldName(c.name) || _normalizeUnit(c.unit) || 'hours';
+        tUse[c.key] = _toHours(val, ru);
+      }
+    }
+    per_repair_usage[key] = { monetary: mUse, temporal: tUse };
+    per_repair_usage[alias] = { monetary: mUse, temporal: tUse }; // expose alias too
+
+    // determine feasible years
+    const yrs = [];
+    for (const y of years) {
+      let ok = true;
+      // hard (non-cumulative) checks first
+      for (const p of fixed_parameters) {
+        if (!checkIfCondition(r, p, stationDataMap)) continue;
+        if (p.type === 'geographical') {
+          if (!checkGeographicalConstraint(r, p, stationDataMap, y)) { ok = false; break; }
+        } else if (p.type === 'temporal' && !p.cumulative) {
+          if (!checkTemporalConstraint(r, p, stationDataMap, y)) { ok = false; break; }
+        } else if (p.type === 'monetary' && !p.cumulative) {
+          if (!checkMonetaryConstraint(r, p, stationDataMap, y)) { ok = false; break; }
+        }
+      }
+      if (!ok) continue;
+      // cumulative capacity
+      for (const c of constraint_columns) {
+        if (!c.cumulative) continue;
+        if (c.type === 'monetary') {
+          const bucket = yearlyBudgets[y]?.[c.key];
+          if (!bucket) continue;
+          const need = mUse[c.key] || 0;
+          if (bucket.used + need > bucket.total) { ok = false; break; }
+        } else if (c.type === 'temporal') {
+          const bucket = yearlyTemporal[y]?.[c.key];
+          if (!bucket) continue;
+          const need = tUse[c.key] || 0;
+          if (bucket.used + need > bucket.total) { ok = false; break; }
+        }
+      }
+      if (!ok) continue;
+      // not already assigned into this year
+      if ((assigned_keys_by_year[y] || []).includes(key)) continue;
+      yrs.push(y);
+    }
+    feasible_years[key] = yrs;
+    feasible_years[alias] = yrs.slice(); // alias for frontend lookups
+  }
+
   return {
     success: true,
     assignments,
     total_years: Object.keys(assignments).length,
     year_summaries,
+    constraints_state,
+    constraint_columns,
+    per_repair_usage,
+    feasible_years,
+    assigned_keys_by_year,
     warnings: {
       top_percent: Number(top_percent) || 0,
       total_top_repairs: topCount,
