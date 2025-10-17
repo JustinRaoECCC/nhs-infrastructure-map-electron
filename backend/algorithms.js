@@ -341,7 +341,7 @@ async function optimizeWorkplan({ repairs = [], station_data = {}, param_overall
  *   - repairs:        [rawRepairObjects]
  * If scored_repairs is empty, it will group raw repairs directly.
  */
-async function groupRepairsIntoTrips({ scored_repairs = [], repairs = [], station_data = {} } = {}) {
+async function groupRepairsIntoTrips({ scored_repairs = [], repairs = [], station_data = {}, priority_mode = 'tripmean' } = {}) {
   console.log('[groupRepairsIntoTrips] scored_repairs=', scored_repairs.length);
 
   // Accept raw repairs if scored ones were not provided
@@ -408,6 +408,7 @@ async function groupRepairsIntoTrips({ scored_repairs = [], repairs = [], statio
     let totalCost = 0;
     const tripSplitTotals = Object.create(null);
     const stationsArray = [];
+    const repairScores = []; // collect Opt-1 scores for priority metrics
 
     for (const [stationId, stationInfo] of tripData.stations.entries()) {
       let stationDays = 0;
@@ -418,6 +419,8 @@ async function groupRepairsIntoTrips({ scored_repairs = [], repairs = [], statio
         const days = _tryFloat(repair.days || repair.Days) || 0;
         stationDays += days;
         stationCost += _extractRepairCost(repair);
+        // If this repair came from Opt-1, we can read its score via tripData.repairs later;
+        // we still collect in a separate pass below for correctness.
 
         // Split totals (per repair)
         const splitMap = _getRepairSplitMap(repair, station_data) || {};
@@ -442,6 +445,29 @@ async function groupRepairsIntoTrips({ scored_repairs = [], repairs = [], statio
       stationsArray.push(stationInfo);
     }
 
+    // Annotate each scored repair in this trip with trip context for downstream (Opt-3 warnings)
+    for (const sr of (tripData.repairs || [])) {
+      try {
+        sr._trip_location = tripData.trip_location;
+        sr._access_type = tripData.access_type;
+      } catch (e) { /* ignore */ }
+    }
+
+    // ── Score-only priority metrics from Optimization 1 ──
+    // Use the scored repairs attached to this trip grouping.
+    const scores = (tripData.repairs || []).map(r => Number(r.score) || 0).sort((a,b)=>b-a);
+    const mean   = scores.length ? (scores.reduce((a,b)=>a+b,0) / scores.length) : 0;
+    const max    = scores.length ? scores[0] : 0;
+    const median = scores.length
+      ? (scores.length % 2
+          ? scores[(scores.length-1)/2]
+          : (scores[scores.length/2 - 1] + scores[scores.length/2]) / 2)
+      : 0;
+
+    // choose priority score based on requested mode (default = tripmean)
+    const mode = String(priority_mode || 'tripmean').toLowerCase();
+    const priority_score = (mode === 'tripmax') ? max : mean;
+
     trips.push({
       trip_location: tripData.trip_location,
       access_type: tripData.access_type,
@@ -449,16 +475,32 @@ async function groupRepairsIntoTrips({ scored_repairs = [], repairs = [], statio
       total_cost: totalCost,
       total_split_costs: tripSplitTotals,
       repairs: tripData.repairs,
-      stations: stationsArray
+      stations: stationsArray,
+      priority_score,
+      priority_mode: mode,
+      priority_metrics: { mean, max, median, scores }
     });
   }
 
-  // Sort trips by total days (descending)
-  trips.sort((a, b) => b.total_days - a.total_days);
+  // Sort trips by score-only priority (desc). Tie-break: max score, then lexicographic by scores, then total_days.
+  trips.sort((a, b) => {
+    const ps = (b.priority_score ?? 0) - (a.priority_score ?? 0);
+    if (ps) return ps;
+    const mx = (b.priority_metrics?.max ?? 0) - (a.priority_metrics?.max ?? 0);
+    if (mx) return mx;
+    const as = a.priority_metrics?.scores || [];
+    const bs = b.priority_metrics?.scores || [];
+    const n = Math.max(as.length, bs.length);
+    for (let i=0;i<n;i++){
+      const diff = (bs[i] ?? -Infinity) - (as[i] ?? -Infinity);
+      if (diff) return diff;
+    }
+    return (b.total_days ?? 0) - (a.total_days ?? 0);
+  });
 
   return {
     success: true,
-    notes: 'Grouping only. No prioritization or ordering by scores.',
+    notes: `Grouping only. Prioritized by ${String(priority_mode || 'tripmean')}.`,
     trips,
     total_trips: trips.length
   };
@@ -593,7 +635,7 @@ function checkMonetaryConstraint(repair, param, station_data, year) {
 /**
  * OPTIMIZATION 3: Assign trips to years based on fixed parameters
  */
-async function assignTripsToYears({ trips = [], fixed_parameters = [] } = {}) {
+async function assignTripsToYears({ trips = [], fixed_parameters = [], top_percent = 20 } = {}) {
   console.log('[assignTripsToYears] trips=', trips.length, 'fixed_parameters=', fixed_parameters.length);
 
   // Drop legacy/unsupported types (e.g., "designation") to be safe.
@@ -608,6 +650,36 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [] } = {}) {
       assignments: {}
     };
   }
+
+  // IMPORTANT: Respect incoming trip order from Optimization 2
+  // Do NOT re-sort 'trips' here. They are already ordered by priority mode (tripmean/tripmax).
+
+  // ── Build Top-X% repair set for Year-1 warning reporting ─────────────────
+  const getRepairKey = (sr) => {
+    // Prefer stable row_index from Opt-1; fallback to a composite key.
+    const oi = (sr && Number.isInteger(sr.row_index)) ? `idx:${sr.row_index}` : null;
+    if (oi) return oi;
+    const r = sr?.original_repair || {};
+    return `sid:${r.station_id ?? ''}::name:${r.name ?? r.repair_name ?? ''}`;
+  };
+
+  const allScoredRepairs = [];
+  for (const t of trips) {
+    for (const sr of (t.repairs || [])) {
+      allScoredRepairs.push(sr);
+    }
+  }
+  const sortedByScore = allScoredRepairs.slice().sort((a,b) => {
+    const sa = Number(a?.score) || 0;
+    const sb = Number(b?.score) || 0;
+    return sb - sa;
+  });
+  const topCount = Math.min(
+    sortedByScore.length,
+    Math.max(0, Math.ceil((Number(top_percent) || 0) / 100 * sortedByScore.length))
+  );
+  const topRepairs = sortedByScore.slice(0, topCount);
+  const topRepairKeys = new Set(topRepairs.map(getRepairKey));
 
   // Get all years from fixed parameters
   const allYears = new Set();
@@ -674,6 +746,10 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [] } = {}) {
   const assignments = {};
   years.forEach(year => assignments[year] = []);
   const unassigned = [];
+
+  // Track which top-X% repairs ended up in Year-1
+  const firstYear = years[0];
+  const placedInYear1 = new Set();
 
   // Try to assign each trip starting from first year
   for (const trip of trips) {
@@ -778,6 +854,12 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [] } = {}) {
           }
           
           assignments[year].push(trip);
+          // If placed in first year, mark all its repairs as placed for warning coverage.
+          if (year === firstYear) {
+            for (const sr of (trip.repairs || [])) {
+              placedInYear1.add(getRepairKey(sr));
+            }
+          }
           assigned = true;
           break;
         }
@@ -796,10 +878,65 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [] } = {}) {
     assignments[nextYear] = unassigned;
   }
 
+  // Build lookup of repair -> trip context using the SAME key function
+  const tripLookup = new Map();
+  for (const t of trips) {
+    for (const sr of (t.repairs || [])) {
+      const k = getRepairKey(sr);
+      tripLookup.set(k, { trip_location: t.trip_location, access_type: t.access_type });
+    }
+  }
+
+  const highPriorityMissing = [];
+  for (const sr of topRepairs) {
+    const key = getRepairKey(sr);
+    if (!placedInYear1.has(key)) {
+      const r = sr?.original_repair || {};
+      const ctx = tripLookup.get(key) || {};
+      highPriorityMissing.push({
+        station_id: r.station_id ?? '',
+        repair_name: r.name ?? r.repair_name ?? '',
+        score: Number(sr.score) || 0,
+        trip_location: (sr._trip_location ?? ctx.trip_location ?? ''),
+        access_type: (sr._access_type ?? ctx.access_type ?? '')
+      });
+    }
+  }
+
+  // ── Yearly summaries: total $ cost, days, and split totals ───────────────
+  const year_summaries = {};
+  for (const [year, tripsInYear] of Object.entries(assignments)) {
+    let yCost = 0;
+    let yDays = 0;
+    const ySplits = Object.create(null);
+    for (const t of tripsInYear || []) {
+      const tc = Number(t.total_cost || 0);
+      const td = Number(t.total_days || 0);
+      yCost += tc;
+      yDays += td;
+      const splits = t.total_split_costs || {};
+      for (const [k, v] of Object.entries(splits)) {
+        const n = Number(v || 0);
+        if (n > 0) ySplits[k] = (ySplits[k] || 0) + n;
+      }
+    }
+    year_summaries[year] = {
+      total_cost: yCost,
+      total_days: yDays,
+      total_split_costs: ySplits
+    };
+  }
+
   return {
     success: true,
     assignments,
-    total_years: Object.keys(assignments).length
+    total_years: Object.keys(assignments).length,
+    year_summaries,
+    warnings: {
+      top_percent: Number(top_percent) || 0,
+      total_top_repairs: topCount,
+      missing_in_year1: highPriorityMissing
+    }
   };
 }
 

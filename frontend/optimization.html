@@ -61,8 +61,17 @@
       <p class="section-description">
         Group scored repairs by trip location and access type.
         <br/>
+        <strong>⚠️ Note:</strong> You must run <em>Optimization 1</em> first
       </p>
-      <button id="runOpt2Btn" class="btn btn-primary">Run Optimization 2</button>
+      <div class="opt2-controls">
+        <label for="tripPriorityMode" class="opt2-label">Trip Priority:</label>
+        <select id="tripPriorityMode" class="opt2-select">
+          <option value="tripmean" selected>TripMean (average of repair scores)</option>
+          <option value="tripmax">TripMax (max repair score)</option>
+        </select>
+        <button id="tripModeInfoBtn" class="btn btn-ghost info-btn" title="What is this?">ℹ️</button>
+        <button id="runOpt2Btn" class="btn btn-primary">Run Optimization 2</button>
+      </div>
       
       <div id="opt2Results" style="margin-top: 2em;"></div>
     </div>
@@ -77,6 +86,11 @@
         <br/>
         <strong>⚠️ Note:</strong> You must run Optimizations 1 and 2 first.
       </p>
+      <div class="opt3-controls">
+        <label for="opt3TopPercent" class="opt3-label">Top-X% warning threshold:</label>
+        <input type="number" id="opt3TopPercent" class="opt3-input" value="20" min="0" max="100" step="1" />
+        <button id="opt3TopInfoBtn" class="btn btn-ghost info-btn" title="What is this?">ℹ️</button>
+      </div>
       <button id="runOpt3Btn" class="btn btn-primary">Run Optimization 3</button>
       
       <div id="opt3Results" style="margin-top: 2em;"></div>
@@ -313,4 +327,60 @@
     </div>
   </div>
 
+</div>
+
+<!-- Trip Mode Info Modal -->
+<div id="tripModeInfoModal" class="modal" style="display:none;">
+  <div class="modal-content" style="width:520px; max-width:90%;">
+    <span class="close-modal" id="closeTripModeInfoModal">&times;</span>
+    <h2 class="modal-header">Trip Priority Modes</h2>
+    <div style="margin-top:0.6em; line-height:1.5;">
+      <p><strong>TripMean</strong>: For each trip, compute the arithmetic mean of the Optimization&nbsp;1 repair scores in that trip. Trips are ordered by this mean (higher first).</p>
+      <p><strong>TripMax</strong>: For each trip, take the maximum Optimization&nbsp;1 repair score in that trip. Trips are ordered by this maximum (higher first).</p>
+    </div>
+    <div style="margin-top:1em; text-align:right;">
+      <button id="okTripModeInfoBtn" class="btn btn-primary">OK</button>
+    </div>
+  </div>
+  <style>
+    /* lightweight styles for the selector row and info button */
+    .opt2-controls {
+      display:flex;
+      gap:0.6rem;
+      align-items:center;
+      flex-wrap:wrap;
+      margin: .5rem 0 1rem 0;
+    }
+    .opt2-label { font-weight:600; }
+    .opt2-select {
+      padding:.45rem .6rem;
+      border:1px solid #ccc;
+      border-radius:6px;
+      background:#fff;
+    }
+    .btn-ghost.info-btn {
+      border:1px solid #ddd;
+      background:#fff;
+      padding:.35rem .55rem;
+      border-radius:6px;
+      cursor:pointer;
+    }
+    .btn-ghost.info-btn:hover { background:#f7f7f7; }
+  </style>
+</div>
+
+<!-- Opt-3 Top-X% Info Modal -->
+<div id="opt3TopInfoModal" class="modal" style="display:none;">
+  <div class="modal-content" style="width:520px; max-width:90%;">
+    <span class="close-modal" id="closeOpt3TopInfoModal">&times;</span>
+    <h2 class="modal-header">Top-X% Warning</h2>
+    <div style="margin-top:.6em; line-height:1.5;">
+      <p>After assigning trips to <strong>Year&nbsp;1</strong> based on constraints, we look at the <strong>top X% highest-scoring repairs</strong> from Optimization&nbsp;1 across all trips.</p>
+      <p>If any of those repairs are <em>not</em> included in Year&nbsp;1’s assigned trips, we display a warning list so you can review potential deferrals of high-priority work.</p>
+      <p>You can change the X% here to widen or narrow that “watch list.”</p>
+    </div>
+    <div style="margin-top:1em; text-align:right;">
+      <button id="okOpt3TopInfoBtn" class="btn btn-primary">OK</button>
+    </div>
+  </div>
 </div>

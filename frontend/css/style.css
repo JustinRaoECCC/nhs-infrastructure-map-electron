@@ -3800,3 +3800,403 @@ html.modal-open, body.modal-open { overflow: hidden; }
     padding: 6px 8px;
   }
 }
+
+/* =========================
+   Global & Layout
+   ========================= */
+:root{
+  --bg: #ffffff;
+  --text: #1f2937;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  --chip-bg: #f3f4f6;
+  --chip-text: #111827;
+  --primary: #2563eb;
+  --primary-contrast: #ffffff;
+  --table-stripe: #fafafa;
+  --warn: #fff3cd;
+  --warn-border: #ffc107;
+  --ghost-bg: #ffffff;
+  --ghost-border: #dddddd;
+  --shadow: 0 6px 24px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.06);
+}
+
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg: #0b0e14;
+    --text: #e5e7eb;
+    --muted: #a1a1aa;
+    --border: #232732;
+    --chip-bg: #121827;
+    --chip-text: #e5e7eb;
+    --primary: #60a5fa;
+    --primary-contrast: #0b0e14;
+    --table-stripe: #10131a;
+    --warn: #2b2211;
+    --warn-border: #eab308;
+    --ghost-bg: #0b0e14;
+    --ghost-border: #303547;
+    --shadow: 0 6px 24px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.35);
+  }
+}
+
+.nhs-dashboard{
+  color: var(--text);
+  background: var(--bg);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+}
+
+/* =========================
+   Tabs
+   ========================= */
+.dashboard-tabs{
+  display:flex;
+  gap:.5rem;
+  border-bottom:1px solid var(--border);
+  margin-bottom:1rem;
+  flex-wrap:wrap;
+}
+
+.dashboard-tab{
+  appearance:none;
+  border:none;
+  background:transparent;
+  padding:.6rem 1rem;
+  border-radius:.6rem .6rem 0 0;
+  color:var(--muted);
+  cursor:pointer;
+  font-weight:600;
+}
+
+.dashboard-tab.active{
+  color:var(--text);
+  background:var(--chip-bg);
+  border:1px solid var(--border);
+  border-bottom-color: transparent;
+}
+
+.dashboard-content{ display:none; }
+.dashboard-content.active{ display:block; }
+
+/* =========================
+   Common Blocks & Utilities
+   ========================= */
+.opt-container{
+  background:var(--bg);
+}
+
+.separator{
+  border:none;
+  border-top:1px solid var(--border);
+  margin:1.25rem 0;
+}
+
+.top-pane{ margin-bottom:1rem; }
+.actions{ display:flex; gap:.5rem; flex-wrap:wrap; }
+
+.opt-header{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:1rem;
+  margin-bottom:1rem;
+}
+
+.opt-title{
+  font-size:1.25rem;
+  font-weight:700;
+  letter-spacing:.2px;
+}
+
+.opt-summary{
+  display:flex;
+  gap:.5rem;
+  flex-wrap:wrap;
+  align-items:center;
+}
+
+.chip{
+  display:inline-flex;
+  align-items:center;
+  gap:.35rem;
+  font-size:.85rem;
+  padding:.35rem .55rem;
+  border-radius:999px;
+  background:var(--chip-bg);
+  color:var(--chip-text);
+  border:1px solid var(--border);
+  white-space:nowrap;
+}
+
+.opt-note{
+  background:var(--chip-bg);
+  border:1px solid var(--border);
+  padding:.75rem .9rem;
+  border-radius:.6rem;
+  color:var(--muted);
+}
+
+.opt-error{
+  background:rgba(220,38,38,.07);
+  border:1px solid rgba(220,38,38,.3);
+  padding:.75rem .9rem;
+  border-radius:.6rem;
+  color:#dc2626;
+}
+
+/* =========================
+   Buttons
+   ========================= */
+.btn{
+  appearance:none;
+  border:1px solid var(--border);
+  background:var(--ghost-bg);
+  color:var(--text);
+  padding:.55rem .9rem;
+  border-radius:.6rem;
+  cursor:pointer;
+  font-weight:600;
+  box-shadow:none;
+  transition:transform .06s ease, box-shadow .2s ease, background .2s ease;
+}
+.btn:hover{ box-shadow: var(--shadow); transform: translateY(-1px); }
+
+.btn-primary{
+  background:var(--primary);
+  color:var(--primary-contrast);
+  border-color:transparent;
+}
+.btn-primary:hover{ filter:brightness(.98); }
+
+.btn-ghost{
+  background:var(--ghost-bg);
+  color:var(--text);
+  border:1px solid var(--ghost-border);
+}
+
+/* Small round info button variant used in Opt-2 */
+.info-btn{
+  padding:.35rem .55rem;
+  line-height:1;
+}
+
+/* =========================
+   Tables (Optimization 1/2/3)
+   ========================= */
+.opt-table{
+  width:100%;
+  border-collapse:separate;
+  border-spacing:0;
+  overflow:hidden;
+  border:1px solid var(--border);
+  border-radius:.75rem;
+  margin-top:.75rem;
+  /* keep columns perfectly aligned between thead/tbody */
+  table-layout: fixed;
+}
+
+.opt-table thead th{
+  text-align:center !important;
+  font-weight:700;
+  font-size:.9rem;
+  padding:.75rem .9rem;
+  background:var(--chip-bg);
+  border-bottom:1px solid var(--border);
+  position:sticky;
+  top:0;
+  z-index:1;
+  vertical-align:middle !important;
+  white-space:nowrap;
+}
+
+.opt-table tbody td{
+  padding:.7rem .9rem;
+  border-bottom:1px solid var(--border);
+  vertical-align:middle !important;
+  text-align:center !important;
+  white-space:nowrap;
+}
+
+.opt-table tbody tr:nth-child(odd){
+  background:var(--table-stripe);
+}
+
+.opt-table .num{
+  /* enforce center even if an older rule tries to right-align it */
+  text-align:center !important;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Allow responsive scroll for wide tables */
+.opt-table-container{
+  width:100%;
+  overflow:auto;
+  border-radius:.75rem;
+}
+
+/* =========================
+   Trip Sections (Opt-2/3)
+   ========================= */
+.opt-trip{
+  border:1px solid var(--border);
+  border-radius:.9rem;
+  padding:1rem;
+  margin:1rem 0;
+  background:var(--bg);
+  box-shadow: var(--shadow);
+}
+
+.trip-title{
+  font-weight:800;
+  font-size:1.05rem;
+  margin-bottom:.35rem;
+}
+
+.trip-summary{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:.5rem;
+  margin-bottom:.5rem;
+}
+
+/* =========================
+   Optimization 2 Controls
+   ========================= */
+.opt2-controls{
+  display:flex;
+  gap:.6rem;
+  flex-wrap:wrap;
+  align-items:center;
+  margin:.5rem 0 1rem 0;
+}
+
+.opt2-label{ font-weight:600; }
+
+.opt2-select{
+  padding:.45rem .6rem;
+  border:1px solid var(--border);
+  border-radius:.6rem;
+  background:var(--bg);
+  color:var(--text);
+}
+
+/* =========================
+   Modals (Info dialogs)
+   ========================= */
+.modal{
+  position:fixed;
+  inset:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:rgba(0,0,0,.35);
+  z-index:1000;
+  padding:1rem;
+}
+
+.modal-content{
+  background:var(--bg);
+  color:var(--text);
+  border:1px solid var(--border);
+  border-radius:.9rem;
+  box-shadow: var(--shadow);
+  padding:1rem 1.2rem 1.2rem;
+  max-height:85vh;
+  overflow:auto;
+}
+
+.close-modal{
+  float:right;
+  font-size:1.6rem;
+  line-height:1;
+  cursor:pointer;
+  opacity:.7;
+}
+.close-modal:hover{ opacity:1; }
+
+/* =========================
+   Optimization 1 table tweaks
+   ========================= */
+#opt1Results .rank{
+  font-weight:800;
+}
+
+/* =========================
+   Small callouts (warnings)
+   ========================= */
+.callout-warn{
+  background: rgba(220,38,38,0.08);   /* soft red background */
+  border-left: 3px solid #dc2626;     /* strong red bar */
+  padding: .75rem 1rem;
+  border-radius: .5rem;
+  font-weight: 500;
+}
+
+/* =========================
+   Responsive
+   ========================= */
+@media (max-width: 920px){
+  .opt-header{
+    flex-direction:column;
+    align-items:flex-start;
+  }
+}
+
+@media (max-width: 640px){
+  .dashboard-tabs{ gap:.25rem; }
+  .dashboard-tab{ padding:.5rem .7rem; }
+  .opt-table thead{ font-size:.85rem; }
+  .opt-table tbody td, .opt-table thead th{ padding:.6rem .65rem; }
+}
+
+/* =========================
+   Autocomplete (from existing JS)
+   ========================= */
+.autocomplete-items{
+  background:var(--bg) !important;
+  border:1px solid var(--border) !important;
+  border-top:none !important;
+  box-shadow: var(--shadow);
+}
+.autocomplete-items div{
+  border-bottom:1px solid var(--border);
+}
+.autocomplete-active{
+  background-color: var(--primary) !important;
+  color: var(--primary-contrast) !important;
+}
+.autocomplete-items div:hover{
+  background-color: rgba(0,0,0,.04);
+}
+
+/* =========================
+   Helpers
+   ========================= */
+code{
+  background:var(--chip-bg);
+  padding:.1rem .35rem;
+  border-radius:.35rem;
+  border:1px solid var(--border);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size:.9em;
+}
+
+/* Optimization 3 Controls */
+.opt3-controls{
+  display:flex;
+  gap:.6rem;
+  flex-wrap:wrap;
+  align-items:center;
+  margin:.5rem 0 1rem 0;
+}
+.opt3-label{ font-weight:600; }
+.opt3-input{
+  width:6rem;
+  padding:.45rem .6rem;
+  border:1px solid var(--border);
+  border-radius:.6rem;
+  background:var(--bg);
+  color:var(--text);
+}
+.opt-table td.num { font-weight: 600; }

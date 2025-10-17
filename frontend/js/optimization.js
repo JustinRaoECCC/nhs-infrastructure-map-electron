@@ -1248,9 +1248,37 @@ document.addEventListener('DOMContentLoaded', () => {
     // ═══════════════════════════════════════════════════════════════════════
     const runOpt2Btn = document.getElementById('runOpt2Btn');
     const opt2Results = document.getElementById('opt2Results');
+    const tripPrioritySelect = document.getElementById('tripPriorityMode');
+    const tripModeInfoBtn = document.getElementById('tripModeInfoBtn');
+    const tripModeInfoModal = document.getElementById('tripModeInfoModal');
+    const closeTripModeInfoModal = document.getElementById('closeTripModeInfoModal');
+    const okTripModeInfoBtn = document.getElementById('okTripModeInfoBtn');
+
+    // default mode = tripmean
+    window._tripPriorityMode = 'tripmean';
+    if (tripPrioritySelect) {
+      try { tripPrioritySelect.value = 'tripmean'; } catch (e) {}
+      tripPrioritySelect.addEventListener('change', () => {
+        window._tripPriorityMode = tripPrioritySelect.value || 'tripmean';
+      });
+    }
+    // info modal wiring
+    if (tripModeInfoBtn && tripModeInfoModal) {
+      const openInfo = () => (tripModeInfoModal.style.display = 'flex');
+      const closeInfo = () => (tripModeInfoModal.style.display = 'none');
+      tripModeInfoBtn.addEventListener('click', openInfo);
+      if (closeTripModeInfoModal) closeTripModeInfoModal.addEventListener('click', closeInfo);
+      if (okTripModeInfoBtn) okTripModeInfoBtn.addEventListener('click', closeInfo);
+      tripModeInfoModal.addEventListener('click', (e) => { if (e.target === tripModeInfoModal) closeInfo(); });
+    }
 
     if (runOpt2Btn) {
       runOpt2Btn.addEventListener('click', async () => {
+        // Guard: require Optimization 1 to be completed first (same pattern as Opt-3)
+        if (!Array.isArray(window._scoredRepairs) || window._scoredRepairs.length === 0) {
+          opt2Results.innerHTML = '<div class="opt-error">⚠️ Please run Optimization 1 first.</div>';
+          return;
+        }
 
         const stationList = await window.electronAPI.getStationData();
         const stationDataMap = {};
@@ -1259,20 +1287,16 @@ document.addEventListener('DOMContentLoaded', () => {
           if (stationId) stationDataMap[stationId] = station;
         });
 
-        opt2Results.innerHTML = '<div class="opt-note">Grouping repairs into trips (no prioritization)...</div>';
+        opt2Results.innerHTML = '<div class="opt-note">Grouping scored repairs into trips…</div>';
 
-        // Allow running directly on raw repairs if Optimization 1 hasn't been run
-        let scored = Array.isArray(window._scoredRepairs) ? window._scoredRepairs : null;
-        let raw = null;
-        if (!scored || !scored.length) {
-          const allRepairs = await window.electronAPI.getAllRepairs();
-          raw = Array.isArray(allRepairs) ? allRepairs : [];
-        }
+        // Use scored repairs from Optimization 1 only
+        const scored = window._scoredRepairs;
 
         const result = await window.electronAPI.groupRepairsIntoTrips({
           scored_repairs: scored || [],
-          repairs: raw || [],
-          station_data: stationDataMap
+          repairs: [], // no raw fallback; Opt-1 is required
+          station_data: stationDataMap,
+          priority_mode: (window._tripPriorityMode || 'tripmean')
         });
 
         if (!result.success) {
@@ -1300,11 +1324,12 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="opt-title">Optimization 2: Trip Grouping</div>
         <div class="opt-summary">
           <span class="chip">Total Trips: ${result.trips.length}</span>
+          <span class="chip">Mode: ${(window._tripPriorityMode || 'tripmean')}</span>
         </div>
         <div class="opt-note" style="margin-top:.5rem;">
           <strong>Note:</strong> This step <em>only groups</em> by <code>Trip Location × Access Type</code>.
-          It does <em>not</em> use scores or apply any prioritization/order from Optimization 1.
-          Trips are listed by total days (descending).
+          Trips are now ordered by <em>Optimization 1</em> scores using the selected mode
+          (<code>tripmean</code> or <code>tripmax</code>).
         </div>
       `;
       opt2Results.appendChild(summary);
@@ -1323,6 +1348,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <span class="chip">Stations: ${trip.stations.length}</span>
             <span class="chip">Repairs: ${trip.repairs.length}</span>
             <span class="chip">Total Cost: ${formatCurrency(trip.total_cost || 0)}</span>
+            <span class="chip">Score: ${Number(trip.priority_score || 0).toFixed(2)} (${trip.priority_mode || 'tripmean'})</span>            
             ${splitChips}
           </div>
         `;
@@ -1338,6 +1364,8 @@ document.addEventListener('DOMContentLoaded', () => {
               <th>Time to Site (hr)</th>
               <th>Repairs</th>
               <th>Days</th>
+              <th>TripMean</th>
+              <th>TripMax</th>
             </tr>
           </thead>
           <tbody></tbody>
@@ -1353,6 +1381,8 @@ document.addEventListener('DOMContentLoaded', () => {
             <td>${station.time_to_site || ''}</td>
             <td>${station.repair_count}</td>
             <td>${station.total_days}</td>
+            <td class="num">${Number(trip.priority_metrics?.mean || 0).toFixed(2)}</td>
+            <td class="num">${Number(trip.priority_metrics?.max || 0).toFixed(2)}</td>
           `;
           tbody.appendChild(tr);
         });
@@ -1367,6 +1397,21 @@ document.addEventListener('DOMContentLoaded', () => {
     // ═══════════════════════════════════════════════════════════════════════
     const runOpt3Btn = document.getElementById('runOpt3Btn');
     const opt3Results = document.getElementById('opt3Results');
+    const opt3TopPercentInput = document.getElementById('opt3TopPercent');
+    const opt3TopInfoBtn = document.getElementById('opt3TopInfoBtn');
+    const opt3TopInfoModal = document.getElementById('opt3TopInfoModal');
+    const closeOpt3TopInfoModal = document.getElementById('closeOpt3TopInfoModal');
+    const okOpt3TopInfoBtn = document.getElementById('okOpt3TopInfoBtn');
+
+    // Wire info modal
+    if (opt3TopInfoBtn && opt3TopInfoModal) {
+      const openInfo = () => (opt3TopInfoModal.style.display = 'flex');
+      const closeInfo = () => (opt3TopInfoModal.style.display = 'none');
+      opt3TopInfoBtn.addEventListener('click', openInfo);
+      if (closeOpt3TopInfoModal) closeOpt3TopInfoModal.addEventListener('click', closeInfo);
+      if (okOpt3TopInfoBtn) okOpt3TopInfoBtn.addEventListener('click', closeInfo);
+      opt3TopInfoModal.addEventListener('click', (e) => { if (e.target === opt3TopInfoModal) closeInfo(); });
+    }
 
     if (runOpt3Btn) {
       runOpt3Btn.addEventListener('click', async () => {
@@ -1380,9 +1425,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         opt3Results.innerHTML = '<div class="opt-note">Assigning trips to years...</div>';
 
+        const topPercent = Math.min(100, Math.max(0, parseFloat(opt3TopPercentInput?.value ?? '20') || 0));
+
         const result = await window.electronAPI.assignTripsToYears({
           trips: window._tripsData,
-          fixed_parameters: fixedParams
+          fixed_parameters: fixedParams,
+          top_percent: topPercent
         });
 
         if (!result.success) {
@@ -1396,6 +1444,35 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderOpt3Results(result) {
       opt3Results.innerHTML = '';
+    
+      const formatCurrency = (n) => {
+        const num = Number(n || 0);
+        if (!isFinite(num)) return '$0';
+        return '$' + num.toLocaleString(undefined, { maximumFractionDigits: 0 });
+      };
+
+      // Warnings block: high-priority repairs missing from Year 1
+      if (result.warnings && result.warnings.missing_in_year1 && result.warnings.missing_in_year1.length) {
+        const w = result.warnings;
+        const warnBox = document.createElement('div');
+        warnBox.className = 'callout-warn';
+        const items = w.missing_in_year1
+          .slice(0, 50) // prevent overly long lists in UI
+          .map(m => {
+            const score = Number(m.score || 0).toFixed(2);
+            const tripInfo = (m.trip_location || m.access_type)
+              ? ` — <em>Trip: ${m.trip_location || 'Unknown'}${m.access_type ? ' · ' + m.access_type : ''}</em>`
+              : '';
+            return `<li><strong>${m.station_id || ''}</strong> — ${m.repair_name || ''} <span style="opacity:.8;">(score: ${score})</span>${tripInfo}</li>`;
+          })
+          .join('');
+        warnBox.innerHTML = `
+          <div style="font-weight:700; margin-bottom:.35rem;">Warning: Top ${w.top_percent}% repairs not in Year 1</div>
+          <div style="opacity:.8; margin-bottom:.4rem;">${w.missing_in_year1.length} / ${w.total_top_repairs} high-priority repairs were not included in Year 1’s assigned trips.</div>
+          <ul style="margin:.25rem 0 .25rem 1.1rem; line-height:1.4;">${items}</ul>
+        `;
+        opt3Results.appendChild(warnBox);
+      }
 
       const summary = document.createElement('div');
       summary.className = 'opt-header';
@@ -1406,6 +1483,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
       Object.keys(result.assignments).sort().forEach(year => {
         const trips = result.assignments[year];
+        const ysum = (result.year_summaries && result.year_summaries[year]) ? result.year_summaries[year] : { total_cost: 0, total_days: 0, total_split_costs: {} };
+        const splitTotals = ysum.total_split_costs || {};
+        const splitKeys = Object.keys(splitTotals).filter(k => Number(splitTotals[k]) > 0).sort();
+        const splitChips = splitKeys.map(k => `<span class="chip">${k}: ${formatCurrency(splitTotals[k])}</span>`).join('');
         
         const yearSection = document.createElement('section');
         yearSection.className = 'opt-trip';
@@ -1413,7 +1494,9 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="trip-title">Year ${year}</div>
           <div class="trip-summary">
             <span class="chip">Trips: ${trips.length}</span>
-            <span class="chip">Total Days: ${trips.reduce((sum, t) => sum + t.total_days, 0)}</span>
+            <span class="chip">Total Days: ${ysum.total_days}</span>
+            <span class="chip">Total Cost: ${formatCurrency(ysum.total_cost)}</span>
+            ${splitChips}
           </div>
         `;
 
@@ -1425,8 +1508,10 @@ document.addEventListener('DOMContentLoaded', () => {
               <th>Priority</th>
               <th>Trip Location</th>
               <th>Access Type</th>
+              <th>Cost</th>
               <th>Days</th>
               <th>Stations</th>
+              <th>Score</th>
             </tr>
           </thead>
           <tbody></tbody>
@@ -1439,8 +1524,10 @@ document.addEventListener('DOMContentLoaded', () => {
             <td>${idx + 1}</td>
             <td>${trip.trip_location}</td>
             <td>${trip.access_type}</td>
+            <td class="num">${formatCurrency(trip.total_cost || 0)}</td>
             <td>${trip.total_days}</td>
             <td>${trip.stations.length}</td>
+            <td class="num">${Number(trip.priority_score || 0).toFixed(2)}</td>
           `;
           tbody.appendChild(tr);
         });
