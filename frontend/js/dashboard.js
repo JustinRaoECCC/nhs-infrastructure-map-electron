@@ -11,15 +11,15 @@
   const hasStatsDOM = () => !!document.getElementById('statisticsPage');
 
   const getFieldValue = (row, fieldName) => {
-    // Finds "Inspection Frequency" or any "Section â€“ Inspection Frequency" etc., case-insensitive
+    // Finds "Inspection Frequency" or any "Section Inspection Frequency" etc., case-insensitive
     const target = String(fieldName).toLowerCase();
     for (const k of Object.keys(row || {})) {
       if (!k) continue;
       if (String(k).toLowerCase() === target) return row[k];
     }
     for (const k of Object.keys(row || {})) {
-      if (k.includes(' â€“ ')) {
-        const parts = k.split(' â€“ ');
+      if (k.includes(' ')) {
+        const parts = k.split(' ');
         const last = parts[parts.length - 1];
         if (String(last).toLowerCase() === target) return row[k];
       }
@@ -252,7 +252,7 @@
     body.className = 'stat-card-body';
     const closeBtn = document.createElement('button');
     closeBtn.className = 'btn btn-ghost stat-card-close';
-    closeBtn.textContent = 'âœ•';
+    closeBtn.textContent = '';
     closeBtn.title = 'Remove';
     closeBtn.addEventListener('click', () => {
       wrap.remove();
@@ -307,7 +307,7 @@
     root.innerHTML = `
       <div class="stat-title">Stations by Inspection Frequency</div>
       <div class="chart" style="width:100%;" aria-label="Inspection Frequency chart"></div>
-      <div class="hint">Looks for a column named â€œInspection Frequencyâ€ (any section).</div>
+      <div class="hint">Looks for a column named Inspection Frequency (any section).</div>
     `;
     const chart = $('.chart', root);
 
@@ -346,7 +346,7 @@
         <input type="number" step="0.1" class="in-rad" placeholder="10" value="10">
         <button class="btn btn-primary btn-run">Compute</button>
       </div>
-      <div class="result"><strong>Stations in circle:</strong> <span class="out">â€”</span></div>
+      <div class="result"><strong>Stations in circle:</strong> <span class="out"></span></div>
       <div class="hint">Uses the current filters. Change inputs and click Compute.</div>
     `;
     const out = $('.result .out', root);
@@ -372,7 +372,7 @@
       const lon = parseFloat(lonIn.value);
       const rad = Math.max(0, parseFloat(radIn.value));
       if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(rad)) {
-        out.textContent = 'â€”';
+        out.textContent = '';
         return;
       }
       let n = 0;
@@ -389,7 +389,7 @@
     const update = () => {
       // try to seed reasonable center; do not auto-compute to avoid surprises
       seedDefaults();
-      out.textContent = 'â€”';
+      out.textContent = '';
     };
 
     return addCard(root, update);
@@ -675,7 +675,7 @@
     if (typeof cost === 'number' && Number.isFinite(cost)) {
       return `$${cost.toLocaleString()}`;
     }
-    return String(cost || 'â€”');
+    return String(cost || '');
   }
 
   function openGlobalRepairModal() {
@@ -1134,7 +1134,7 @@
         <div id="irPreview" style="display:none;margin-top:16px;">
           <div style="margin-bottom:8px;"><strong>Preview:</strong> <span id="irCount"></span> repairs found</div>
           <div id="irMissingFields" style="display:none;margin-bottom:12px;padding:8px;background:#fff3cd;border:1px solid #ffc107;border-radius:4px;">
-            <strong>âš ï¸ Some repairs are missing required fields</strong>
+            <strong>Some repairs are missing required fields</strong>
             <div style="margin-top:4px;font-size:0.9em;">You'll be prompted to fill in missing information after import.</div>
           </div>
         </div>
@@ -1275,7 +1275,7 @@
       }
 
       if (errors.length > 0) {
-        await appAlert(`âš ï¸ Could not import ${errors.length} repair(s):\n\n${
+        await appAlert(`Could not import ${errors.length} repair(s):\n\n${
           errors.slice(0, 5).join('\n')
         }${errors.length > 5 ? '\n...' : ''}`);
       }
@@ -1350,16 +1350,18 @@
 
     const mapped = {
       stationId: pickField(row, ['Station Number', 'Site Number', 'Station ID', 'Site ID', 'ID']),
-      name:      pickField(row, ['Repair Name', 'Name']),
-      severity:  pickField(row, ['Severity Ranking', 'Severity']),
+      date:      pickField(row, ['Date']),
+      name:      pickField(row, ['Repair Name', 'Tasks', 'Name']),
+      severity:  pickField(row, ['Severity Ranking', 'Risk Ranking', 'Severity']),
       priority:  pickField(row, ['Priority Ranking', 'Priority']),
       cost:      pickField(row, ['Repair Cost (K)', 'Repair Cost', 'Cost']),
-      days:      pickField(row, ['Days']),
-      category:  pickField(row, ['Category']),
+      days:      pickField(row, ['Days', 'Work Days']),
+      category:  pickField(row, ['Category', 'Funding Type']),
+      assetType: pickField(row, ['Asset Type', 'Infrastructure Type']),
       // NEW: If there is NO Type column in the sheet, leave blank to force a per-row prompt.
       // If a Type column exists but the cell is blank, default to "Repair" (previous behavior).
       type:      (function () {
-        const raw = (pickField(row, ['Type', 'Repair/Maintenance', 'Work Type']) || '').trim();
+        const raw = (pickField(row, ['Type', 'Repair/Maintenance', 'Work Type', 'Scope Type']) || '').trim();
         if (!raw) return noTypeColumn ? '' : 'Repair';
         const t = raw.toLowerCase();
         // Normalize common inputs
@@ -1384,7 +1386,7 @@
 
   // Helper to pick first non-empty value from multiple possible field names
   function pickField(row, candidates) {
-    // Robust lookup: case-insensitive and supports composite keys (Section â€“ Field)
+    // Robust lookup: case-insensitive and supports composite keys (Section Field)
     for (const name of candidates) {
       const v = getFieldValue(row, name);
       if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
@@ -1396,6 +1398,12 @@
       const target = norm(name);
       for (const k of keys) {
         if (norm(k) === target && String(row[k] ?? '').trim() !== '') return String(row[k]).trim();
+      }
+    }
+    // Additional exact match pass (case-sensitive) for specific headers
+    for (const name of candidates) {
+      if (row[name] !== undefined && row[name] !== null && String(row[name]).trim() !== '') {
+        return String(row[name]).trim();
       }
     }
     return '';
@@ -1578,23 +1586,32 @@
         console.error(`[importSingleRepair] Missing location or asset type for station ${repair.stationId}`);
         return { success: false, message: 'Station missing location or asset type' };
       }
+
+      // Normalize category format: "O & M" -> "O&M", "Decommission" stays as is
+      let normalizedCategory = String(repair.category ?? '').trim();
+      if (normalizedCategory) {
+        // Remove spaces around ampersand: "O & M" -> "O&M"
+        normalizedCategory = normalizedCategory.replace(/\s*&\s*/g, '&');
+      }
       
       // Build repair payload with header-cased fields so backend writes proper columns
       const repairData = {
         'Station ID': repair.stationId,
         'Repair Name': repair.name,
+        'Date': repair.date || new Date().toISOString().slice(0, 10), // Use imported date or current date
         'Severity': repair.severity || '',
         'Priority': repair.priority || '',
         'Cost': repair.cost || '',
-        'Category': String(repair.category ?? '').trim(),
+        'Category': normalizedCategory || 'Capital',
         'Type': repair.type || 'Repair',
         'Days': repair.days || '',
         // Aliases for compatibility with older paths
         name: repair.name,
+        date: repair.date || new Date().toISOString().slice(0, 10),
         severity: repair.severity || '',
         priority: repair.priority || '',
         cost: repair.cost || '',
-        category: String(repair.category ?? '').trim(),
+        category: normalizedCategory || 'Capital',
         type: repair.type || 'Repair',
         days: repair.days || ''
       };
