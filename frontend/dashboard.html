@@ -62,61 +62,8 @@
       <button id="btnResolveRepairs" class="btn btn-ghost">Resolve Selected</button>
     </div>
 
-    <div class="repairs-tables">
-      <!-- Repairs Table -->
-      <div class="panel">
-        <div class="panel-title">Repairs</div>
-        <div class="table-scroll">
-          <table class="data-table" id="globalRepairsTable">
-            <thead>
-              <tr>
-                <th style="width:40px;">
-                  <input type="checkbox" id="selectAllRepairs" title="Select all" />
-                </th>
-                <th>Date</th>
-                <th>Station ID</th>
-                <th>Location</th>
-                <th>Asset Type</th>
-                <th>Repair Name</th>
-                <th>Severity</th>
-                <th>Priority</th>
-                <th>Cost</th>
-                <th>Category</th>
-                <th>Days</th>
-              </tr>
-            </thead>
-            <tbody id="globalRepairsBody"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Maintenance Table -->
-      <div class="panel" style="margin-top:20px;">
-        <div class="panel-title">Maintenance</div>
-        <div class="table-scroll">
-          <table class="data-table" id="globalMaintenanceTable">
-            <thead>
-              <tr>
-                <th style="width:40px;">
-                  <input type="checkbox" id="selectAllMaintenance" />
-                </th>
-                <th>Date</th>
-                <th>Station ID</th>
-                <th>Location</th>
-                <th>Asset Type</th>
-                <th>Item</th>
-                <th>Severity</th>
-                <th>Priority</th>
-                <th>Cost</th>
-                <th>Category</th>
-                <th>Days</th>
-              </tr>
-            </thead>
-            <tbody id="globalMaintenanceBody"></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
+    <!-- Dynamic tables per Type (only "Repair" exists at first; others appear as added/imported) -->
+    <div id="globalTypeTables" class="repairs-tables"><!-- filled by JS --></div>
 
     <!-- Add Repair Modal (defined in separate file) -->
     <div id="globalRepairModal" class="modal" style="display:none;">

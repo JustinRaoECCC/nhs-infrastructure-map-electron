@@ -1,7 +1,6 @@
 // frontend/js/repairs.js
 (() => {
   const CATS = ['Capital', 'O&M'];
-  const TYPES = ['Repair', 'Monitoring'];
   const AT_REQUIRED_MSG = 'Asset Type is required.';
 
   function fmtCost(v) {
@@ -114,7 +113,7 @@
     const priority = String(document.querySelector('#repPriority')?.value || '').trim();
     const costRaw = String(document.querySelector('#repCost')?.value || '').trim();
     const category = String(document.querySelector('#repCategory')?.value || 'Capital');
-    const type = String(document.querySelector('#repType')?.value || 'Repair');
+    const type = String(document.querySelector('#repType')?.value || '').trim() || 'Repair';
     const daysRaw = String(document.querySelector('#repDays')?.value || '').trim();
     let cost = costRaw ? Number(costRaw.replace(/[, ]/g, '')) : '';
     if (!Number.isFinite(cost)) cost = costRaw; // keep as string if not numeric
@@ -131,7 +130,6 @@
     if (!data.assetType) return AT_REQUIRED_MSG;
     if (!data.name) return 'Repair Name is required.';
     if (!CATS.includes(data.category)) return 'Select a valid Category.';
-    if (!TYPES.includes(data.type)) return 'Select a valid Type.';
     return null;
   }
 
@@ -154,8 +152,7 @@
     // Remember the station's current asset type for defaulting the modal input
     stateRef.__currentStationAssetType = (stn && stn.asset_type) ? String(stn.asset_type) : '';
 
-    const repairsTbody = host.querySelector('#repairsTbody');
-    const monitoringTbody = host.querySelector('#monitoringTbody');
+    const tablesWrap = host.querySelector('#repTablesWrap');
 
     const editBtn = host.querySelector('#repEditBtn');
     const actionsBlock = host.querySelector('#repActionsBlock');
@@ -169,15 +166,55 @@
     const createBtn = document.querySelector('#repCreate');
     const errorEl = document.querySelector('#repFormError');
 
-    function entriesByType(type) {
-      return state.items
-        .map((it, idx) => [it, idx])
-        .filter(([it]) => (String(it.type || 'Repair') === type));
+    function normTypeLabel(t) {
+      const s = String(t || '').trim();
+      return s || 'Repair';
     }
-
+    function groupedEntries() {
+      const map = new Map(); // typeLabel -> [ [item, idx], ... ]
+      state.items.forEach((it, idx) => {
+        const key = normTypeLabel(it.type);
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push([it, idx]);
+      });
+      // Ensure we always show an empty "Repair" table if nothing yet
+      if (state.items.length === 0 && !map.has('Repair')) map.set('Repair', []);
+      return map;
+    }
     function renderAll() {
-      renderTable(repairsTbody, entriesByType('Repair'), state);
-      renderTable(monitoringTbody, entriesByType('Monitoring'), state);
+      tablesWrap.innerHTML = '';
+      const groups = groupedEntries();
+      [...groups.keys()].sort((a,b) => a.localeCompare(b)).forEach(label => {
+        const section = document.createElement('div');
+        const title = document.createElement('h3');
+       title.style.cssText = 'margin:14px 0 6px;';
+        title.textContent = `${label} Items`;
+        const scroller = document.createElement('div');
+        scroller.className = 'table-scroll';
+        const table = document.createElement('table');
+        table.className = 'data-table';
+        table.style.width = '100%';
+        table.innerHTML = `
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>${label === 'Repair' ? 'Repair Name' : 'Item'}</th>
+              <th>Severity</th>
+              <th>Priority</th>
+              <th>Cost</th>
+              <th>Category</th>
+              <th>Days</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        `;
+        scroller.appendChild(table);
+        section.appendChild(title);
+        section.appendChild(scroller);
+        tablesWrap.appendChild(section);
+        const tbody = table.querySelector('tbody');
+        renderTable(tbody, groups.get(label) || [], state);
+      });
     }
 
     async function load() {
@@ -191,7 +228,7 @@
           priority: x.priority || '',
           cost: x.cost,
           category: x.category || 'Capital',
-          type: /^monitor/i.test(x.type) ? 'Monitoring' : 'Repair',
+          type: normTypeLabel(x.type),
           days: x.days || ''
         })) : [];
       } catch (e) {

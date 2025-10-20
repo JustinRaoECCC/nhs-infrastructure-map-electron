@@ -31,15 +31,21 @@ function normalizeItem(raw) {
   else if (/^decomm/i.test(rawCategory)) category = 'Decommission';
   else if (/^cap/i.test(rawCategory)) category = 'Capital';
   
-  // Normalize type
-  const type = /^monitor/i.test(item.type) ? 'Monitoring' : 'Repair';
+  // Type / Scope Type: accept anything provided; default to "Repair" if blank
+  const typeRaw =
+    item.type ??
+    item['Type'] ??
+    item.scopeType ??
+    item['Scope Type'] ??
+    '';
+  const type = String(typeRaw).trim() || 'Repair';
   
   // Ensure date format
   const date = String(item.date ?? '').trim() || new Date().toISOString().slice(0, 10);
   
   return {
     date,
-    station_id: String(item.station_id ?? '').trim(),
+    station_id: String(item.station_id ?? item['Station ID'] ?? '').trim(),
     // Handle both 'name' and 'Repair Name' fields
     name: String(item.name || item['Repair Name'] || item.repair_name || '').trim(),
     severity: String(item.severity ?? '').trim(),
@@ -149,19 +155,22 @@ async function addRepair(company, location, assetType, repair) {
       throw new Error('Station ID is required');
     }
     
-    // Normalize the repair data
-    const normalizedRepair = normalizeItem({
-      ...repair,
-      location,
-      assetType
-    });
-    
-    // Call Excel worker to append the repair
-    const result = await excel.appendRepair(
-      company, location, 
-      assetType, 
-      normalizedRepair
-    );
+    // Normalize to coerce numbers/dates, then emit header-cased fields
+    const n = normalizeItem({ ...repair, location, assetType });
+    const payload = {
+      'Station ID': repair['Station ID'] || n.station_id,
+      'Repair Name': repair['Repair Name'] || n.name,
+      'Date':        repair['Date'] || n.date,
+      'Asset Type':  repair['Asset Type'] || n.assetType,
+      'Severity':    repair['Severity'] ?? n.severity,
+      'Priority':    repair['Priority'] ?? n.priority,
+      'Cost':        repair['Cost'] ?? n.cost,
+      'Category':    repair['Category'] || n.category,
+      'Type':        repair['Type'] || n.type,
+      'Days':        repair['Days'] ?? n.days
+    };
+
+    const result = await excel.appendRepair(company, location, assetType, payload);
     
     return result;
   } catch (e) {
@@ -264,12 +273,20 @@ async function getRepairStatistics() {
   try {
     const allRepairs = await getAllRepairs();
     
+    const byTypeDynamic = {};
+    allRepairs.forEach(r => {
+      const t = String(r.type || 'Repair').trim();
+      byTypeDynamic[t] = (byTypeDynamic[t] || 0) + 1;
+    });
+
     const stats = {
       total: allRepairs.length,
+      // keep legacy keys for any existing UI consumers
       byType: {
-        repairs: allRepairs.filter(r => r.type === 'Repair').length,
-        monitoring: allRepairs.filter(r => r.type === 'Monitoring').length
+        repairs: (byTypeDynamic['Repair'] || 0),
+        monitoring: (byTypeDynamic['Monitoring'] || 0)
       },
+      byTypeDynamic,
       byCategory: {
         capital: allRepairs.filter(r => r.category === 'Capital').length,
         oAndM: allRepairs.filter(r => r.category === 'O&M').length

@@ -430,13 +430,11 @@
 
   // ---- Repairs and Maintenance Tab ---------------------------------------
   
+  // Now dynamic: one table per Type (e.g., "Repair", "Monitoring", etc.)
   let repairsState = {
     allRepairs: [],
-    selectedRepairs: new Set(),
-    selectedMaintenance: new Set(),
-    // virtualization (no paging)
-    _vtRepairs: null,
-    _vtMaintenance: null
+    selectedByType: new Map(),   // type -> Set(rows)
+    _vtByType: new Map()         // type -> virtualizer
   };
   let stationsList = [];
 
@@ -444,7 +442,7 @@
     try {
       const repairs = await window.electronAPI.getAllRepairs();
       repairsState.allRepairs = Array.isArray(repairs) ? repairs : [];
-      renderRepairsTables();
+      renderTypeTables();
     } catch (e) {
       console.error('[dashboard:repairs] Failed to load repairs:', e);
       repairsState.allRepairs = [];
@@ -453,13 +451,6 @@
 
   // Expose globally for other views to refresh
   window.loadRepairsData = loadRepairsData;
-
-  function renderRepairsTables() {
-    renderRepairsTable();
-    renderMaintenanceTable();
-  }
-
-  // Replace the updatePaginationControls function in dashboard.js with this version:
 
   // ===== Virtualized table helper (windowing) =====
   // Use global helper from add_infra.js if present; otherwise define a local copy.
@@ -548,104 +539,110 @@
     };
   })();
 
-  // Helpers to compute current filtered lists for each table (no paging)
-  function _rowsRepairs() {
-    return repairsState.allRepairs.filter(r => r.type !== 'Monitoring');
-  }
-  function _rowsMaintenance() {
-    return repairsState.allRepairs.filter(r => r.type === 'Monitoring');
-  }
   function _setTriState(headerCheckbox, selectedSize, total) {
     if (!headerCheckbox) return;
     headerCheckbox.indeterminate = selectedSize > 0 && selectedSize < total;
     headerCheckbox.checked = total > 0 && selectedSize === total;
   }
 
-  // Virtualized renderers
-  function renderRepairsTable() {
-    const repairsBody = $('#globalRepairsBody');
-    if (!repairsBody) return;
-    
-    const repairs = _rowsRepairs();
-
-    // Render slice via virtualizer
-    const renderRowHTML = (repair, i) => {
-      const checked = repairsState.selectedRepairs.has(repair) ? 'checked' : '';
-      return `
-        <td><input type="checkbox" class="repair-checkbox" ${checked}></td>
-        <td>${esc(repair.date || '')}</td>
-        <td>${esc(repair.station_id || '')}</td>
-        <td>${esc(repair.location || '')}</td>
-        <td>${esc(repair.assetType || '')}</td>
-        <td>${esc(repair.name || '')}</td>
-        <td>${esc(repair.severity || '')}</td>
-        <td>${esc(repair.priority || '')}</td>
-        <td>${formatCost(repair.cost)}</td>
-        <td>${esc(repair.category || '')}</td>
-        <td>${esc(repair.days || '')}</td>
-      `;
-    };
-
-    if (!repairsState._vtRepairs) {
-      repairsState._vtRepairs = mountVirtualizedTable({
-        rows: repairs,
-        tbody: repairsBody,
-        renderRowHTML,
-        rowHeight: 44,
-        overscan: 10,
-        adaptiveHeight: true,
-        maxViewport: 520,
-        minViewport: 0
-      });
-      // delegate selection via event on tbody
-      repairsBody.addEventListener('change', (e) => {
-        const t = e.target;
-        if (!(t instanceof HTMLInputElement) || !t.classList.contains('repair-checkbox')) return;
-        const tr = t.closest('tr'); if (!tr) return;
-        const idx = Number(tr.dataset.index); if (Number.isNaN(idx)) return;
-        const item = _rowsRepairs()[idx];
-        if (!item) return;
-        if (t.checked) repairsState.selectedRepairs.add(item); else repairsState.selectedRepairs.delete(item);
-        // update header tri-state
-        _setTriState($('#selectAllRepairs'), repairsState.selectedRepairs.size, _rowsRepairs().length);
-      });
-    } else {
-      repairsState._vtRepairs.update(repairs);
-    }
-    // Keep scroller constraints tidy
-    const tableScroll = $('#globalRepairsTable')?.closest('.table-scroll');
-    if (tableScroll) { tableScroll.style.display = 'block'; tableScroll.style.overflowX = 'auto'; tableScroll.style.overflowY = 'auto'; tableScroll.style.boxSizing = 'border-box'; }
-    // update tri-state each render
-    _setTriState($('#selectAllRepairs'), repairsState.selectedRepairs.size, repairs.length);
+  // ---- Dynamic tables by Type -----------------------------------------------
+  function _typeLabel(r) {
+    const t = String(r?.type || '').trim();
+    return t || 'Repair';
+  }
+  function _groupByType(rows) {
+    const map = new Map();
+    rows.forEach(r => {
+      const k = _typeLabel(r);
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(r);
+    });
+    // Ensure "Repair" shows (even empty) when there is no data yet
+    if (map.size === 0) map.set('Repair', []);
+    return [...map.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
   }
 
-  function renderMaintenanceTable() {
-    const maintenanceBody = $('#globalMaintenanceBody');
-    if (!maintenanceBody) return;
-   
-    const maintenance = _rowsMaintenance();
+  function _slug(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$|/g,''); }
 
-    const renderRowHTML = (item, i) => {
-      const checked = repairsState.selectedMaintenance.has(item) ? 'checked' : '';
-      return `
-        <td><input type="checkbox" class="maintenance-checkbox" ${checked}></td>
-        <td>${esc(item.date || '')}</td>
-        <td>${esc(item.station_id || '')}</td>
-        <td>${esc(item.location || '')}</td>
-        <td>${esc(item.assetType || '')}</td>
-        <td>${esc(item.name || '')}</td>
-        <td>${esc(item.severity || '')}</td>
-        <td>${esc(item.priority || '')}</td>
-        <td>${formatCost(item.cost)}</td>
-        <td>${esc(item.category || '')}</td>
-        <td>${esc(item.days || '')}</td>
+  function renderTypeTables() {
+    const wrap = $('#globalTypeTables');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    repairsState._vtByType.clear();
+
+    const groups = _groupByType(repairsState.allRepairs);
+    groups.forEach(([type, rows]) => {
+      const slug = _slug(type || 'repair') || 'repair';
+
+      const panel = document.createElement('div');
+      panel.className = 'panel';
+      panel.style.marginTop = '20px';
+
+      const title = document.createElement('div');
+      title.className = 'panel-title';
+      title.textContent = type;
+
+      const scroller = document.createElement('div');
+      scroller.className = 'table-scroll';
+
+      const table = document.createElement('table');
+      table.className = 'data-table';
+      table.id = `globalTable_${slug}`;
+
+      const nameHdr = (type === 'Repair') ? 'Repair Name' : 'Item';
+      table.innerHTML = `
+        <thead>
+          <tr>
+            <th style="width:40px;">
+              <input type="checkbox" id="selectAll_${slug}" title="Select all ${type}" />
+            </th>
+            <th>Date</th>
+            <th>Station ID</th>
+            <th>Location</th>
+            <th>Asset Type</th>
+            <th>${nameHdr}</th>
+            <th>Severity</th>
+            <th>Priority</th>
+            <th>Cost</th>
+            <th>Category</th>
+            <th>Days</th>
+          </tr>
+        </thead>
+        <tbody id="globalBody_${slug}"></tbody>
       `;
-    };
 
-    if (!repairsState._vtMaintenance) {
-      repairsState._vtMaintenance = mountVirtualizedTable({
-        rows: maintenance,
-        tbody: maintenanceBody,
+      scroller.appendChild(table);
+      panel.appendChild(title);
+      panel.appendChild(scroller);
+      wrap.appendChild(panel);
+
+      // Selection bucket per type
+      if (!repairsState.selectedByType.has(type)) {
+        repairsState.selectedByType.set(type, new Set());
+      }
+      const selSet = repairsState.selectedByType.get(type);
+      const tbody = table.querySelector('tbody');
+
+      const renderRowHTML = (r, i) => {
+        const checked = selSet.has(r) ? 'checked' : '';
+        return `
+          <td><input type="checkbox" class="type-checkbox" ${checked}></td>
+          <td>${esc(r.date || '')}</td>
+          <td>${esc(r.station_id || '')}</td>
+          <td>${esc(r.location || '')}</td>
+          <td>${esc(r.assetType || '')}</td>
+          <td>${esc(r.name || '')}</td>
+          <td>${esc(r.severity || '')}</td>
+          <td>${esc(r.priority || '')}</td>
+          <td>${formatCost(r.cost)}</td>
+          <td>${esc(r.category || '')}</td>
+          <td>${esc(r.days || '')}</td>
+        `;
+      };
+
+      const vt = mountVirtualizedTable({
+        rows,
+        tbody,
         renderRowHTML,
         rowHeight: 44,
         overscan: 10,
@@ -653,22 +650,33 @@
         maxViewport: 520,
         minViewport: 0
       });
-      maintenanceBody.addEventListener('change', (e) => {
+      repairsState._vtByType.set(type, vt);
+
+      // delegate per-row selection
+      tbody.addEventListener('change', (e) => {
         const t = e.target;
-        if (!(t instanceof HTMLInputElement) || !t.classList.contains('maintenance-checkbox')) return;
+        if (!(t instanceof HTMLInputElement) || !t.classList.contains('type-checkbox')) return;
         const tr = t.closest('tr'); if (!tr) return;
         const idx = Number(tr.dataset.index); if (Number.isNaN(idx)) return;
-        const item = _rowsMaintenance()[idx];
+        const item = rows[idx];
         if (!item) return;
-        if (t.checked) repairsState.selectedMaintenance.add(item); else repairsState.selectedMaintenance.delete(item);
-        _setTriState($('#selectAllMaintenance'), repairsState.selectedMaintenance.size, _rowsMaintenance().length);
+        if (t.checked) selSet.add(item); else selSet.delete(item);
+        _setTriState(document.getElementById(`selectAll_${slug}`), selSet.size, rows.length);
       });
-    } else {
-      repairsState._vtMaintenance.update(maintenance);
-    }
-    const tableScroll = $('#globalMaintenanceTable')?.closest('.table-scroll');
-    if (tableScroll) { tableScroll.style.display = 'block'; tableScroll.style.overflowX = 'auto'; tableScroll.style.overflowY = 'auto'; tableScroll.style.boxSizing = 'border-box'; }
-    _setTriState($('#selectAllMaintenance'), repairsState.selectedMaintenance.size, maintenance.length);
+
+      // header select-all
+      const hdr = document.getElementById(`selectAll_${slug}`);
+      hdr?.addEventListener('change', (e) => {
+        if (e.target.checked) {
+          selSet.clear(); rows.forEach(r => selSet.add(r));
+        } else {
+          selSet.clear();
+        }
+        vt.refresh();
+        _setTriState(hdr, selSet.size, rows.length);
+      });
+      _setTriState(hdr, selSet.size, rows.length);
+    });
   }
 
   function formatCost(cost) {
@@ -750,11 +758,8 @@
             </select>
           </div>
           <div class="form-row">
-            <label>Type</label>
-            <select id="grType">
-              <option value="Repair">Repair</option>
-              <option value="Monitoring">Monitoring</option>
-            </select>
+            <label>Type / Scope Type</label>
+            <input id="grType" type="text" placeholder="e.g. Repair, Monitoring, Coating…" />
           </div>
         </div>
         <div class="modal-actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
@@ -912,7 +917,7 @@
         priority: $('#grPriority').value,
         cost: $('#grCost').value,
         category: $('#grCategory').value,
-        type: $('#grType').value,
+        type: ($('#grType').value || '').trim() || 'Repair',
         days: $('#grDays').value
       };
       
@@ -980,17 +985,23 @@
   }
 
   async function resolveSelectedRepairs() {
-    if (repairsState.selectedRepairs.size === 0 && repairsState.selectedMaintenance.size === 0) {
+    // Flatten all selections across types
+    const allSelected = [...repairsState.selectedByType.values()].reduce((acc, set) => {
+      set.forEach(x => acc.push(x));
+      return acc;
+    }, []);
+
+    if (allSelected.length === 0) {
       appAlert('No items selected to resolve');
       return;
     }
     
-    const confirmed = await appConfirm(`Are you sure you want to resolve ${repairsState.selectedRepairs.size + repairsState.selectedMaintenance.size} selected items? This will permanently delete them.`);
+    const confirmed = await appConfirm(`Are you sure you want to resolve ${allSelected.length} selected items? This will permanently delete them.`);
     if (!confirmed) return;
     
     // Group by station for efficient deletion
     const byStation = new Map();
-    [...repairsState.selectedRepairs, ...repairsState.selectedMaintenance].forEach(repair => {
+    allSelected.forEach(repair => {
       const key = `${repair.location}||${repair.assetType}||${repair.station_id}`;
       if (!byStation.has(key)) byStation.set(key, []);
       byStation.get(key).push(repair);
@@ -1015,40 +1026,8 @@
     if (window.populateWorkplanFromRepairs) window.populateWorkplanFromRepairs();
   }  
 
-  function wireSelectAllCheckboxes() {
-    const selectAllRepairs = $('#selectAllRepairs');
-    const selectAllMaintenance = $('#selectAllMaintenance');
-    
-    if (selectAllRepairs) {
-      selectAllRepairs.addEventListener('change', (e) => {
-        const rows = _rowsRepairs();
-        if (e.target.checked) {
-          repairsState.selectedRepairs = new Set(rows);
-        } else {
-          repairsState.selectedRepairs.clear();
-        }
-        // refresh virtual view + tri-state
-        repairsState._vtRepairs?.refresh();
-        _setTriState(selectAllRepairs, repairsState.selectedRepairs.size, rows.length);
-      });
-    }
-    
-    if (selectAllMaintenance) {
-      selectAllMaintenance.addEventListener('change', (e) => {
-        const rows = _rowsMaintenance();
-        if (e.target.checked) {
-          repairsState.selectedMaintenance = new Set(rows);
-        } else {
-          repairsState.selectedMaintenance.clear();
-        }
-        repairsState._vtMaintenance?.refresh();
-        _setTriState(selectAllMaintenance, repairsState.selectedMaintenance.size, rows.length);
-      });
-    }
-    // Ensure initial tri-state is correct when wiring
-    _setTriState(selectAllRepairs, repairsState.selectedRepairs.size, _rowsRepairs().length);
-    _setTriState(selectAllMaintenance, repairsState.selectedMaintenance.size, _rowsMaintenance().length);
-  }
+  // No-op now; select-all is wired per dynamic table in renderTypeTables()
+  function wireSelectAllCheckboxes() {}
 
   // ---- Import Repairs from Excel -----------------------------------------------
 
@@ -1103,7 +1082,7 @@
   // ==============================================================================
 
   // detect whether the uploaded sheet includes a given column header
-  // Usage: rowsHaveColumn(result.rows, ['Type', 'Repair/Maintenance', 'Work Type'])
+  // Usage: rowsHaveColumn(result.rows, ['Type', 'Scope Type', 'Repair/Maintenance', 'Work Type'])
   function rowsHaveColumn(rows, candidates) {
     const norm = (s) => String(s || '').toLowerCase().replace(/\s+|[_()-]/g, '');
     const targets = new Set((candidates || []).map(norm));
@@ -1358,15 +1337,12 @@
       days:      pickField(row, ['Days', 'Work Days']),
       category:  pickField(row, ['Category', 'Funding Type']),
       assetType: pickField(row, ['Asset Type', 'Infrastructure Type']),
-      // NEW: If there is NO Type column in the sheet, leave blank to force a per-row prompt.
-      // If a Type column exists but the cell is blank, default to "Repair" (previous behavior).
-      type:      (function () {
-        const raw = (pickField(row, ['Type', 'Repair/Maintenance', 'Work Type', 'Scope Type']) || '').trim();
+      // If there is NO Type column at all, leave blank to force a per-row prompt.
+      // If present, keep whatever is provided (no coercion).
+      type: (function () {
+        const raw = (pickField(row, ['Type', 'Scope Type', 'Repair/Maintenance', 'Work Type']) || '').trim();
         if (!raw) return noTypeColumn ? '' : 'Repair';
-        const t = raw.toLowerCase();
-        // Normalize common inputs
-        if (/(maintain|monitor)/.test(t)) return 'Monitoring'; // "Maintenance" -> "Monitoring" in app
-        return 'Repair';
+        return raw;
       })()
     };
 
@@ -1414,9 +1390,9 @@
     const FIELD_DEFS = [
       { key: 'stationId', label: 'Station ID *', type: 'text', required: true },
       { key: 'name',      label: 'Repair Name *', type: 'text', required: true },
-      { key: 'category',  label: 'Category',      type: 'select', options: ['Capital', 'O&M', 'Decommission'] },
-      { key: 'type',      label: 'Type',          type: 'select', options: ['Repair', 'Monitoring'] },
-      { key: 'assetType', label: 'Asset Type',    type: 'select-dynamic' },
+      { key: 'category',  label: 'Category',      type: 'select', options: ['Capital', 'O&M', 'Decommission'], bulk: true },
+      { key: 'type',      label: 'Type / Scope Type', type: 'text', bulk: true },
+      { key: 'assetType', label: 'Asset Type',    type: 'select-dynamic', bulk: true },
       { key: 'severity',  label: 'Severity',      type: 'text' },
       { key: 'priority',  label: 'Priority',      type: 'text' },
       { key: 'cost',      label: 'Cost',          type: 'number' },
@@ -1438,7 +1414,7 @@
         if (f.type === 'select') {
           const id = `mf_${f.key}`;
           const applyAllId = `mf_${f.key}_all`;
-          const applyAllHtml = (f.key === 'category' || f.key === 'type' || f.key === 'assetType')
+          const applyAllHtml = (f.bulk)
             ? `<label style="margin-left:8px;font-size:0.9em;">
                 <input id="${applyAllId}" type="checkbox"> Apply to all remaining missing
               </label>`
@@ -1481,11 +1457,18 @@
         const id = `mf_${f.key}`;
         const step = f.type === 'number' ? ` step="1"` : '';
         const ph  = f.type === 'number' ? '0' : '';
+        const applyAllIdText = `mf_${f.key}_all`;
+        const applyAllHtmlText = f.bulk
+          ? `<label style="margin-left:8px;font-size:0.9em;">
+               <input id="${applyAllIdText}" type="checkbox"> Apply to all remaining missing
+             </label>`
+          : '';
         return `
           <div class="form-row">
             <label>${f.label}</label>
             <input id="${id}" type="${f.type === 'number' ? 'number' : 'text'}" placeholder="${ph}" ${step} />
-          </div>
+            ${applyAllHtmlText}
+            </div>
         `;
       };
 
@@ -1529,8 +1512,8 @@
             const v = String(el.value || '').trim();
             if (v) repair[f.key] = v;
 
-            // Optional bulk apply for Category/Type
-            if ((f.key === 'category' || f.key === 'type' || f.key === 'assetType') && v) {
+            // Optional bulk apply for selected/bulk-enabled fields
+            if (f.bulk && v) {
               const allCb = document.getElementById(`mf_${f.key}_all`);
               if (allCb && allCb.checked) {
                 for (let j = i + 1; j < repairs.length; j++) {
@@ -1686,7 +1669,7 @@
       paneOverview.style.display = 'none';
       paneAnalytics.style.display = 'none';
       await loadRepairsData();
-      wireSelectAllCheckboxes();
+      // select-all events are wired per-render; nothing to do here
     });
 
   }

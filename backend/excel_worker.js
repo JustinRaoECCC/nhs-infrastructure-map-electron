@@ -919,17 +919,29 @@ async function appendRepair(company, location, _assetType, repair = {}) {
   if (/^o&?m$/i.test(rawCat)) chosenCat = 'O&M';
   else if (/^decomm/i.test(rawCat)) chosenCat = 'Decommission';
 
+  const getAny = (...keys) => {
+    for (const k of keys) {
+      const v = repair[k];
+      if (v !== undefined && v !== null && String(v).trim() !== '') return v;
+    }
+    return '';
+  };
+
   const newValues = headers.map(h => {
     const l = (h || '').toLowerCase();
-    if (l === 'date')        return get('Date') || today;
+    if (l === 'date')        return get('Date') || getAny('date') || today;
     if (l === 'station id')  return stationId;
     if (l === 'asset type')  return at;
-    if (l === 'repair name') return get('Repair Name') || get('name') || '';
-    if (l === 'type')        return get('Type') || 'Repair';
-    if (l === 'category')    return get('Category') || 'Capital'; // default as before
+    if (l === 'repair name') return get('Repair Name') || getAny('name', 'repair_name') || '';
+    if (l === 'type')        return get('Type') || getAny('type') || 'Repair';
+    if (l === 'category')    return get('Category') || getAny('category') || 'Capital';
     if (l === 'o&m')         return chosenCat === 'O&M' ? (funding.om || '') : '';
     if (l === 'capital')     return chosenCat === 'Capital' ? (funding.capital || '') : '';
     if (l === 'decommission')return chosenCat === 'Decommission' ? (funding.decommission || '') : '';
+    if (l === 'severity')    return get('Severity') || getAny('severity') || '';
+    if (l === 'priority')    return get('Priority') || getAny('priority') || '';
+    if (l === 'cost')        return get('Cost') || getAny('cost') || '';
+    if (l === 'days')        return get('Days') || getAny('days') || '';
     return get(h) || '';
   });
 

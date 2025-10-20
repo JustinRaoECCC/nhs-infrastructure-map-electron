@@ -13,41 +13,8 @@
   </div>
 
   <!-- Repair table -->
-  <div class="table-scroll">
-    <table class="data-table" style="width:100%;">
-      <thead>
-        <tr>
-          <th>Date</th>
-          <th>Repair Name</th>
-          <th>Severity</th>
-          <th>Priority</th>
-          <th>Cost</th>
-          <th>Category</th>
-          <th>Days</th>
-        </tr>
-      </thead>
-      <tbody id="repairsTbody"></tbody>
-    </table>
-  </div>
-
-  <!-- Monitoring table -->
-  <h3 style="margin:14px 0 6px;">Monitoring Items</h3>
-  <div class="table-scroll">
-    <table class="data-table" style="width:100%;">
-      <thead>
-        <tr>
-          <th>Date</th>
-          <th>Item</th>
-          <th>Severity</th>
-          <th>Priority</th>
-          <th>Cost</th>
-          <th>Category</th>
-          <th>Days</th>
-        </tr>
-      </thead>
-      <tbody id="monitoringTbody"></tbody>
-    </table>
-  </div>
+  <!-- Dynamic tables per Type (only "Repair" exists at first; others appear as added/imported) -->
+  <div id="repTablesWrap" class="dynamic-repair-tables"></div>
 </div>
 
 <!-- Add Item Modal -->
@@ -83,11 +50,8 @@
         </select>
       </div>
       <div class="form-row">
-        <label for="repType">Type</label>
-        <select id="repType">
-          <option value="Repair">Repair</option>
-          <option value="Monitoring">Monitoring</option>
-        </select>
+        <label for="repType">Type / Scope Type</label>
+        <input id="repType" type="text" placeholder="e.g. Repair, Monitoring, Coating, Anchoring…" />
       </div>
     </div>
     <div id="repFormError" class="ih-error" style="display:none;margin-top:6px;"></div>
