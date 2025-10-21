@@ -1296,7 +1296,8 @@ document.addEventListener('DOMContentLoaded', () => {
           scored_repairs: scored || [],
           repairs: [], // no raw fallback; Opt-1 is required
           station_data: stationDataMap,
-          priority_mode: (window._tripPriorityMode || 'tripmean')
+          priority_mode: (window._tripPriorityMode || 'tripmean'),
+          group_by_fields: ['Access Type', 'City of Travel']
         });
 
         if (!result.success) {
@@ -1318,6 +1319,8 @@ document.addEventListener('DOMContentLoaded', () => {
         return '$' + num.toLocaleString(undefined, { maximumFractionDigits: 0 });
       };
 
+      const gf = ['Access Type','City of Travel'];
+
       const summary = document.createElement('div');
       summary.className = 'opt-header';
       summary.innerHTML = `
@@ -1327,8 +1330,8 @@ document.addEventListener('DOMContentLoaded', () => {
           <span class="chip">Mode: ${(window._tripPriorityMode || 'tripmean')}</span>
         </div>
         <div class="opt-note" style="margin-top:.5rem;">
-          <strong>Note:</strong> This step <em>only groups</em> by <code>Trip Location × Access Type</code>.
-          Trips are now ordered by <em>Optimization 1</em> scores using the selected mode
+          <strong>Note:</strong> This step <em>groups</em> by fixed fields
+          <code>${gf[0]} × ${gf[1]}</code>. Trips are ordered by <em>Optimization 1</em> scores using the selected mode
           (<code>tripmean</code> or <code>tripmax</code>).
         </div>
       `;
@@ -1337,12 +1340,15 @@ document.addEventListener('DOMContentLoaded', () => {
       result.trips.forEach((trip, idx) => {
         const tripSection = document.createElement('section');
         tripSection.className = 'opt-trip';
+        const labels = (trip.group_labels && trip.group_labels.length)
+            ? trip.group_labels.map(gl => `${gl.name}: ${gl.value}`).join(' • ')
+            : `Access Type: ${trip.access_type || ''} • City of Travel: ${trip.city_of_travel || ''}`;
         // build split total chips (skip zeros/nonexistent)
         const splitTotals = trip.total_split_costs || {};
         const splitKeys = Object.keys(splitTotals).filter(k => Number(splitTotals[k]) > 0).sort();
         const splitChips = splitKeys.map(k => `<span class="chip">${k}: ${formatCurrency(splitTotals[k])}</span>`).join('');
         tripSection.innerHTML = `
-          <div class="trip-title">Trip ${idx + 1}: ${trip.trip_location} (${trip.access_type})</div>
+          <div class="trip-title">Trip ${idx + 1}: ${labels}</div>
           <div class="trip-summary">
             <span class="chip">Total Days: ${trip.total_days}</span>
             <span class="chip">Stations: ${trip.stations.length}</span>
@@ -1534,18 +1540,18 @@ document.addEventListener('DOMContentLoaded', () => {
       const feasible = (result.feasible_years?.[key] || []).includes(year);
       if (!feasible) return; // guard
 
-      // find/create trip by trip_location × access_type
-      const tl = sr._trip_location || '';
+      // find/create trip by city_of_travel × access_type
+      const tl = sr._city_of_travel || '';
       const at = sr._access_type || '';
       // avoid inline assignment to keep const bindings immutable
       if (!result.assignments[year]) {
         result.assignments[year] = [];
       }
       let trips = result.assignments[year];
-      let trip = trips.find(t => t.trip_location === tl && t.access_type === at);
+      let trip = trips.find(t => t.city_of_travel === tl && t.access_type === at);
       if (!trip) {
         trip = {
-          trip_location: tl,
+          city_of_travel: tl,
           access_type: at,
           total_days: 0,
           total_cost: 0,
@@ -1811,7 +1817,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <tr>
               <th></th>
               <th>Priority</th>
-              <th>Trip Location</th>
+              <th>City of Travel</th>
               <th>Access Type</th>
               <th>Cost</th>
               <th>Days</th>
@@ -1844,7 +1850,7 @@ document.addEventListener('DOMContentLoaded', () => {
           tr.innerHTML = `
             <td><button class="toggle" aria-label="Expand trip">▸</button></td>
             <td>${idx + 1}</td>
-            <td>${trip.trip_location}</td>
+            <td>${trip.city_of_travel}</td>
             <td>${trip.access_type}</td>
             <td class="num">${formatCurrency(trip.total_cost || 0)}</td>
             <td>${trip.total_days}</td>

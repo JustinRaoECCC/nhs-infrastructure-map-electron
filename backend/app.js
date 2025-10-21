@@ -4,8 +4,17 @@ const fsp = fs.promises;
 const { pathToFileURL } = require('url');
 const path = require('path');
 
-const config = require('./config'); // <— changed
-const lookupsRepo = require('./lookups_repo');
+const config = require('./config');
+
+const { getLookupRepository } = require('./repository_factory');
+let lookupsRepo = null;
+
+// Helper to get lookup repo (lazy init)
+async function getLookupsRepo() {
+  if (!lookupsRepo) lookupsRepo = await getLookupRepository();
+  return lookupsRepo;
+}
+
 const excel = require('./excel_worker_client');
 
 const IMAGE_EXTS = config.IMAGE_EXTS;
@@ -35,7 +44,8 @@ async function getStationData(opts = {}) {
 
   if (!skipColors) {
     try {
-      const maps = await lookupsRepo.getColorMaps();
+      const repo = await getLookupsRepo();
+      const maps = await repo.getColorMaps()
       
       // Add debug to see what we're getting
       console.log('[DEBUG] Raw maps from lookups:', {
@@ -81,7 +91,8 @@ async function getStationData(opts = {}) {
   let applyStatus = false;
   let statusColors = new Map();
   try {
-    const sr = await lookupsRepo.getStatusAndRepairSettings();
+    const repo = await getLookupsRepo();
+    const sr = await repo.getStatusAndRepairSettings();
     applyStatus = !!sr.applyStatusColorsOnMap;
     statusColors = new Map(Object.entries(sr.statusColors || {})); // keys expected lower-cased
   } catch (e) {
@@ -126,14 +137,18 @@ async function getStationData(opts = {}) {
 
 // Make invalidate meaningful: re-prime lookup caches
 async function invalidateStationCache() {
-  try { await lookupsRepo.primeAllCaches(); } catch (_) {}
+  try {
+    const repo = await getLookupsRepo();
+    await repo.primeAllCaches();
+  } catch (_) {}
   return { success: true };
 }
 
 async function getActiveCompanies() {
   // Excel lookups are the source of truth; fall back to legacy only if empty.
   try {
-    const fromXlsx = await lookupsRepo.getActiveCompanies();
+    const repo = await getLookupsRepo();
+    const fromXlsx = await repo.getActiveCompanies();
     if (fromXlsx && fromXlsx.length) return fromXlsx;
   } catch (e) {
     console.error('[lookups] getActiveCompanies failed:', e);
@@ -143,7 +158,8 @@ async function getActiveCompanies() {
 
 async function getLocationsForCompany(_company) {
   try {
-    const fromXlsx = await lookupsRepo.getLocationsForCompany(_company);
+   const repo = await getLookupsRepo();
+    const fromXlsx = await repo.getLocationsForCompany(_company);
     if (fromXlsx && fromXlsx.length) return fromXlsx;
   } catch (e) {
     console.error('[lookups] getLocationsForCompany failed:', e);
@@ -153,7 +169,8 @@ async function getLocationsForCompany(_company) {
 
 async function getAssetTypesForLocation(company, loc) {
   try {
-    const fromXlsx = await lookupsRepo.getAssetTypesForCompanyLocation(company, loc);
+    const repo = await getLookupsRepo();
+    const fromXlsx = await repo.getAssetTypesForCompanyLocation(company, loc);
     if (fromXlsx && fromXlsx.length) return fromXlsx;
   } catch (e) {
     console.error('[lookups] getAssetTypesForCompanyLocation failed:', e);
@@ -164,19 +181,23 @@ async function getAssetTypesForLocation(company, loc) {
 // Colors (global)
 async function getAssetTypeColor(assetType) {
   try {
-    return await lookupsRepo.getAssetTypeColor(assetType);
+    const repo = await getLookupsRepo();
+    return await repo.getAssetTypeColor(assetType);
   } catch(_) { return null; }
 }
 async function setAssetTypeColor(assetType, color) {
-  return await lookupsRepo.setAssetTypeColor(assetType, color);
+  const repo = await getLookupsRepo();
+  return await repo.setAssetTypeColor(assetType, color);
 }
 
 // Colors (per location)
 async function getAssetTypeColorForLocation(assetType, loc) {
-  return await lookupsRepo.getAssetTypeColorForLocation(assetType, loc);
+  const repo = await getLookupsRepo();
+  return await repo.getAssetTypeColorForLocation(assetType, loc);
 }
 async function setAssetTypeColorForLocation(assetType, loc, color) {
-  return await lookupsRepo.setAssetTypeColorForLocation(assetType, loc, color);
+  const repo = await getLookupsRepo();
+  return await repo.setAssetTypeColorForLocation(assetType, loc, color);
 }
 
 
@@ -212,11 +233,12 @@ async function addStationsFromSelection(payload) {
   
   // 0) Make sure the location exists (creates workbook too)
   try {
-    if (company) await lookupsRepo.upsertCompany(company, true);
-    if (location && company && lookupsRepo?.upsertLocation) {
-      await lookupsRepo.upsertLocation(location, company);
+    const repo = await getLookupsRepo();
+    if (company) await repo.upsertCompany(company, true);
+    if (location && company && repo?.upsertLocation) {
+      await repo.upsertLocation(location, company);
     }
-    await lookupsRepo.upsertAssetType(assetType, company, location);
+    await repo.upsertAssetType(assetType, company, location);
   } catch (e) {
     console.warn('[importSelection] upsertLocation failed (continuing):', e?.message || e);
   }
@@ -339,9 +361,10 @@ async function manualAddInstance(payload = {}) {
 
     // Ensure lookup rows exist
     try {
-      if (company) await lookupsRepo.upsertCompany(company, true);
-      if (location && company) await lookupsRepo.upsertLocation(location, company);
-      await lookupsRepo.upsertAssetType(assetType, company, location);
+      const repo = await getLookupsRepo(); // CHANGED
+      if (company) await repo.upsertCompany(company, true);
+      if (location && company) await repo.upsertLocation(location, company);
+      await repo.upsertAssetType(assetType, company, location);
     } catch (e) {
       // non-fatal
       console.warn('[manualAddInstance] upserts (lookups) failed:', e?.message || e);
@@ -464,7 +487,10 @@ async function resolvePhotosBaseAndStationDir(siteName, stationId) {
     // Derive company from lookup tree
     try {
       if (location && !company) {
-        const tree = await lookupsRepo.getLookupTree();
+        const repo = await getLookupsRepo();
+        const tree = await repo.getLookupTree
+          ? await repo.getLookupTree()
+          : { locationsByCompany: {} }; // fallback if repo lacks this helper
         for (const [co, locs] of Object.entries(tree?.locationsByCompany || {})) {
           if ((locs || []).some(x => normLoc(x) === location)) {
             company = co; 
@@ -728,11 +754,39 @@ module.exports = {
   listExcelSheets,
   addStationsFromSelection,
   manualAddInstance,
-  upsertCompany: lookupsRepo.upsertCompany,
-  upsertLocation: lookupsRepo.upsertLocation,
-  upsertAssetType: lookupsRepo.upsertAssetType,
-  getLookupTree: lookupsRepo.getLookupTree,
-  // colors (lookups-backed)
+  // Update these to use async helper
+  upsertCompany: async (name, active) => {
+    const repo = await getLookupsRepo();
+    return repo.upsertCompany(name, active);
+  },
+  upsertLocation: async (location, company) => {
+    const repo = await getLookupsRepo();
+    return repo.upsertLocation(location, company);
+  },
+  upsertAssetType: async (assetType, company, location) => {
+    const repo = await getLookupsRepo();
+    return repo.upsertAssetType(assetType, company, location);
+  },
+  getLookupTree: async () => {
+    const repo = await getLookupsRepo();
+    // Implement tree building from repo methods
+    const companies = await repo.getActiveCompanies();
+    const locationsByCompany = {};
+    const assetsByCompanyLocation = {};
+    
+    for (const company of companies) {
+      locationsByCompany[company] = await repo.getLocationsForCompany(company);
+      assetsByCompanyLocation[company] = {};
+      
+      for (const location of locationsByCompany[company]) {
+        assetsByCompanyLocation[company][location] =
+          await repo.getAssetTypesForCompanyLocation(company, location);
+      }
+    }
+    return { companies, locationsByCompany, assetsByCompanyLocation };
+  },
+
+  // colors (lookups-backed) — exported functions already call repo via helper
   setAssetTypeColorForLocation,
   getAssetTypeColorForLocation,
   setAssetTypeColor,

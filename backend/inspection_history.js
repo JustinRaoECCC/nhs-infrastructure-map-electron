@@ -6,8 +6,7 @@ const { pathToFileURL } = require('url');
 const { IMAGE_EXTS } = require('./config');
 const app = require('./app');
 const { ensureDir } = require('./utils/fs_utils');
-const lookups = require('./lookups_repo');
-
+const { getLookupRepository } = require('./repository_factory');
 
 function sanitizeSegment(s) {
   return String(s || '')
@@ -132,6 +131,7 @@ async function listInspections(siteName, stationId, perPhotos = 5) {
     // If the sheet is missing -> backend returns ['inspection'] by default.
     let keywords = [];
     try {
+      const lookups = await getLookupRepository();
       keywords = await lookups.getInspectionKeywords();
     } catch (_) {
       keywords = ['inspection'];

@@ -761,6 +761,12 @@ a { color: inherit; text-decoration: none; }
   box-shadow: 0 4px 10px rgba(16,24,40,.05);
 }
 
+/* Ensure List View can use full available height (not capped by global rules) */
+.list-container .table-scroll {
+  max-height: none !important;
+  height: auto;
+}
+
 @media (prefers-color-scheme: dark) {
   .list-container .table-scroll {
     background: #0f172a;
@@ -3686,8 +3692,8 @@ html.modal-open, body.modal-open { overflow: hidden; }
   margin-top: 0;
 }
 
-/* The key container for scrolling */
-.table-scroll {
+/* The key container for scrolling (Repairs only) */
+.repairs-tables .table-scroll {
   width: 100%;
   max-width: 100%;
   max-height: 400px;
@@ -3699,8 +3705,8 @@ html.modal-open, body.modal-open { overflow: hidden; }
   box-sizing: border-box;
 }
 
-/* Set minimum width for the table to ensure it doesn't compress */
-.data-table {
+/* Set minimum width for the table to ensure it doesn't compress (Repairs only) */
+.repairs-tables .data-table {
   min-width: 1200px;  /* Minimum width to trigger horizontal scroll */
   width: auto;        /* Allow table to expand based on content */
   border-collapse: collapse;
@@ -3708,8 +3714,8 @@ html.modal-open, body.modal-open { overflow: hidden; }
   table-layout: fixed;  /* Use fixed layout for better performance */
 }
 
-/* Sticky header for vertical scrolling */
-.data-table thead {
+/* Sticky header for vertical scrolling (Repairs only) */
+.repairs-tables .data-table thead {
   position: sticky;
   top: 0;
   background: var(--bg-secondary, #f5f5f5);
@@ -3717,9 +3723,9 @@ html.modal-open, body.modal-open { overflow: hidden; }
   box-shadow: 0 2px 4px rgba(0,0,0,0.05);
 }
 
-/* Column widths - adjust these based on your needs */
-.data-table th,
-.data-table td {
+/* Column widths - adjust these based on your needs (Repairs only) */
+.repairs-tables .data-table th,
+.repairs-tables .data-table td {
   padding: 8px 10px;
   text-align: left;
   border-bottom: 1px solid var(--border-light, #eee);
@@ -3728,75 +3734,75 @@ html.modal-open, body.modal-open { overflow: hidden; }
   white-space: nowrap;
 }
 
-/* Specific column widths for better control */
-.data-table th:nth-child(1),
-.data-table td:nth-child(1) { width: 45px; }   /* Checkbox */
-.data-table th:nth-child(2),
-.data-table td:nth-child(2) { width: 100px; }  /* Date */
-.data-table th:nth-child(3),
-.data-table td:nth-child(3) { width: 120px; }  /* Station ID */
-.data-table th:nth-child(4),
-.data-table td:nth-child(4) { width: 150px; }  /* Location */
-.data-table th:nth-child(5),
-.data-table td:nth-child(5) { width: 150px; }  /* Asset Type */
-.data-table th:nth-child(6),
-.data-table td:nth-child(6) { width: 200px; }  /* Name/Item */
-.data-table th:nth-child(7),
-.data-table td:nth-child(7) { width: 100px; }  /* Severity */
-.data-table th:nth-child(8),
-.data-table td:nth-child(8) { width: 100px; }  /* Priority */
-.data-table th:nth-child(9),
-.data-table td:nth-child(9) { width: 120px; }  /* Cost */
-.data-table th:nth-child(10),
-.data-table td:nth-child(10) { width: 100px; } /* Category */
-.data-table th:nth-child(11),
-.data-table td:nth-child(11) { width: 80px; }  /* Days */
+/* Specific column widths for better control (Repairs only) */
+.repairs-tables .data-table th:nth-child(1),
+.repairs-tables .data-table td:nth-child(1) { width: 45px; }   /* Checkbox */
+.repairs-tables .data-table th:nth-child(2),
+.repairs-tables .data-table td:nth-child(2) { width: 100px; }  /* Date */
+.repairs-tables .data-table th:nth-child(3),
+.repairs-tables .data-table td:nth-child(3) { width: 120px; }  /* Station ID */
+.repairs-tables .data-table th:nth-child(4),
+.repairs-tables .data-table td:nth-child(4) { width: 150px; }  /* Location */
+.repairs-tables .data-table th:nth-child(5),
+.repairs-tables .data-table td:nth-child(5) { width: 150px; }  /* Asset Type */
+.repairs-tables .data-table th:nth-child(6),
+.repairs-tables .data-table td:nth-child(6) { width: 200px; }  /* Name/Item */
+.repairs-tables .data-table th:nth-child(7),
+.repairs-tables .data-table td:nth-child(7) { width: 100px; }  /* Severity */
+.repairs-tables .data-table th:nth-child(8),
+.repairs-tables .data-table td:nth-child(8) { width: 100px; }  /* Priority */
+.repairs-tables .data-table th:nth-child(9),
+.repairs-tables .data-table td:nth-child(9) { width: 120px; }  /* Cost */
+.repairs-tables .data-table th:nth-child(10),
+.repairs-tables .data-table td:nth-child(10) { width: 100px; } /* Category */
+.repairs-tables .data-table th:nth-child(11),
+.repairs-tables .data-table td:nth-child(11) { width: 80px; }  /* Days */
 
-/* Header styling */
-.data-table th {
+/* Header styling (Repairs only) */
+.repairs-tables .data-table th {
   font-weight: 600;
   background: var(--bg-secondary, #f5f5f5);
   border-bottom: 2px solid var(--border-color, #ddd);
 }
 
-/* Row hover effect */
-.data-table tbody tr:hover {
+/* Row hover effect (Repairs only) */
+.repairs-tables .data-table tbody tr:hover {
   background: var(--hover-bg, #f9f9f9);
 }
 
-/* Scrollbar styling for better visibility */
-.table-scroll::-webkit-scrollbar {
+/* Scrollbar styling for better visibility (Repairs only) */
+.repairs-tables .table-scroll::-webkit-scrollbar {
   width: 12px;
   height: 12px;
 }
 
-.table-scroll::-webkit-scrollbar-track {
+.repairs-tables .table-scroll::-webkit-scrollbar-track {
   background: var(--bg-light, #f1f1f1);
   border-radius: 4px;
 }
 
-.table-scroll::-webkit-scrollbar-thumb {
+.repairs-tables .table-scroll::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb, #888);
   border-radius: 4px;
 }
 
-.table-scroll::-webkit-scrollbar-thumb:hover {
+.repairs-tables .table-scroll::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-thumb-hover, #555);
 }
 
-.table-scroll::-webkit-scrollbar-corner {
+.repairs-tables .table-scroll::-webkit-scrollbar-corner {
   background: var(--bg-light, #f1f1f1);
 }
 
 /* Responsive adjustments */
 @media (max-width: 768px) {
   
-  .data-table {
+  .repairs-tables .data-table {
     font-size: 12px;
   }
   
-  .data-table th,
-  .data-table td {
+  .repairs-tables .data-table th,
+  .repairs-tables .data-table td {
     padding: 6px 8px;
   }
 }

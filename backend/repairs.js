@@ -1,6 +1,16 @@
 // backend/repairs.js
 const excel = require('./excel_worker_client');
 const app = require('./app');
+// Add repository factory (lazy)
+const { getRepairRepository } = require('./repository_factory');
+let repairRepo = null;
+
+async function getRepo() {
+  if (!repairRepo) {
+    repairRepo = await getRepairRepository();
+  }
+  return repairRepo;
+}
 
 /**
  * Normalize repair item data
@@ -86,7 +96,10 @@ async function resolveStationInfo(stationId) {
 async function listRepairs(siteName, stationId) {
   try {
     const { company, location, assetType } = await resolveStationInfo(stationId);
-    const repairs = await excel.listRepairsForStation(company, location, assetType, stationId);
+    const repo = await getRepo(); // CHANGED
+    const repairs = await repo.listRepairsForStation(
+      company, location, assetType, stationId
+    );
     
     // Normalize and return
     return (repairs || []).map(r => normalizeItem({
@@ -117,8 +130,9 @@ async function saveRepairs(siteName, stationId, items) {
       ? items.map(item => normalizeItem({ ...item, location, assetType: item?.assetType || item?.['Asset Type'] || assetType }))
       : [];
     
-    // Save to Excel
-    const result = await excel.saveStationRepairs(
+    // Save via repo
+    const repo = await getRepo();
+    const result = await repo.saveStationRepairs(
       company, location, 
       assetType, 
       stationId, 
@@ -170,7 +184,8 @@ async function addRepair(company, location, assetType, repair) {
       'Days':        repair['Days'] ?? n.days
     };
 
-    const result = await excel.appendRepair(company, location, assetType, payload);
+    const repo = await getRepo();
+    const result = await repo.appendRepair(company, location, assetType, payload);
     
     return result;
   } catch (e) {
@@ -185,7 +200,8 @@ async function addRepair(company, location, assetType, repair) {
  */
 async function getAllRepairs() {
   try {
-    const allRepairs = await excel.getAllRepairs();
+    const repo = await getRepo();
+    const allRepairs = await repo.getAllRepairs();
     
     // Normalize all repairs
     return (allRepairs || []).map(normalizeItem);
@@ -214,7 +230,8 @@ async function deleteRepair(company, location, assetType, stationId, repairIndex
       throw new Error('Valid repair index is required');
     }
     
-    const result = await excel.deleteRepair(
+    const repo = await getRepo();
+    const result = await repo.deleteRepair(
       company, location, 
       assetType, 
       stationId, 

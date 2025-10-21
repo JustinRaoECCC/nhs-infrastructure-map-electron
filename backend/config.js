@@ -1,4 +1,8 @@
 // backend/config.js
+
+// Use repository factory for lookups access
+const { getLookupRepository } = require('./repository_factory');
+
 // Default UNC/base folder where station photo folders live
 
 // BC - saved to easily copy paste into the application
@@ -21,7 +25,7 @@ const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tif', '.
 async function getPhotosBase(ctx = {}) {
   try {
     console.log(`[DEBUG config.getPhotosBase] Input ctx:`, ctx);
-    const lookups = require('./lookups_repo');
+    const lookups = await getLookupRepository();
     const fromLookups = await lookups.getPhotosBase({
       company: ctx.company || '',
       location: ctx.location || '',

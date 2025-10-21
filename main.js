@@ -13,6 +13,8 @@ const nukeBackend = require('./backend/nuke');
 const inspectionHistory = require('./backend/inspection_history');
 const repairsBackend = require('./backend/repairs');
 const auth = require('./backend/auth')
+// Repository factory (MongoDB / config)
+const { initMongoDB, loadConfig } = require('./backend/repository_factory');
 
 app.disableHardwareAcceleration();
 
@@ -101,7 +103,28 @@ function bootstrapLookupsAtBoot() {
   }, 3000);
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  // Initialize MongoDB (if enabled in repository_factory config)
+  try {
+    const config = loadConfig();
+    console.log('[Main] Database config:', {
+      readFrom: config.readFrom,
+      writeTo: config.writeTo,
+      mongoEnabled: config.mongodb?.enabled
+    });
+    
+    if (config.mongodb?.enabled) {
+      console.log('[Main] Initializing MongoDB...');
+      await initMongoDB();
+      console.log('[Main] MongoDB initialized');
+    } else {
+      console.log('[Main] MongoDB disabled, using Excel only');
+    }
+  } catch (error) {
+    console.error('[Main] MongoDB initialization failed:', error);
+    console.log('[Main] Continuing with Excel-only mode');
+  }
+
   // Create folders immediately (sync, no ExcelJS)
   if (typeof lookups.ensureDataFoldersSync === 'function') {
     lookups.ensureDataFoldersSync();

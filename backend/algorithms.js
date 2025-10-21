@@ -334,14 +334,14 @@ async function optimizeWorkplan({ repairs = [], station_data = {}, param_overall
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Group repairs into trips by Trip Location and Access Type.
+ * Group repairs into trips by City of Travel and Access Type.
  * NOTE: This is **just grouping** and applies **no prioritization** or ordering
  * based on Optimization 1 scores. It can accept either:
  *   - scored_repairs: [{ original_repair, score, ... }]
  *   - repairs:        [rawRepairObjects]
  * If scored_repairs is empty, it will group raw repairs directly.
  */
-async function groupRepairsIntoTrips({ scored_repairs = [], repairs = [], station_data = {}, priority_mode = 'tripmean' } = {}) {
+async function groupRepairsIntoTrips({ scored_repairs = [], repairs = [], station_data = {}, priority_mode = 'tripmean', group_by_fields = ['Access Type','City of Travel'] } = {}) {
   console.log('[groupRepairsIntoTrips] scored_repairs=', scored_repairs.length);
 
   // Accept raw repairs if scored ones were not provided
@@ -353,7 +353,11 @@ async function groupRepairsIntoTrips({ scored_repairs = [], repairs = [], statio
     return { success: false, message: 'No repairs provided', trips: [] };
   }
 
-  // Group by trip_location + access_type
+  // Group by user-selected fields (default: Access Type + City of Travel)
+  const groupFields = (Array.isArray(group_by_fields) && group_by_fields.length)
+    ? group_by_fields.slice(0, 2) // enforce exactly two for now
+    : ['Access Type', 'City of Travel'];
+
   const tripGroups = new Map();
 
   for (const scoredRepair of inputRepairs) {
@@ -361,19 +365,24 @@ async function groupRepairsIntoTrips({ scored_repairs = [], repairs = [], statio
     const stationId = repair.station_id;
     const station = station_data[stationId] || {};
 
-    // Get trip fields from station data
-    const tripLocation = findFieldAnywhere(repair, station, 'Trip Location') || 'Unknown';
-    const accessType = findFieldAnywhere(repair, station, 'Access Type') || 'Unknown';
+    // Resolve grouping values per selected fields
+    const gvals = groupFields.map(name => findFieldAnywhere(repair, station, name) || 'Unknown');
+    const g1 = gvals[0] ?? 'Unknown'; // first grouping field (default Access Type)
+    const g2 = gvals[1] ?? 'Unknown'; // second grouping field (default City of Travel)
     const cityOfTravel = findFieldAnywhere(repair, station, 'City of Travel') || '';
     const timeToSite = findFieldAnywhere(repair, station, 'Time to Site (hr)') || '';
     const siteName = findFieldAnywhere(repair, station, 'Station Name') || '';
 
-    const tripKey = `${tripLocation}|||${accessType}`;
+    const tripKey = gvals.join('|||');
     
     if (!tripGroups.has(tripKey)) {
       tripGroups.set(tripKey, {
-        trip_location: tripLocation,
-        access_type: accessType,
+        // Keep these two for downstream/back-compat (Opt-3/UI)
+        access_type: g1,
+        city_of_travel: g2,
+        // Rich labels for the UI
+        group_by_fields: groupFields.slice(0,2),
+        group_values: gvals.slice(0,2),
         repairs: [],
         stations: new Map()
       });
@@ -445,11 +454,13 @@ async function groupRepairsIntoTrips({ scored_repairs = [], repairs = [], statio
       stationsArray.push(stationInfo);
     }
 
-    // Annotate each scored repair in this trip with trip context for downstream (Opt-3 warnings)
+    // Annotate each scored repair with trip context for downstream (Opt-3 / add-to-year)
     for (const sr of (tripData.repairs || [])) {
       try {
-        sr._trip_location = tripData.trip_location;
-        sr._access_type = tripData.access_type;
+        sr._access_type     = tripData.access_type;      // first grouping dim
+        sr._city_of_travel  = tripData.city_of_travel;   // second grouping dim
+        sr._group_fields = tripData.group_by_fields;
+        sr._group_values = tripData.group_values;
       } catch (e) { /* ignore */ }
     }
 
@@ -469,8 +480,12 @@ async function groupRepairsIntoTrips({ scored_repairs = [], repairs = [], statio
     const priority_score = (mode === 'tripmax') ? max : mean;
 
     trips.push({
-      trip_location: tripData.trip_location,
+      // Back-compat fields (used elsewhere)
+      city_of_travel: tripData.city_of_travel,
       access_type: tripData.access_type,
+      // New, explicit grouping descriptors for the UI
+      group_labels: tripData.group_by_fields.map((name, i) => ({ name, value: tripData.group_values[i] })),
+      group_by_fields: tripData.group_by_fields,
       total_days: totalDays,
       total_cost: totalCost,
       total_split_costs: tripSplitTotals,
@@ -501,6 +516,7 @@ async function groupRepairsIntoTrips({ scored_repairs = [], repairs = [], statio
   return {
     success: true,
     notes: `Grouping only. Prioritized by ${String(priority_mode || 'tripmean')}.`,
+    group_by_fields: groupFields,
     trips,
     total_trips: trips.length
   };
@@ -930,7 +946,7 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
   for (const t of trips) {
     for (const sr of (t.repairs || [])) {
       const k = getRepairKey(sr);
-      tripLookup.set(k, { trip_location: t.trip_location, access_type: t.access_type });
+      tripLookup.set(k, { city_of_travel: t.city_of_travel, access_type: t.access_type });
     }
   }
 
@@ -944,7 +960,7 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
         station_id: r.station_id ?? '',
         repair_name: r.name ?? r.repair_name ?? '',
         score: Number(sr.score) || 0,
-        trip_location: (sr._trip_location ?? ctx.trip_location ?? ''),
+        city_of_travel: (sr._city_of_travel ?? ctx.city_of_travel ?? ''),
         access_type: (sr._access_type ?? ctx.access_type ?? '')
       });
     }

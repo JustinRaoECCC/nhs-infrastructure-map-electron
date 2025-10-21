@@ -17,11 +17,13 @@
       if (!k) continue;
       if (String(k).toLowerCase() === target) return row[k];
     }
-    for (const k of Object.keys(row || {})) {
-      if (k.includes(' ')) {
-        const parts = k.split(' ');
-        const last = parts[parts.length - 1];
-        if (String(last).toLowerCase() === target) return row[k];
+    // Fallback (safer): if target is multi-word, allow full-phrase suffix match.
+    // This covers "Inspection Frequency" vs "Section Inspection Frequency",
+    // but avoids single-word traps like "Type" matching "Infrastructure Type".
+    if (target.includes(' ')) {
+      for (const k of Object.keys(row || {})) {
+        const key = String(k).toLowerCase().trim();
+        if (key.endsWith(' ' + target)) return row[k];
       }
     }
     return '';
@@ -546,10 +548,10 @@
   }
 
   // ---- Dynamic tables by Type -----------------------------------------------
-  function _typeLabel(r) {
-    const t = String(r?.type || '').trim();
-    return t || 'Repair';
-  }
+ function _typeLabel(r) {
+   const t = String((r && (r.scopeType ?? r.type)) || '').trim();
+   return t || 'Repair';
+ }
   function _groupByType(rows) {
     const map = new Map();
     rows.forEach(r => {
@@ -1187,7 +1189,7 @@
       }
 
       // NEW: detect if the sheet actually contains a "Type" column (or aliases)
-      const hasTypeColumn = rowsHaveColumn(result.rows, ['Type', 'Repair/Maintenance', 'Work Type']);
+      const hasTypeColumn = rowsHaveColumn(result.rows, ['Type', 'Scope Type', 'Repair/Maintenance', 'Work Type']);
 
       // Map column headers to standardized field names.
       // If there is NO Type column at all, leave type blank so the missing-fields modal
@@ -1337,10 +1339,11 @@
       days:      pickField(row, ['Days', 'Work Days']),
       category:  pickField(row, ['Category', 'Funding Type']),
       assetType: pickField(row, ['Asset Type', 'Infrastructure Type']),
+      scopeType: pickField(row, ['Scope Type']),
       // If there is NO Type column at all, leave blank to force a per-row prompt.
       // If present, keep whatever is provided (no coercion).
       type: (function () {
-        const raw = (pickField(row, ['Type', 'Scope Type', 'Repair/Maintenance', 'Work Type']) || '').trim();
+        const raw = (pickField(row, ['Scope Type', 'Type', 'Repair/Maintenance', 'Work Type']) || '').trim();
         if (!raw) return noTypeColumn ? '' : 'Repair';
         return raw;
       })()
@@ -1350,7 +1353,7 @@
     if (mapped.cost) {
       const v = String(mapped.cost).trim();
       // e.g., 12K or 12k -> 12000
-      const kMatch = v.match(/^\$?\s*([0-9]+(?:\.[0-9]+)?)\s*[kK]\s*$/);
+      const kMatch = v.match(/^\$?\s*([0-9]+(?:\.[ss0-9]+)?)\s*[kK]\s*$/);
       if (kMatch) {
         const n = parseFloat(kMatch[1]);
         if (Number.isFinite(n)) mapped.cost = Math.round(n * 1000);
@@ -1587,6 +1590,8 @@
         'Cost': repair.cost || '',
         'Category': normalizedCategory || 'Capital',
         'Type': repair.type || 'Repair',
+        'Type': repair.scopeType || repair.type || 'Repair',
+        'Scope Type': repair.scopeType || repair.type || 'Repair',
         'Days': repair.days || '',
         // Aliases for compatibility with older paths
         name: repair.name,
