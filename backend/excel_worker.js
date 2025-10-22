@@ -2439,6 +2439,13 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
 
     for (let r = dataStart; r <= lastRow; r++) {
       const targetRow = worksheet.getRow(r);
+
+      //     Do NOT remap the row we just rebuilt from `updatedData`.
+      //     If we remap it using only the "old" column snapshot, we'd wipe
+      //     brand-new values (e.g., a freshly added field like "testField: testValue").
+      if (r === rowNumber) {
+        continue;
+      }
       const map = buildRowMap(r);
       clearAfterGi(targetRow);
       for (let i = 0; i < newFields.length; i++) {

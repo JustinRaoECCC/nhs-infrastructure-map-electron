@@ -4,18 +4,9 @@ const fsp = fs.promises;
 const { pathToFileURL } = require('url');
 const path = require('path');
 
-const config = require('./config');
-
-const { getLookupRepository } = require('./repository_factory');
-let lookupsRepo = null;
-
-// Helper to get lookup repo (lazy init)
-async function getLookupsRepo() {
-  if (!lookupsRepo) lookupsRepo = await getLookupRepository();
-  return lookupsRepo;
-}
-
-const excel = require('./excel_worker_client');
+const config = require('./config'); // <— changed
+const lookupsRepo = require('./lookups_repo');
+const { getPersistence } = require('./persistence');
 
 const IMAGE_EXTS = config.IMAGE_EXTS;
 
@@ -33,7 +24,8 @@ function normLoc(s) {
 // backend/app.js
 async function getStationData(opts = {}) {
   const skipColors = !!opts.skipColors;
-  const agg = await excel.readStationsAggregate().catch(() => ({ success:false, rows: [] }));
+  const persistence = await getPersistence();
+  const agg = await persistence.readStationsAggregate().catch(() => ({ success:false, rows: [] }));
   const rows = agg?.rows || [];
   const out = new Array(rows.length);
 
@@ -44,8 +36,7 @@ async function getStationData(opts = {}) {
 
   if (!skipColors) {
     try {
-      const repo = await getLookupsRepo();
-      const maps = await repo.getColorMaps()
+      const maps = await lookupsRepo.getColorMaps();
       
       // Add debug to see what we're getting
       console.log('[DEBUG] Raw maps from lookups:', {
@@ -91,8 +82,7 @@ async function getStationData(opts = {}) {
   let applyStatus = false;
   let statusColors = new Map();
   try {
-    const repo = await getLookupsRepo();
-    const sr = await repo.getStatusAndRepairSettings();
+    const sr = await lookupsRepo.getStatusAndRepairSettings();
     applyStatus = !!sr.applyStatusColorsOnMap;
     statusColors = new Map(Object.entries(sr.statusColors || {})); // keys expected lower-cased
   } catch (e) {
@@ -137,18 +127,14 @@ async function getStationData(opts = {}) {
 
 // Make invalidate meaningful: re-prime lookup caches
 async function invalidateStationCache() {
-  try {
-    const repo = await getLookupsRepo();
-    await repo.primeAllCaches();
-  } catch (_) {}
+  try { await lookupsRepo.primeAllCaches(); } catch (_) {}
   return { success: true };
 }
 
 async function getActiveCompanies() {
   // Excel lookups are the source of truth; fall back to legacy only if empty.
   try {
-    const repo = await getLookupsRepo();
-    const fromXlsx = await repo.getActiveCompanies();
+    const fromXlsx = await lookupsRepo.getActiveCompanies();
     if (fromXlsx && fromXlsx.length) return fromXlsx;
   } catch (e) {
     console.error('[lookups] getActiveCompanies failed:', e);
@@ -158,8 +144,7 @@ async function getActiveCompanies() {
 
 async function getLocationsForCompany(_company) {
   try {
-   const repo = await getLookupsRepo();
-    const fromXlsx = await repo.getLocationsForCompany(_company);
+    const fromXlsx = await lookupsRepo.getLocationsForCompany(_company);
     if (fromXlsx && fromXlsx.length) return fromXlsx;
   } catch (e) {
     console.error('[lookups] getLocationsForCompany failed:', e);
@@ -169,8 +154,7 @@ async function getLocationsForCompany(_company) {
 
 async function getAssetTypesForLocation(company, loc) {
   try {
-    const repo = await getLookupsRepo();
-    const fromXlsx = await repo.getAssetTypesForCompanyLocation(company, loc);
+    const fromXlsx = await lookupsRepo.getAssetTypesForCompanyLocation(company, loc);
     if (fromXlsx && fromXlsx.length) return fromXlsx;
   } catch (e) {
     console.error('[lookups] getAssetTypesForCompanyLocation failed:', e);
@@ -181,23 +165,19 @@ async function getAssetTypesForLocation(company, loc) {
 // Colors (global)
 async function getAssetTypeColor(assetType) {
   try {
-    const repo = await getLookupsRepo();
-    return await repo.getAssetTypeColor(assetType);
+    return await lookupsRepo.getAssetTypeColor(assetType);
   } catch(_) { return null; }
 }
 async function setAssetTypeColor(assetType, color) {
-  const repo = await getLookupsRepo();
-  return await repo.setAssetTypeColor(assetType, color);
+  return await lookupsRepo.setAssetTypeColor(assetType, color);
 }
 
 // Colors (per location)
 async function getAssetTypeColorForLocation(assetType, loc) {
-  const repo = await getLookupsRepo();
-  return await repo.getAssetTypeColorForLocation(assetType, loc);
+  return await lookupsRepo.getAssetTypeColorForLocation(assetType, loc);
 }
 async function setAssetTypeColorForLocation(assetType, loc, color) {
-  const repo = await getLookupsRepo();
-  return await repo.setAssetTypeColorForLocation(assetType, loc, color);
+  return await lookupsRepo.setAssetTypeColorForLocation(assetType, loc, color);
 }
 
 
@@ -233,12 +213,11 @@ async function addStationsFromSelection(payload) {
   
   // 0) Make sure the location exists (creates workbook too)
   try {
-    const repo = await getLookupsRepo();
-    if (company) await repo.upsertCompany(company, true);
-    if (location && company && repo?.upsertLocation) {
-      await repo.upsertLocation(location, company);
+    if (company) await lookupsRepo.upsertCompany(company, true);
+    if (location && company && lookupsRepo?.upsertLocation) {
+      await lookupsRepo.upsertLocation(location, company);
     }
-    await repo.upsertAssetType(assetType, company, location);
+    await lookupsRepo.upsertAssetType(assetType, company, location);
   } catch (e) {
     console.warn('[importSelection] upsertLocation failed (continuing):', e?.message || e);
   }
@@ -276,10 +255,11 @@ async function addStationsFromSelection(payload) {
       return out;
     });
 
-    // Write to Excel using the proper sheet naming convention
+    // Write using persistence layer with the proper sheet naming convention
     const targetSheetName = `${at} ${location}`; // e.g., "Cableway AB"
-    await excel.writeLocationRows(company, location, targetSheetName, secs, hdrs, rowsStamped);
-    
+    const persistence = await getPersistence();
+    await persistence.writeLocationRows(company, location, targetSheetName, secs, hdrs, rowsStamped);
+
     console.log(`[importSelection] Successfully imported ${rowsStamped.length} rows to ${targetSheetName}`);
     
   } catch (e) {
@@ -361,10 +341,9 @@ async function manualAddInstance(payload = {}) {
 
     // Ensure lookup rows exist
     try {
-      const repo = await getLookupsRepo(); // CHANGED
-      if (company) await repo.upsertCompany(company, true);
-      if (location && company) await repo.upsertLocation(location, company);
-      await repo.upsertAssetType(assetType, company, location);
+      if (company) await lookupsRepo.upsertCompany(company, true);
+      if (location && company) await lookupsRepo.upsertLocation(location, company);
+      await lookupsRepo.upsertAssetType(assetType, company, location);
     } catch (e) {
       // non-fatal
       console.warn('[manualAddInstance] upserts (lookups) failed:', e?.message || e);
@@ -402,7 +381,8 @@ async function manualAddInstance(payload = {}) {
     }
 
     const sheetName = `${assetType} ${location}`;
-    await excel.writeLocationRows(company, location, sheetName, sections, headers, [row]);
+    const persistence = await getPersistence();
+    await persistence.writeLocationRows(company, location, sheetName, sections, headers, [row]);
     return { success:true, added:1, sheet: sheetName };
   } catch (e) {
     console.error('[manualAddInstance] failed:', e);
@@ -415,8 +395,13 @@ async function manualAddInstance(payload = {}) {
  * Renderer calls this to populate the Step 3 sheet selector.
  */
 async function listExcelSheets(b64) {
-  try { return await excel.listSheets(b64); }
-  catch (e) { console.error('[listExcelSheets] failed:', e); return { success:false, message:String(e) }; }
+  try {
+    const persistence = await getPersistence();
+    return await persistence.listSheets(b64);
+  } catch (e) {
+    console.error('[listExcelSheets] failed:', e);
+    return { success:false, message:String(e) };
+  }
 }
 
 // Build "SITE_NAME_STATIONID" folder name from row
@@ -487,10 +472,7 @@ async function resolvePhotosBaseAndStationDir(siteName, stationId) {
     // Derive company from lookup tree
     try {
       if (location && !company) {
-        const repo = await getLookupsRepo();
-        const tree = await repo.getLookupTree
-          ? await repo.getLookupTree()
-          : { locationsByCompany: {} }; // fallback if repo lacks this helper
+        const tree = await lookupsRepo.getLookupTree();
         for (const [co, locs] of Object.entries(tree?.locationsByCompany || {})) {
           if ((locs || []).some(x => normLoc(x) === location)) {
             company = co; 
@@ -659,14 +641,15 @@ async function updateStationData(updatedStation, schema) {
                         currentStation.province || 
                         'Unknown';
 
-    // Prepare the row data for Excel
+    // Prepare the row data
     const rowData = prepareStationRowForExcel(updatedStation);
-    
-    // Update the station in the appropriate Excel file
-    const result = await excel.updateStationInLocationFile(
-      company, 
-      locationFile, 
-      updatedStation.station_id, 
+
+    // Update the station via persistence layer
+    const persistence = await getPersistence();
+    const result = await persistence.updateStationInLocationFile(
+      company,
+      locationFile,
+      updatedStation.station_id,
       rowData,
       schema  // Pass schema to maintain column order
     );
@@ -739,7 +722,8 @@ async function appendRepair(payload = {}) {
   if (repair.Type === undefined && repair.type === undefined) {
     repair.Type = 'Repair';
   }
-  return await excel.appendRepair(company, location, assetType, repair);
+  const persistence = await getPersistence();
+  return await persistence.appendRepair(company, location, assetType, repair);
 }
 
 module.exports = {
@@ -754,39 +738,11 @@ module.exports = {
   listExcelSheets,
   addStationsFromSelection,
   manualAddInstance,
-  // Update these to use async helper
-  upsertCompany: async (name, active) => {
-    const repo = await getLookupsRepo();
-    return repo.upsertCompany(name, active);
-  },
-  upsertLocation: async (location, company) => {
-    const repo = await getLookupsRepo();
-    return repo.upsertLocation(location, company);
-  },
-  upsertAssetType: async (assetType, company, location) => {
-    const repo = await getLookupsRepo();
-    return repo.upsertAssetType(assetType, company, location);
-  },
-  getLookupTree: async () => {
-    const repo = await getLookupsRepo();
-    // Implement tree building from repo methods
-    const companies = await repo.getActiveCompanies();
-    const locationsByCompany = {};
-    const assetsByCompanyLocation = {};
-    
-    for (const company of companies) {
-      locationsByCompany[company] = await repo.getLocationsForCompany(company);
-      assetsByCompanyLocation[company] = {};
-      
-      for (const location of locationsByCompany[company]) {
-        assetsByCompanyLocation[company][location] =
-          await repo.getAssetTypesForCompanyLocation(company, location);
-      }
-    }
-    return { companies, locationsByCompany, assetsByCompanyLocation };
-  },
-
-  // colors (lookups-backed) — exported functions already call repo via helper
+  upsertCompany: lookupsRepo.upsertCompany,
+  upsertLocation: lookupsRepo.upsertLocation,
+  upsertAssetType: lookupsRepo.upsertAssetType,
+  getLookupTree: lookupsRepo.getLookupTree,
+  // colors (lookups-backed)
   setAssetTypeColorForLocation,
   getAssetTypeColorForLocation,
   setAssetTypeColor,
@@ -800,14 +756,38 @@ module.exports = {
   // repairs
   appendRepair,
   // algorithm/workplan & weights
-  getAlgorithmParameters: () => excel.getAlgorithmParameters(),
-  saveAlgorithmParameters: (rows) => excel.saveAlgorithmParameters(rows),
-  getWorkplanConstants: () => excel.getWorkplanConstants(),
-  saveWorkplanConstants: (rows) => excel.saveWorkplanConstants(rows),
-  getCustomWeights: () => excel.getCustomWeights(),
-  addCustomWeight: (w, a) => excel.addCustomWeight(w, !!a),
+  getAlgorithmParameters: async () => {
+    const persistence = await getPersistence();
+    return persistence.getAlgorithmParameters();
+  },
+  saveAlgorithmParameters: async (rows) => {
+    const persistence = await getPersistence();
+    return persistence.saveAlgorithmParameters(rows);
+  },
+  getWorkplanConstants: async () => {
+    const persistence = await getPersistence();
+    return persistence.getWorkplanConstants();
+  },
+  saveWorkplanConstants: async (rows) => {
+    const persistence = await getPersistence();
+    return persistence.saveWorkplanConstants(rows);
+  },
+  getCustomWeights: async () => {
+    const persistence = await getPersistence();
+    return persistence.getCustomWeights();
+  },
+  addCustomWeight: async (w, a) => {
+    const persistence = await getPersistence();
+    return persistence.addCustomWeight(w, !!a);
+  },
 
   // Fixed parameters (for Optimization I constraint filtering)
-  getFixedParameters: () => excel.getFixedParameters(),
-  saveFixedParameters: (params) => excel.saveFixedParameters(params),
+  getFixedParameters: async () => {
+    const persistence = await getPersistence();
+    return persistence.getFixedParameters();
+  },
+  saveFixedParameters: async (params) => {
+    const persistence = await getPersistence();
+    return persistence.saveFixedParameters(params);
+  },
 };

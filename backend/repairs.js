@@ -1,16 +1,6 @@
 // backend/repairs.js
-const excel = require('./excel_worker_client');
+const { getPersistence } = require('./persistence');
 const app = require('./app');
-// Add repository factory (lazy)
-const { getRepairRepository } = require('./repository_factory');
-let repairRepo = null;
-
-async function getRepo() {
-  if (!repairRepo) {
-    repairRepo = await getRepairRepository();
-  }
-  return repairRepo;
-}
 
 /**
  * Normalize repair item data
@@ -96,11 +86,9 @@ async function resolveStationInfo(stationId) {
 async function listRepairs(siteName, stationId) {
   try {
     const { company, location, assetType } = await resolveStationInfo(stationId);
-    const repo = await getRepo(); // CHANGED
-    const repairs = await repo.listRepairsForStation(
-      company, location, assetType, stationId
-    );
-    
+    const persistence = await getPersistence();
+    const repairs = await persistence.listRepairsForStation(company, location, assetType, stationId);
+
     // Normalize and return
     return (repairs || []).map(r => normalizeItem({
       ...r,
@@ -123,22 +111,22 @@ async function listRepairs(siteName, stationId) {
 async function saveRepairs(siteName, stationId, items) {
   try {
     const { company, location, assetType } = await resolveStationInfo(stationId);
-    
+
     // Normalize items
     // Respect per-item Asset Type if provided, else fall back to station's asset type
     const normalizedItems = Array.isArray(items)
       ? items.map(item => normalizeItem({ ...item, location, assetType: item?.assetType || item?.['Asset Type'] || assetType }))
       : [];
-    
-    // Save via repo
-    const repo = await getRepo();
-    const result = await repo.saveStationRepairs(
-      company, location, 
-      assetType, 
-      stationId, 
+
+    // Save via persistence layer
+    const persistence = await getPersistence();
+    const result = await persistence.saveStationRepairs(
+      company, location,
+      assetType,
+      stationId,
       normalizedItems
     );
-    
+
     return result;
   } catch (e) {
     console.error('[repairs:save] failed:', e);
@@ -184,9 +172,9 @@ async function addRepair(company, location, assetType, repair) {
       'Days':        repair['Days'] ?? n.days
     };
 
-    const repo = await getRepo();
-    const result = await repo.appendRepair(company, location, assetType, payload);
-    
+    const persistence = await getPersistence();
+    const result = await persistence.appendRepair(company, location, assetType, payload);
+
     return result;
   } catch (e) {
     console.error('[repairs:add] failed:', e);
@@ -200,9 +188,9 @@ async function addRepair(company, location, assetType, repair) {
  */
 async function getAllRepairs() {
   try {
-    const repo = await getRepo();
-    const allRepairs = await repo.getAllRepairs();
-    
+    const persistence = await getPersistence();
+    const allRepairs = await persistence.getAllRepairs();
+
     // Normalize all repairs
     return (allRepairs || []).map(normalizeItem);
   } catch (e) {
@@ -225,19 +213,19 @@ async function deleteRepair(company, location, assetType, stationId, repairIndex
     if (!company || !location || !assetType || !stationId) {
       throw new Error('Company, location, asset type, and station ID are required');
     }
-    
+
     if (!Number.isInteger(repairIndex) || repairIndex < 0) {
       throw new Error('Valid repair index is required');
     }
-    
-    const repo = await getRepo();
-    const result = await repo.deleteRepair(
-      company, location, 
-      assetType, 
-      stationId, 
+
+    const persistence = await getPersistence();
+    const result = await persistence.deleteRepair(
+      company, location,
+      assetType,
+      stationId,
       repairIndex
     );
-    
+
     return result;
   } catch (e) {
     console.error('[repairs:delete] failed:', e);

@@ -15,15 +15,14 @@ const AUTH_FILE = path.join(DATA_DIR, 'Login_Information.xlsx');
 let currentUser = null;
 let sessionToken = null;
 
-// We'll use the excel worker client for all Excel operations
-// Use repository factory (lazy init)
-const { getAuthRepository } = require('./repository_factory');
-let authRepo = null;
-async function getRepo() {
-  if (!authRepo) {
-    authRepo = await getAuthRepository();
+// Lazy-load excel_worker_client to avoid starting the worker thread on import
+let excelClient = null;
+function getExcelClient() {
+  if (!excelClient) {
+    console.log('[Auth] Lazy-loading excel_worker_client');
+    excelClient = require('./excel_worker_client');
   }
-  return authRepo;
+  return excelClient;
 }
 
 // Default dev user used when auth is disabled
@@ -53,12 +52,9 @@ async function initAuthWorkbook() {
     }
 
     console.log('[auth] Creating Login_Information.xlsx...');
-    
-    // Initialize repo (ensures backing store is ready, if needed)
-    const repo = await getRepo();
-    // Create the file through the worker (still responsible for workbook creation)
-    const excelClient = require('./excel_worker_client');
-    const result = await excelClient.createAuthWorkbook();
+
+    // Create the file through the worker
+    const result = await getExcelClient().createAuthWorkbook();
     console.log('[auth] Auth workbook created:', result);
     
     return { exists: false };
@@ -96,9 +92,8 @@ async function createUser(userData) {
     }
 
     const hashedPassword = hashPassword(password);
-    
-    const repo = await getRepo();
-    const result = await repo.createUser({
+
+    const result = await getExcelClient().createAuthUser({
       name,
       email: email.toLowerCase(),
       password: hashedPassword,
@@ -140,9 +135,8 @@ async function loginUser(name, password) {
     }
 
     const hashedPassword = hashPassword(password);
-    
-    const repo = await getRepo();
-    const result = await repo.loginUser(name, hashedPassword);
+
+    const result = await getExcelClient().loginAuthUser(name, hashedPassword);
     
     if (result.success) {
       currentUser = result.user;
@@ -174,8 +168,7 @@ async function logoutUser() {
       return { success: true, disabled: true };
     }
 
-    const repo = await getRepo();
-    const result = await repo.logoutUser(currentUser.name);
+    const result = await getExcelClient().logoutAuthUser(currentUser.name);
     
     currentUser = null;
     sessionToken = null;
@@ -198,8 +191,8 @@ async function getAllUsers() {
       return [];
     }
 
-    const repo = await getRepo();
-    return await repo.getAllUsers();
+    const result = await getExcelClient().getAllAuthUsers();
+    return result.users || [];
   } catch (error) {
     console.error('[auth] Error getting users:', error);
     return [];
@@ -212,9 +205,9 @@ async function hasUsers() {
     if (!AUTH_ENABLED) return true;
 
     if (!fs.existsSync(AUTH_FILE)) return false;
-    
-    const repo = await getRepo();
-    return await repo.hasUsers();
+
+    const result = await getExcelClient().hasAuthUsers();
+    return result.hasUsers || false;
   } catch (error) {
     console.error('[auth] Error checking users:', error);
     return false;

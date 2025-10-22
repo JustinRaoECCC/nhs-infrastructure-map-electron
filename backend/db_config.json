@@ -1,9 +1,0 @@
-{
-  "readFrom": "excel",
-  "writeTo": "both",
-  "mongodb": {
-    "enabled": true,
-    "connectionString": "mongodb+srv://justinrao_db_user:1234@cluster0.k2ajyjq.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0",
-    "databaseName": "nhs_infrastructure"
-  }
-}

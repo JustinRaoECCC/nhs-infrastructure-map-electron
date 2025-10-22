@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { ensureDir } = require('./utils/fs_utils');
 
-const excel = require('./excel_worker_client');
+const { getPersistence } = require('./persistence');
 
 // ─── Paths ─────────────────────────────────────────────────────────────────
 const DATA_DIR      = process.env.NHS_DATA_DIR || path.join(__dirname, '..', 'data');
@@ -172,8 +172,9 @@ function _saveJsonCache() {
 
 async function _primeAllCaches() {
   ensureDir(DATA_DIR);
-  // Ask the worker for a snapshot (non-blocking for main thread)
-  const snap = await excel.readLookupsSnapshot();
+  // Ask the persistence layer for a snapshot
+  const persistence = await getPersistence();
+  const snap = await persistence.readLookupsSnapshot();
   const mtimeMs = snap?.mtimeMs || 0;
   if (_cache.mtimeMs === mtimeMs) return;
 
@@ -255,7 +256,10 @@ async function getColorMaps() {
 }
 
 // ─── Ensure folders & workbook ─────────────────────────────────────────────
-async function ensureLookupsReady() { return excel.ensureLookupsReady(); }
+async function ensureLookupsReady() {
+  const persistence = await getPersistence();
+  return persistence.ensureLookupsReady();
+}
 
 // ─── Inspection keywords (global) ─────────────────────────────────────────
 async function getInspectionKeywords() {
@@ -267,7 +271,8 @@ async function setInspectionKeywords(keywords = []) {
   const list = Array.isArray(keywords)
     ? keywords.map(normStr).filter(Boolean)
     : [];
-  const res = await excel.setInspectionKeywords(list);
+  const persistence = await getPersistence();
+  const res = await persistence.setInspectionKeywords(list);
   _invalidateAllCaches();
   return res;
 }
@@ -319,32 +324,37 @@ async function getAssetTypeColorForCompanyLocation(assetType, company, location)
 }
 
 async function setAssetTypeColor(assetType, color) {
-  const res = await excel.setAssetTypeColor(assetType, color);
+  const persistence = await getPersistence();
+  const res = await persistence.setAssetTypeColor(assetType, color);
   _invalidateAllCaches();
   return res;
 }
 
 async function setAssetTypeColorForLocation(assetType, location, color) {
-  const res = await excel.setAssetTypeColorForLocation(assetType, location, color);
+  const persistence = await getPersistence();
+  const res = await persistence.setAssetTypeColorForLocation(assetType, location, color);
   _invalidateAllCaches();
   return res;
 }
 
 async function setAssetTypeColorForCompanyLocation(assetType, company, location, color) {
-  const res = await excel.setAssetTypeColorForCompanyLocation(assetType, company, location, color);
+  const persistence = await getPersistence();
+  const res = await persistence.setAssetTypeColorForCompanyLocation(assetType, company, location, color);
   _invalidateAllCaches();
   return res;
 }
 
 // ─── Writes / Upserts ─────────────────────────────────────────────────────
 async function upsertCompany(name, active = true) {
-  const res = await excel.upsertCompany(name, active);
+  const persistence = await getPersistence();
+  const res = await persistence.upsertCompany(name, active);
   _invalidateAllCaches();
   return res;
 }
 
 async function upsertLocation(location, company) {
-  const res = await excel.upsertLocation(location, company);
+  const persistence = await getPersistence();
+  const res = await persistence.upsertLocation(location, company);
   _invalidateAllCaches();
   return res;
 }
@@ -400,13 +410,15 @@ async function getPhotosBase({ company, location, assetType } = {}) {
 
 // ─── Link Writers ─────────────────────────────────────────────────────────
 async function setLocationLink(company, location, link) {
-  const res = await excel.setLocationLink(company, location, link || '');
+  const persistence = await getPersistence();
+  const res = await persistence.setLocationLink(company, location, link || '');
   _invalidateAllCaches();
   return res;
 }
 
 async function setAssetTypeLink(assetType, company, location, link) {
-  const res = await excel.setAssetTypeLink(assetType, company, location, link || '');
+  const persistence = await getPersistence();
+  const res = await persistence.setAssetTypeLink(assetType, company, location, link || '');
   _invalidateAllCaches();
   return res;
 }
@@ -423,25 +435,29 @@ async function getStatusAndRepairSettings() {
 }
 
 async function setStatusColor(statusKey, color) {
-  const res = await excel.setStatusColor(statusKey, color);
+  const persistence = await getPersistence();
+  const res = await persistence.setStatusColor(statusKey, color);
   _invalidateAllCaches();
   return res;
 }
 
 async function setApplyStatusColors(flag) {
-  const res = await excel.setSettingBoolean('applyStatusColorsOnMap', !!flag);
+  const persistence = await getPersistence();
+  const res = await persistence.setSettingBoolean('applyStatusColorsOnMap', !!flag);
   _invalidateAllCaches();
   return res;
 }
 
 async function setApplyRepairColors(flag) {
-  const res = await excel.setSettingBoolean('applyRepairColorsOnMap', !!flag);
+  const persistence = await getPersistence();
+  const res = await persistence.setSettingBoolean('applyRepairColorsOnMap', !!flag);
   _invalidateAllCaches();
   return res;
 }
 
 async function deleteStatus(statusKey) {
-  const res = await excel.deleteStatusRow(statusKey);
+  const persistence = await getPersistence();
+  const res = await persistence.deleteStatusRow(statusKey);
   _invalidateAllCaches();
   return res;
 }
@@ -475,7 +491,8 @@ module.exports = {
   upsertCompany,
   upsertLocation,
   upsertAssetType: async (assetType, company, location) => {
-    const res = await excel.upsertAssetType(assetType, company, location);
+    const persistence = await getPersistence();
+    const res = await persistence.upsertAssetType(assetType, company, location);
     _invalidateAllCaches();
     return res;
   },

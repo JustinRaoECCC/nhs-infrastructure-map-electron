@@ -873,33 +873,60 @@ async function saveStationChanges(assetType) {
         });
       });
 
-      // If we have an existing schema, use it ONLY to preserve the
-      // relative order among the subset that still exists in the UI.
+      // If we have an existing schema, keep prior order for existing fields
+      // and INSERT any new field right after the last field of the *same section*.
       if (existingSchema && Array.isArray(existingSchema.fields) && Array.isArray(existingSchema.sections)) {
-        const present = new Set(uiPairs.map(([s, f]) => `${s.toLowerCase()}|||${f.toLowerCase()}`));
+        const keyOf = (s, f) => `${String(s).toLowerCase()}|||${String(f).toLowerCase()}`;
+        const isGI  = (s) => String(s).trim().toLowerCase() === 'general information';
 
-        // Keep only pairs that are still present, in their previous order
+        // 1) Seed "ordered" with existing schema pairs that are still present in the UI (non-GI only)
+        const present = new Set(uiPairs.map(([s, f]) => keyOf(s, f)));
         const ordered = [];
         for (let i = 0; i < existingSchema.fields.length; i++) {
           const s = existingSchema.sections[i];
           const f = existingSchema.fields[i];
           if (!s || !f) continue;
-          if (String(s).toLowerCase() === 'general information') continue;
-          const key = `${String(s).toLowerCase()}|||${String(f).toLowerCase()}`;
-          if (present.has(key)) ordered.push([s, f]);
+          if (isGI(s)) continue;
+          const k = keyOf(s, f);
+          if (present.has(k)) ordered.push([s, f]);
         }
 
-        // Append any remaining UI pairs (new ones) after that
-        const orderedKeys = new Set(ordered.map(([s, f]) => `${s.toLowerCase()}|||${f.toLowerCase()}`));
+        // 2) Insert any remaining UI pairs "next to their section":
+        //    - If that section already exists in `ordered`, place right after the last field of that section
+        //    - Otherwise, append to the end (subsequent fields of the same new section will group together)
+        const orderedKeys = new Set(ordered.map(([s, f]) => keyOf(s, f)));
+        const insertAfterLastOfSection = (arr, section, pair) => {
+          const want = String(section).toLowerCase();
+          let lastIdx = -1;
+          for (let i = arr.length - 1; i >= 0; i--) {
+            if (String(arr[i][0]).toLowerCase() === want) { lastIdx = i; break; }
+          }
+          if (lastIdx === -1) arr.push(pair);
+          else arr.splice(lastIdx + 1, 0, pair);
+        };
+
         for (const [s, f] of uiPairs) {
-          const k = `${s.toLowerCase()}|||${f.toLowerCase()}`;
-          if (!orderedKeys.has(k)) ordered.push([s, f]);
+          const k = keyOf(s, f);
+          if (orderedKeys.has(k)) continue; // already present from existing schema
+          insertAfterLastOfSection(ordered, s, [s, f]);
+          orderedKeys.add(k);
         }
 
-        schemaData = { sections: ordered.map(p => p[0]), fields: ordered.map(p => p[1]) };
+        schemaData = {
+          sections: ordered.map(p => p[0]),
+          fields:   ordered.map(p => p[1])
+        };
       } else {
-        // No existing schema: just take UI order
-        schemaData = { sections: uiPairs.map(p => p[0]), fields: uiPairs.map(p => p[1]) };
+        // No existing schema: keep UI order but ensure fields of the same section stay grouped.
+        // (uiSections already preserves per-section UI order.)
+        const grouped = [];
+        uiSections.forEach((fieldsList, sectionName) => {
+          fieldsList.forEach(fieldName => grouped.push([sectionName, fieldName]));
+        });
+        schemaData = {
+          sections: grouped.map(p => p[0]),
+          fields:   grouped.map(p => p[1])
+        };
       }
     })();
 

@@ -8,13 +8,23 @@ const os   = require('os');
 const backend     = require('./backend/app');
 const algorithms  = require('./backend/algorithms');
 const lookups     = require('./backend/lookups_repo');
-const excelClient = require('./backend/excel_worker_client');
 const nukeBackend = require('./backend/nuke');
 const inspectionHistory = require('./backend/inspection_history');
 const repairsBackend = require('./backend/repairs');
-const auth = require('./backend/auth')
-// Repository factory (MongoDB / config)
-const { initMongoDB, loadConfig } = require('./backend/repository_factory');
+const auth = require('./backend/auth');
+// Persistence layer (MongoDB / Excel)
+const config = require('./backend/config');
+const { getPersistence } = require('./backend/persistence');
+
+// Lazy-load excel_worker_client to avoid starting the worker thread on import
+let excelClient = null;
+function getExcelClient() {
+  if (!excelClient) {
+    console.log('[Main] Lazy-loading excel_worker_client');
+    excelClient = require('./backend/excel_worker_client');
+  }
+  return excelClient;
+}
 
 app.disableHardwareAcceleration();
 
@@ -64,14 +74,22 @@ async function createWindow () {
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
 
-    // Kick off Excel load immediately after paint; progress goes to renderer
+    // Kick off data load immediately after paint
     setTimeout(() => {
-      excelClient.warm().catch(err => console.error('[excel warm @show] failed:', err));
-      lookups.ensureLookupsReady?.().catch(err => console.error('[ensure lookups @show] failed:', err));
-      // also trigger a snapshot to finalize to 100%
+      const dbConfig = config.getDbConfig();
+      const useExcel = dbConfig.read?.source === 'excel' ||
+                       (dbConfig.write?.targets || []).includes('excel');
+
+      if (useExcel) {
+        const excel = getExcelClient();
+        excel.warm().catch(err => console.error('[excel warm @show] failed:', err));
+        lookups.ensureLookupsReady?.().catch(err => console.error('[ensure lookups @show] failed:', err));
+        // Normalize Funding Override blanks at startup (safe, idempotent)
+        excel.normalizeFundingOverrides?.().catch(err => console.error('[normalizeFundingOverrides @show] failed:', err));
+      }
+
+      // Always trigger cache snapshot to finalize loading
       lookups.primeAllCaches?.().catch(err => console.error('[prime caches @show] failed:', err));
-      // Normalize Funding Override blanks at startup (safe, idempotent)
-      excelClient.normalizeFundingOverrides?.().catch(err => console.error('[normalizeFundingOverrides @show] failed:', err));
     }, 40);
   });
 
@@ -84,55 +102,70 @@ async function createWindow () {
 }
 
 // Boot-time lookups bootstrap (runs as soon as the app is ready)
-// - warms the worker thread
+// - warms the worker thread (only if using Excel)
 // - creates lookups.xlsx if missing (non-blocking)
 // - primes caches
-function bootstrapLookupsAtBoot() {
-  // Start the worker immediately (non-blocking).
-  excelClient.warm().catch(err => console.error('[excel warm @boot] failed:', err));
+function bootstrapLookupsAtBoot(useExcel = true) {
+  if (useExcel) {
+    const excel = getExcelClient();
+    // Start the worker immediately (non-blocking).
+    excel.warm().catch(err => console.error('[excel warm @boot] failed:', err));
 
-  // Fire-and-forget creation of the workbook + initial cache snapshot.
-  Promise.resolve()
-    .then(() => lookups.ensureLookupsReady?.())
-    .then(() => lookups.primeAllCaches?.())
-    .catch(err => console.error('[ensure lookups @boot] failed:', err));
+    // Fire-and-forget creation of the workbook + initial cache snapshot.
+    Promise.resolve()
+      .then(() => lookups.ensureLookupsReady?.())
+      .then(() => lookups.primeAllCaches?.())
+      .catch(err => console.error('[ensure lookups @boot] failed:', err));
 
-  // Small failsafe retry in case the first attempt raced the worker startup.
-  setTimeout(() => {
-    lookups.ensureLookupsReady?.().catch(err => console.error('[ensure lookups @boot retry] failed:', err));
-  }, 3000);
+    // Small failsafe retry in case the first attempt raced the worker startup.
+    setTimeout(() => {
+      lookups.ensureLookupsReady?.().catch(err => console.error('[ensure lookups @boot retry] failed:', err));
+    }, 3000);
+  } else {
+    // MongoDB mode - just prime caches without Excel worker
+    console.log('[Main] Using MongoDB - skipping Excel worker initialization');
+    Promise.resolve()
+      .then(() => lookups.primeAllCaches?.())
+      .catch(err => console.error('[prime caches @boot] failed:', err));
+  }
 }
 
 app.whenReady().then(async () => {
-  // Initialize MongoDB (if enabled in repository_factory config)
+  // Initialize persistence layer (MongoDB / Excel based on config)
+  let dbConfig;
+  let useExcel = true;
+
   try {
-    const config = loadConfig();
+    dbConfig = config.getDbConfig();
     console.log('[Main] Database config:', {
-      readFrom: config.readFrom,
-      writeTo: config.writeTo,
-      mongoEnabled: config.mongodb?.enabled
+      readFrom: dbConfig.read?.source,
+      writeTo: dbConfig.write?.targets
     });
-    
-    if (config.mongodb?.enabled) {
-      console.log('[Main] Initializing MongoDB...');
-      await initMongoDB();
-      console.log('[Main] MongoDB initialized');
-    } else {
-      console.log('[Main] MongoDB disabled, using Excel only');
-    }
+
+    // Determine if we need Excel worker
+    useExcel = dbConfig.read?.source === 'excel' ||
+               (dbConfig.write?.targets || []).includes('excel');
+
+    console.log(`[Main] Excel worker ${useExcel ? 'ENABLED' : 'DISABLED'}`);
+
+    // Initialize persistence layer (will connect to MongoDB if configured)
+    await getPersistence();
+    console.log('[Main] Persistence layer initialized successfully');
   } catch (error) {
-    console.error('[Main] MongoDB initialization failed:', error);
-    console.log('[Main] Continuing with Excel-only mode');
+    console.error('[Main] Persistence initialization error:', error);
+    console.log('[Main] Note: The app will attempt to use Excel by default');
   }
 
   // Create folders immediately (sync, no ExcelJS)
   if (typeof lookups.ensureDataFoldersSync === 'function') {
     lookups.ensureDataFoldersSync();
   }
-  bootstrapLookupsAtBoot();
+  bootstrapLookupsAtBoot(useExcel);
 
-  // Also normalize funding overrides in the background at boot
-  try { excelClient.normalizeFundingOverrides?.(); } catch (_) {}
+  // Also normalize funding overrides in the background at boot (only if using Excel)
+  if (useExcel) {
+    try { getExcelClient().normalizeFundingOverrides?.(); } catch (_) {}
+  }
 
   // Initialize auth and decide which window to show
   auth.initAuthWorkbook()
@@ -150,22 +183,25 @@ app.whenReady().then(async () => {
       createLoginWindow();
     });
 
-  // Forward worker progress to all windows
-  excelClient.onProgress((data) => {
-    try {
-      for (const w of BrowserWindow.getAllWindows()) {
-        w.webContents.send('excel:progress', data);
+  // Forward worker progress to all windows (only if Excel is enabled)
+  if (useExcel) {
+    const excel = getExcelClient();
+    excel.onProgress((data) => {
+      try {
+        for (const w of BrowserWindow.getAllWindows()) {
+          w.webContents.send('excel:progress', data);
+        }
+      } catch (e) {
+        console.error('[excel:progress forward] failed:', e);
       }
-    } catch (e) {
-      console.error('[excel:progress forward] failed:', e);
-    }
-  });
+    });
+  }
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createLoginWindow();
   });
 
-  // Warm the color cache ASAP without blocking the UI
+  // Warm the cache ASAP without blocking the UI (MongoDB or Excel)
   setTimeout(() => {
     lookups.primeAllCaches().catch(err => console.error('[prime lookups @800ms]', err));
   }, 800);
@@ -230,7 +266,7 @@ ipcMain.handle('lookups:getAssetTypeColorForLocation', async (_evt, assetType, l
 ipcMain.handle('lookups:setAssetTypeColorForLocation', async (_evt, assetType, location, color) => backend.setAssetTypeColorForLocation(assetType, location, color));
 ipcMain.handle('excel:listSheets', async (_evt, b64) => backend.listExcelSheets(b64));
 ipcMain.handle('excel:parseRowsFromSheet', async (_evt, b64, sheetName) =>
-  excelClient.parseRowsFromSheet(b64, sheetName)
+  getExcelClient().parseRowsFromSheet(b64, sheetName)
 );
 
 ipcMain.handle('photos:getRecent', async (_evt, { siteName, stationId, limit }) =>
@@ -252,15 +288,15 @@ ipcMain.handle('schema:getExisting', async (_evt, assetType) => {
 
 // Add handler for Excel worker's new functions
 ipcMain.handle('excel:readLocationWorkbook', async (_evt, company, locationName) =>
-  excelClient.readLocationWorkbook(company, locationName)
+  getExcelClient().readLocationWorkbook(company, locationName)
 );
 
 ipcMain.handle('excel:readSheetData', async (_evt, company, locationName, sheetName) =>
-  excelClient.readSheetData(company, locationName, sheetName)
+  getExcelClient().readSheetData(company, locationName, sheetName)
 );
 
 ipcMain.handle('excel:updateAssetTypeSchema', async (_evt, assetType, schema, excludeStationId) =>
-  excelClient.updateAssetTypeSchema(assetType, schema, excludeStationId)
+  getExcelClient().updateAssetTypeSchema(assetType, schema, excludeStationId)
 );
 
 // ─── IPC: Inspections ─────────────────────────────────────────────────────
@@ -399,7 +435,7 @@ ipcMain.handle('app:getStationData', async () => backend.getStationData({}));
 
 ipcMain.handle('excel:importRepairsExcel', async (_e, b64) => {
   // first sheet rows
-  return await excelClient.parseRows(b64);
+  return await getExcelClient().parseRows(b64);
 });
 
 // Algorithm Parameters / Constants / Custom Weights
@@ -436,6 +472,15 @@ ipcMain.handle('algo:optimizeWorkplan', async (_e, payload) => algorithms.optimi
 ipcMain.handle('algo:groupRepairsIntoTrips', async (_e, payload) => algorithms.groupRepairsIntoTrips(payload));
 ipcMain.handle('algo:assignTripsToYears', async (_e, payload) => algorithms.assignTripsToYears(payload));
 
+// ─── IPC: Database Config ──────────────────────────────────────────────────
+ipcMain.handle('db:getConfig', async () => {
+  const dbConfig = config.getDbConfig();
+  return {
+    readSource: dbConfig.read?.source || 'excel',
+    writeTargets: dbConfig.write?.targets || ['excel']
+  };
+});
+
 // ─── IPC: Authentication ───────────────────────────────────────────────────
 ipcMain.handle('auth:hasUsers', async () => auth.hasUsers());
 ipcMain.handle('auth:createUser', async (_evt, userData) => auth.createUser(userData));
@@ -456,14 +501,14 @@ ipcMain.handle('append-repair', async (event, payload) => {
 });
 
 ipcMain.handle('excel:getFundingSettings', async (_evt, company, location) =>
-  excelClient.getFundingSettings(company, location)
+  getExcelClient().getFundingSettings(company, location)
 );
 ipcMain.handle('excel:saveFundingSettings', async (_evt, company, location, settings) =>
-  excelClient.saveFundingSettings(company, location, settings)
+  getExcelClient().saveFundingSettings(company, location, settings)
 );
 ipcMain.handle('excel:saveFundingSettingsForAssetType', async (_evt, company, location, assetType, settings) =>
-  excelClient.saveFundingSettingsForAssetType(company, location, assetType, settings)
+  getExcelClient().saveFundingSettingsForAssetType(company, location, assetType, settings)
 );
 ipcMain.handle('excel:getAllFundingSettings', async (_evt, company) =>
-  excelClient.getAllFundingSettings(company)
+  getExcelClient().getAllFundingSettings(company)
 );

@@ -143,6 +143,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   groupRepairsIntoTrips: (payload) => ipcRenderer.invoke('algo:groupRepairsIntoTrips', payload),
   assignTripsToYears: (payload) => ipcRenderer.invoke('algo:assignTripsToYears', payload),
 
+  // ─── Database Config ─────────────────────────────────────────────────────
+  getDbConfig: () => ipcRenderer.invoke('db:getConfig'),
+
   // ─── Authentication ──────────────────────────────────────────────────────
   hasUsers: () => ipcRenderer.invoke('auth:hasUsers'),
   createUser: (userData) => ipcRenderer.invoke('auth:createUser', userData),
