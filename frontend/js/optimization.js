@@ -16,6 +16,10 @@ document.addEventListener('DOMContentLoaded', () => {
     navOpt._wired = true;
   }
 
+  // in-modal edit state (soft/fixed)
+  let _editingSoftRow = null;
+  let _editingFixedRow = null;
+
   // Store available field names for autocomplete
   let availableFieldNames = [];
   let availableParameterNames = [];
@@ -78,17 +82,11 @@ document.addEventListener('DOMContentLoaded', () => {
       const stations = await window.electronAPI.getStationData();
       const fieldSet = new Set();
       
-      // Extract all unique field names from station data
+      // Extract all unique field names from station data (use EXACT headers; do not split on dashes)
       if (stations && stations.length > 0) {
         stations.forEach(station => {
           Object.keys(station).forEach(key => {
-            // Add both plain field names and section-field combinations
-            fieldSet.add(key);
-            // If it's a section-field combination, also add the field part
-            if (key.includes(' – ')) {
-              const field = key.split(' – ')[1];
-              fieldSet.add(field);
-            }
+            fieldSet.add(String(key || '').trim());
           });
         });
       }
@@ -98,32 +96,15 @@ document.addEventListener('DOMContentLoaded', () => {
       if (repairs && repairs.length > 0) {
         repairs.forEach(repair => {
           Object.keys(repair).forEach(key => {
-            fieldSet.add(key);
+            fieldSet.add(String(key || '').trim());
           });
         });
       }
 
-      // Normalize to FIELD-ONLY suggestions (drop section-field composites)
-      const normalized = new Set();
-      Array.from(fieldSet).forEach(name => {
-        let s = String(name || '');
-        // Handle known composite separators first
-        if (s.includes(' ?" ')) {
-          const parts = s.split(' ?" ');
-          s = parts[1] || parts[0] || s;
-        } else if (s.includes(' - ')) {
-          const parts = s.split(' - ');
-          s = parts.length > 1 ? parts.slice(-1)[0] : s;
-        } else if (s.includes(' – ')) {
-          const parts = s.split(' – ');
-          s = parts.length > 1 ? parts.slice(-1)[0] : s;
-        } else if (s.includes(' — ')) {
-          const parts = s.split(' — ');
-          s = parts.length > 1 ? parts.slice(-1)[0] : s;
-        }
-        normalized.add(s);
-      });
-      availableFieldNames = Array.from(normalized).sort();
+      // Use the exact headers; case-insensitive de-dupe, then sort
+      const exactFields = uniqCaseInsensitive(Array.from(fieldSet));
+      exactFields.sort((a,b) => a.localeCompare(b));
+      availableFieldNames = exactFields;
 
       // Load existing parameter names for autocomplete
       const params = await window.electronAPI.getAlgorithmParameters();
@@ -170,6 +151,26 @@ document.addEventListener('DOMContentLoaded', () => {
     const clone = _cloneInput(input);
     setupAutocomplete(clone, suggestions);
     return clone;
+  }
+
+  // Apply autocomplete to all current split-source inputs
+  function _rewireAllSplitInputs() {
+    const splitInputs = document.querySelectorAll('#splitFields .split-source-input');
+    splitInputs.forEach(inp => applyAutocomplete(inp, availableSplitSources));
+  }
+
+  // Build a split-source row (for multi-split UI)
+  function _makeSplitSourceRow(value = '') {
+    const row = document.createElement('div');
+    row.className = 'split-source-row';
+    row.style = 'display:flex; gap:.5em; align-items:center; margin:.25em 0;';
+    row.innerHTML = `
+      <input type="text" class="split-source-input" style="flex:1; padding:.4em;" placeholder="Enter source token (e.g., F, P(OTH))">
+      <button class="deleteSplitSourceBtn" title="Remove" style="color:red;">×</button>
+    `;
+    row.querySelector('.split-source-input').value = value;
+    row.querySelector('.deleteSplitSourceBtn').addEventListener('click', () => row.remove());
+    return row;
   }
 
   // Explicitly remove autocomplete (clone without re-wiring)
@@ -430,6 +431,7 @@ document.addEventListener('DOMContentLoaded', () => {
         </select>
         <select class="param-options"></select>
         <span class="param-weight-display"></span>
+        <button class="editParamBtn" title="Edit parameter" style="margin-left:.5em;">✎</button>
         <input type="number" class="param-percentage" min="0" max="100" value="0"
                style="width:60px; margin-left:0.5em;" title="Enter % (total should sum to 100)" />%
         <button class="deleteParamBtn">×</button>
@@ -457,7 +459,36 @@ document.addEventListener('DOMContentLoaded', () => {
       });
       row.querySelector('.param-percentage').addEventListener('input', recalcPercentageTotal);
       row.querySelector('.deleteParamBtn').addEventListener('click', () => row.remove());
+      row.querySelector('.editParamBtn').addEventListener('click', () => {
+        // open the Add Param modal pre-filled from this row
+        _editingSoftRow = row;
+        const name = row.querySelector('.param-name')?.value?.trim() || '';
+        const cond = row.querySelector('.param-condition')?.value || 'IF';
+        const maxW = parseInt(row.dataset.maxWeight, 10) || 1;
+        const opts = Array.from(row.querySelectorAll('.param-options option')).map(o => ({
+          label: o.textContent, weight: parseInt(o.value, 10) || 0
+        }));
+        // populate modal
+        addParamModal.style.display='flex';
+        paramNameInput.value = name;
+        paramConditionSel.value = cond;
+        paramMaxWeightInp.value = String(maxW);
+        optionsList.innerHTML = '';
+        opts.forEach(o => {
+          const r = makeOptionRow(o.label, o.weight);
+          optionsList.appendChild(r);
+        });
+        // suggestions for name
+        setupAutocomplete(paramNameInput, availableFieldNames);
+      });
       return row;
+    }
+
+    async function _replaceSoftParamInStorage(oldKeyParam, oldKeyCond, newRows) {
+      const all = await window.electronAPI.getAlgorithmParameters();
+      const filtered = (all || []).filter(p => !(String(p.parameter) === String(oldKeyParam) && String(p.condition) === String(oldKeyCond)));
+      const merged = [...filtered, ...newRows];
+      await window.electronAPI.saveAlgorithmParameters(merged, { replace: true });
     }
 
     function makeOptionRow(label = '', weight = 0) {
@@ -557,15 +588,30 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       });
       
-      await window.electronAPI.saveAlgorithmParameters(rows, { append: true });
-      
-      paramContainer.appendChild(makeDisplayRow({
-        parameter, 
-        condition, 
-        max_weight: maxWeight, 
-        options
-      }));
-      
+      // detect edit mode
+      if (_editingSoftRow) {
+        const oldParam = _editingSoftRow.querySelector('.param-name')?.value?.trim() || parameter;
+        const oldCond  = _editingSoftRow.querySelector('.param-condition')?.value || condition;
+        await _replaceSoftParamInStorage(oldParam, oldCond, rows);
+        // preserve % value
+        const oldPct = _editingSoftRow.querySelector('.param-percentage')?.value || '0';
+        const newRow = makeDisplayRow({
+          parameter,
+          condition,
+          max_weight: maxWeight,
+          options
+        });
+        // carry over percentage
+        newRow.querySelector('.param-percentage').value = oldPct;
+        _editingSoftRow.replaceWith(newRow);
+        _editingSoftRow = null;
+        recalcPercentageTotal();
+      } else {
+        await window.electronAPI.saveAlgorithmParameters(rows, { append: true });
+        paramContainer.appendChild(makeDisplayRow({
+          parameter, condition, max_weight: maxWeight, options
+        }));
+      }
       closeAddParamModal();
     });
 
@@ -604,14 +650,39 @@ document.addEventListener('DOMContentLoaded', () => {
     const fixedParamMatchUsing = document.getElementById('fixedParamMatchUsing');
     const matchUsingContainer = document.getElementById('matchUsingContainer');
 
+    // Design fields
+    const designFields   = document.getElementById('designFields');
+    const designOperator = document.getElementById('designOperator');
+    const designValue    = document.getElementById('designValue');
+
     // SPLIT Condition UI
     const splitConditionContainer = document.getElementById('splitConditionContainer');
     const enableSplitCondition = document.getElementById('enableSplitCondition');
-    const splitFields = document.getElementById('splitFields');    
+    const splitFields = document.getElementById('splitFields');    // will host multi-split rows 
     // Constraint-specific fields
     const geographicalFields = document.getElementById('geographicalFields');
     const temporalFields = document.getElementById('temporalFields');
     const monetaryFields = document.getElementById('monetaryFields');
+
+    // helper to (re)build split list UI with optional values
+    function setupSplitSourceList(values = ['']) {
+      if (!splitFields) return;
+      // Clear existing dynamic rows (keep any static label if present)
+      splitFields.querySelectorAll('.split-source-row, #addSplitSourceBtn').forEach(n => n.remove());
+      (values.length ? values : ['']).forEach(v => splitFields.appendChild(_makeSplitSourceRow(v)));
+      // Add "+ Source" button
+      const addBtn = document.createElement('button');
+      addBtn.id = 'addSplitSourceBtn';
+      addBtn.textContent = '+ Source';
+      addBtn.type = 'button';
+      addBtn.style = 'margin-top:.25em;';
+      addBtn.addEventListener('click', () => {
+        splitFields.appendChild(_makeSplitSourceRow(''));
+        _rewireAllSplitInputs();
+      });
+      splitFields.appendChild(addBtn);
+      _rewireAllSplitInputs();
+    }
 
     // Toggle constraint fields AND match using based on type
     fixedParamTypeSelect.addEventListener('change', () => {
@@ -620,6 +691,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (type === 'geographical') geographicalFields.style.display = 'block';
       if (type === 'temporal') temporalFields.style.display = 'block';
       if (type === 'monetary') monetaryFields.style.display = 'block';
+      if (type === 'design') designFields.style.display = 'block';
 
       // Show SPLIT condition controls only for monetary
       splitConditionContainer.style.display = (type === 'monetary') ? 'block' : 'none';
@@ -628,6 +700,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // Only show "Match Using" for types that have a field_name
       const hasFieldName = (type === 'monetary');
       matchUsingContainer.style.display = hasFieldName ? 'block' : 'none';
+      if (type === 'monetary') setupSplitSourceList(['']);
     });
 
     // Toggle IF condition section
@@ -672,8 +745,14 @@ document.addEventListener('DOMContentLoaded', () => {
       if (param.if_condition) {
         row.dataset.ifCondition = JSON.stringify(param.if_condition);
       }
-      if (param.split_condition) {
-        row.dataset.splitCondition = JSON.stringify(param.split_condition);
+      // support multi-split; normalize to array for dataset
+      const splitArr = Array.isArray(param.split_conditions)
+        ? param.split_conditions
+        : (param.split_condition && param.split_condition.enabled ? [param.split_condition.source] : []);
+      if (splitArr && splitArr.length) {
+        row.dataset.splitConditions = JSON.stringify(splitArr);
+        // keep legacy dataset for backward compatibility (first item)
+        row.dataset.splitCondition = JSON.stringify({ enabled: true, source: splitArr[0] });
       }
 
       const years = param.years ? Object.keys(param.years).sort() : [];
@@ -691,6 +770,8 @@ document.addEventListener('DOMContentLoaded', () => {
         infoHTML += `<div><strong>Scope:</strong> ${param.scope}</div>
                      <div><strong>Unit:</strong> ${param.unit}</div>
                      <div><strong>Mode:</strong> ${param.cumulative ? 'Cumulative (Total)' : 'Per Repair'}</div>`;
+      } else if (param.type === 'design') {
+        infoHTML += `<div><strong>Operator:</strong> ${param.operator || '='}</div>`;
       } else if (param.type === 'monetary') {
         const matchLabel = param.match_using === 'field_name' ? 'Field Name' : 'Fixed Parameter Name';
         infoHTML += `<div><strong>Match Using:</strong> ${matchLabel}</div>
@@ -698,11 +779,10 @@ document.addEventListener('DOMContentLoaded', () => {
                      <div><strong>Conditional:</strong> ${param.conditional}</div>
                      <div><strong>Unit:</strong> ${param.unit}</div>
                      <div><strong>Mode:</strong> ${param.cumulative ? 'Cumulative Budget' : 'Per Repair'}</div>`;
-        if (param.split_condition && param.split_condition.enabled) {
-          infoHTML += `<div><strong>Split:</strong> On &nbsp; <span style="opacity:0.8;">Source:</span> ${param.split_condition.source}</div>`;
-        } else {
-          infoHTML += `<div><strong>Split:</strong> Off</div>`;
-        }
+        const splits = splitArr || [];
+        infoHTML += (splits.length
+          ? `<div><strong>Split:</strong> On &nbsp; <span style="opacity:0.8;">Sources:</span> ${splits.join(', ')}</div>`
+          : `<div><strong>Split:</strong> Off</div>`);
       }
 
       // Show IF condition if it exists
@@ -713,11 +793,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>`;
       }
 
-      // Show IF Split (same styling as IF Condition) when split is enabled
-      if (param.split_condition && param.split_condition.enabled) {
+      // Show IF Split(s)
+      if ((splitArr || []).length) {
         infoHTML += `<div style="margin-top:0.5em; padding:0.5em; background:#fff3cd; border-left:3px solid #ffc107;">
-                      <strong>IF Split:</strong><br/>
-                      Source = "${param.split_condition.source}"
+                      <strong>IF Split(s):</strong><br/>
+                      ${splitArr.join(', ')}
                     </div>`;
       }
 
@@ -741,6 +821,9 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (param.type === 'temporal') {
           yearsHTML += `<label style="font-size:0.9em;">Max Value:</label><br/>
                         <input type="number" class="year-value" value="${yearData.value || ''}" style="width:100%; padding:0.3em;"/>`;
+        } else if (param.type === 'design') {
+          yearsHTML += `<label style="font-size:0.9em;">Value:</label><br/>
+                        <input type="text" class="year-design-value" value="${(yearData && yearData.value) || ''}" style="width:100%; padding:0.3em;"/>`;
         } else if (param.type === 'monetary') {
           yearsHTML += `<label style="font-size:0.9em;">Budget:</label><br/>
                         <input type="number" class="year-value" value="${yearData.value || ''}" style="width:100%; padding:0.3em;"/>`;
@@ -760,7 +843,10 @@ document.addEventListener('DOMContentLoaded', () => {
       row.innerHTML = `
         <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:1em;">
           ${infoHTML}
-          <button class="deleteFixedParamBtn" style="color:red; font-size:1.5em; border:none; background:none; cursor:pointer;">×</button>
+          <div>
+            <button class="editFixedParamBtn" title="Edit" style="margin-right:.5em;">✎</button>
+            <button class="deleteFixedParamBtn" style="color:red; font-size:1.5em; border:none; background:none; cursor:pointer;">×</button>
+          </div>
         </div>
         ${yearsHTML}
       `;
@@ -772,6 +858,61 @@ document.addEventListener('DOMContentLoaded', () => {
       
       // Event handlers
       row.querySelector('.deleteFixedParamBtn').addEventListener('click', () => row.remove());
+
+      row.querySelector('.editFixedParamBtn').addEventListener('click', () => {
+        // open modal pre-filled from this row
+       const data = extractParamData(row);
+        _editingFixedRow = row;
+        // reset UI
+        fixedParamMatchUsing.value = data.match_using || 'parameter_name';
+        fixedParamTypeSelect.value = data.type || 'geographical';
+        document.querySelectorAll('.constraint-fields').forEach(el => el.style.display = 'none');
+        if (data.type === 'geographical') geographicalFields.style.display = 'block';
+        if (data.type === 'temporal') temporalFields.style.display = 'block';
+        if (data.type === 'monetary') monetaryFields.style.display = 'block';
+        if (data.type === 'design') designFields.style.display = 'block';
+        matchUsingContainer.style.display = (data.type === 'monetary') ? 'block' : 'none';
+        // IF condition
+        const hasIf = !!data.if_condition;
+        document.getElementById('enableIfCondition').checked = hasIf;
+        document.getElementById('ifConditionFields').style.display = hasIf ? 'block' : 'none';
+        document.getElementById('ifFieldName').value = hasIf ? (data.if_condition.field || '') : '';
+        document.getElementById('ifOperator').value = hasIf ? (data.if_condition.operator || '=') : '=';
+        document.getElementById('ifValue').value = hasIf ? (data.if_condition.value || '') : '';
+        // name and per-type fields
+        const nameEl = document.getElementById('fixedParamNameInput');
+        if (nameEl) nameEl.value = data.name || '';
+        if (data.type === 'geographical') {
+          geoValuesList.innerHTML = '';
+          (data.values || ['']).forEach(v => geoValuesList.appendChild(makeGeoValueRow(v)));
+        } else if (data.type === 'temporal') {
+         document.getElementById('temporalScope').value = data.scope || 'per_day';
+          document.getElementById('temporalUnit').value = data.unit || 'hours';
+          document.getElementById('temporalCumulative').checked = !!data.cumulative;
+          // do not touch value here; year values editable inline
+        } else if (data.type === 'monetary') {
+          fixedParamMatchUsing.value = data.match_using || 'parameter_name';
+          document.getElementById('monetaryFieldName').value = data.field_name || '';
+          document.getElementById('monetaryConditional').value = data.conditional || '<=';
+          document.getElementById('monetaryUnit').value = data.unit || '';
+          document.getElementById('monetaryCumulative').checked = !!data.cumulative;
+          // SPLIT (multi)
+          const splits = Array.isArray(data.split_conditions)
+            ? data.split_conditions
+            : (data.split_condition && data.split_condition.enabled ? [data.split_condition.source] : []);
+          const enable = splits.length > 0;
+          enableSplitCondition.checked = enable;
+          splitConditionContainer.style.display = 'block';
+          splitFields.style.display = enable ? 'block' : 'none';
+          setupSplitSourceList(enable ? splits : ['']);
+        } else if (data.type === 'design') {
+          if (designOperator) designOperator.value = data.operator || '=';
+          if (designValue)    designValue.value   = '';
+        }
+        // rewire autocompletes
+        setupFixedParamAutocomplete();
+        addFixedParamModal.style.display = 'flex';
+      });
       
       row.querySelector('.addYearColumnBtn').addEventListener('click', () => {
         // Show add year modal
@@ -875,6 +1016,8 @@ document.addEventListener('DOMContentLoaded', () => {
           param.unit = text.replace('Unit:', '').trim();
         } else if (text.includes('Unit:') && type === 'monetary') {
           param.unit = text.replace('Unit:', '').trim();
+        } else if (text.includes('Operator:')) {
+          param.operator = text.replace('Operator:', '').trim();
         } else if (text.includes('Match Using:')) {
           param.match_using = text.includes('Field Name') ? 'field_name' : 'parameter_name';
         } else if (text.includes('Field:')) {
@@ -904,15 +1047,28 @@ document.addEventListener('DOMContentLoaded', () => {
           if (input) {
             param.years[year].value = parseFloat(input.value) || 0;
           }
+        } else if (type === 'design') {
+          const input = col.querySelector('.year-design-value');
+          if (input) {
+            param.years[year].value = input.value;
+          }
         }
       });
 
       // Extract IF condition if displayed
       const ifData = row.dataset.ifCondition;
       if (ifData) param.if_condition = JSON.parse(ifData);
-      // Extract SPLIT condition if stored
-      const splitData = row.dataset.splitCondition;
-      if (splitData) param.split_condition = JSON.parse(splitData);
+      // Extract SPLIT condition(s) if stored
+      const splitArrData = row.dataset.splitConditions;
+      const splitObjData = row.dataset.splitCondition;
+      if (splitArrData) {
+        try {
+          const arr = JSON.parse(splitArrData);
+          if (Array.isArray(arr)) param.split_conditions = arr;
+        } catch {}
+      } else if (splitObjData) {
+        try { param.split_condition = JSON.parse(splitObjData); } catch {}
+      }
       
       return param;
     }
@@ -944,6 +1100,10 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('monetaryValue').value = '';
       document.getElementById('monetaryUnit').value = '';
       document.getElementById('monetaryCumulative').checked = false;
+      
+      // Reset Design
+      if (designOperator) designOperator.value = '=';
+      if (designValue)    designValue.value = '';
 
       // Reset IF condition
       document.getElementById('enableIfCondition').checked = false;
@@ -961,8 +1121,7 @@ document.addEventListener('DOMContentLoaded', () => {
       setupFixedParamAutocomplete();
 
       // Reset SPLIT condition defaults
-      const splitSourceInput = document.getElementById('splitSourceInput');
-      if (splitSourceInput) splitSourceInput.value = '';
+      setupSplitSourceList(['']);
       enableSplitCondition.checked = false;
       splitFields.style.display = 'none';
     });
@@ -980,15 +1139,14 @@ document.addEventListener('DOMContentLoaded', () => {
       // Always wire IF-condition field to FIELD names
       const ifFieldInput = document.getElementById('ifFieldName');
       if (ifFieldInput) applyAutocomplete(ifFieldInput, availableFieldNames);
-      // SPLIT source suggestions
-      const splitSourceInput = document.getElementById('splitSourceInput');
-      if (splitSourceInput) applyAutocomplete(splitSourceInput, availableSplitSources);
+      // SPLIT source suggestions (multi)
+      _rewireAllSplitInputs();
       // Inputs we may (un)wire
       let fpName = document.getElementById('fixedParamNameInput');
       let monField = document.getElementById('monetaryFieldName');
 
-      // 1) Geographical & Temporal → suggest on Fixed Parameter Name only (UNION of field + parameter names)
-      if (type === 'geographical' || type === 'temporal') {
+      // 1) Geographical, Temporal, Design → suggest on Fixed Parameter Name only (UNION of field + parameter names)
+      if (type === 'geographical' || type === 'temporal' || type === 'design') {
         if (fpName)  fpName  = applyAutocomplete(fpName, availableAllNames);
         if (monField) monField = unwireAutocomplete(monField);
         return;
@@ -1077,6 +1235,14 @@ document.addEventListener('DOMContentLoaded', () => {
           return;
         }
         param.years[currentYear] = { value: parseFloat(value) };
+      } else if (type === 'design') {
+        param.operator = (designOperator && designOperator.value) || '=';
+        const dval = (designValue && designValue.value.trim()) || '';
+        if (!dval) {
+          appAlert('Please enter a value for the Design constraint');
+          return;
+        }
+        param.years[currentYear] = { value: dval };
       } else if (type === 'monetary') {
         param.match_using = matchUsing;
         param.field_name = document.getElementById('monetaryFieldName').value.trim();
@@ -1090,20 +1256,30 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         // SPLIT condition (optional)
         if (enableSplitCondition.checked) {
-          const src = (document.getElementById('splitSourceInput').value || '').trim();
-          if (!src) {
-            appAlert('Please enter a Source for the SPLIT condition, or disable the SPLIT condition.');
+          const srcs = Array.from(splitFields.querySelectorAll('.split-source-input'))
+            .map(i => (i.value || '').trim())
+            .filter(Boolean);
+          if (!srcs.length) {
+            appAlert('Please add at least one split source, or disable the SPLIT condition.');
             return;
           }
-          param.split_condition = {
-            enabled: true,
-            source: src
-          };
+          // Multi-split: store as array; display/serialization will fan-out later
+          param.split_conditions = srcs;
         }
         param.years[currentYear] = { value: parseFloat(value) };
       }
 
-      fixedParamContainer.appendChild(makeFixedParamDisplayRow(param));
+      // If editing, preserve current years and replace row; else append
+      if (_editingFixedRow) {
+        const existing = extractParamData(_editingFixedRow);
+        // keep year data as-is
+        if (existing && existing.years) param.years = existing.years;
+        const newRow = makeFixedParamDisplayRow(param);
+        _editingFixedRow.replaceWith(newRow);
+        _editingFixedRow = null;
+      } else {
+        fixedParamContainer.appendChild(makeFixedParamDisplayRow(param));
+      }
       addFixedParamModal.style.display = 'none';
     });
 
@@ -1220,21 +1396,21 @@ document.addEventListener('DOMContentLoaded', () => {
         const cost = Number(item.cost || 0);
         const tr = document.createElement('tr');
         let html = `
-          <td class="rank">${item.rank}</td>
-          <td>${item.station_id || ''}</td>
-          <td>${item.location || ''}</td>
-          <td>${item.asset_type || ''}</td>
-          <td>${item.repair_name || ''}</td>
-          <td class="num">${formatCurrency(cost)}</td>
+          <td class="txt">${item.rank}</td>
+          <td class="txt">${item.station_id || ''}</td>
+          <td class="txt">${item.location || ''}</td>
+          <td class="txt">${item.asset_type || ''}</td>
+          <td class="txt">${item.repair_name || ''}</td>
+          <td class="txt">${formatCurrency(cost)}</td>
         `;
         // per-source split columns (blank when zero/nonexistent)
         const sa = item.split_amounts || {};
         splitKeys.forEach(k => {
           const v = Number(sa[k] || 0);
-          html += `<td class="num">${v > 0 ? formatCurrency(v) : ''}</td>`;
+          html += `<td class="txt">${v > 0 ? formatCurrency(v) : ''}</td>`;
         });
         html += `
-          <td class="num">${Number(item.score).toFixed(2)}%</td>
+          <td class="txt">${Number(item.score).toFixed(2)}%</td>
         `;
         tr.innerHTML = html;
         tbody.appendChild(tr);
@@ -1387,8 +1563,8 @@ document.addEventListener('DOMContentLoaded', () => {
             <td>${station.time_to_site || ''}</td>
             <td>${station.repair_count}</td>
             <td>${station.total_days}</td>
-            <td class="num">${Number(trip.priority_metrics?.mean || 0).toFixed(2)}</td>
-            <td class="num">${Number(trip.priority_metrics?.max || 0).toFixed(2)}</td>
+            <td class="txt">${Number(trip.priority_metrics?.mean || 0).toFixed(2)}</td>
+            <td class="txt">${Number(trip.priority_metrics?.max || 0).toFixed(2)}</td>
           `;
           tbody.appendChild(tr);
         });
@@ -2040,6 +2216,9 @@ document.addEventListener('DOMContentLoaded', () => {
     /* Treat numeric-looking data as plain text for alignment */
     td.txt { text-align: left; white-space: nowrap; }
     th { white-space: nowrap; }
+    /* ensure any accidentally numeric cells align like text */
+    td.num { text-align: left; white-space: nowrap; }
+    .split-source-row input { min-width: 10rem; }
   `;
   document.head.appendChild(style);
 

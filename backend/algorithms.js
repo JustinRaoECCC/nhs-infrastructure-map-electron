@@ -643,6 +643,39 @@ function _compare(op, a, b) {
   }
 }
 
+// Design compare (strings case-insensitive; numeric ops require numbers)
+function _compareDesign(op, rawA, rawB) {
+  if (op === 'contains') {
+    return _canon(String(rawA)).includes(_canon(String(rawB)));
+  }
+  if (op === '=' || op === '!=') {
+    const eq = _canon(String(rawA)) === _canon(String(rawB));
+    return op === '=' ? eq : !eq;
+  }
+  // numeric comparisons
+  const a = _tryFloat(rawA);
+  const b = _tryFloat(rawB);
+  if (a === null || b === null) return false;
+  return _compare(op, a, b);
+}
+
+function _findFieldInStation(station, fieldName) {
+  const canon = _canon(fieldName);
+  for (const [k, v] of Object.entries(station || {})) {
+    if (_canon(k) === canon) return v;
+  }
+  return null;
+}
+
+function checkDesignConstraintStation(station, param, year) {
+  if (!param || !station) return true;
+  const target = (param.years && param.years[year] && param.years[year].value) ?? '';
+  const value  = _findFieldInStation(station, param.name);
+  if (value == null) return false;
+  return _compareDesign(param.operator || '=', value, target);
+}
+
+
 function checkMonetaryConstraint(repair, param, station_data, year) {
   if (!checkIfCondition(repair, param, station_data)) {
     return true;
@@ -676,8 +709,28 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
 
   // Drop legacy/unsupported types (e.g., "designation") to be safe.
   fixed_parameters = (fixed_parameters || []).filter(p =>
-    p && (p.type === 'geographical' || p.type === 'temporal' || p.type === 'monetary')
+    p && (p.type === 'geographical' || p.type === 'temporal' || p.type === 'monetary' || p.type === 'design')
   );
+
+  // ── Expand monetary params with multi-split into separate params ─────────
+  // If a param has `split_conditions: [s1, s2, ...]`, treat them as N identical
+  // params that only differ by split_condition.source.
+  if (Array.isArray(fixed_parameters) && fixed_parameters.length) {
+    const expanded = [];
+    for (const p of fixed_parameters) {
+      if (p && p.type === 'monetary' && Array.isArray(p.split_conditions) && p.split_conditions.length) {
+        for (const src of p.split_conditions) {
+          const clone = { ...p, split_condition: { enabled: true, source: src } };
+          // Ensure legacy single-split field doesn't linger as array downstream
+          delete clone.split_conditions;
+          expanded.push(clone);
+        }
+      } else {
+        expanded.push(p);
+      }
+    }
+    fixed_parameters = expanded;
+  }
 
   if (!trips.length) {
     return {
@@ -750,6 +803,60 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
     });
   });
 
+  // For a given year, filter out stations that fail any Design constraint.
+  function _filterTripByDesign(trip, year) {
+    const designParams = (fixed_parameters || []).filter(p => p && p.type === 'design' && (!p.years || p.years[year]));
+    if (!designParams.length) return trip;
+    const keepStationIds = new Set();
+    for (const st of (trip.stations || [])) {
+      const pass = designParams.every(p => checkDesignConstraintStation(st, p, year));
+      if (pass) keepStationIds.add(st.station_id);
+    }
+    // Build filtered trip
+    const filteredStations = (trip.stations || []).filter(s => keepStationIds.has(s.station_id));
+    const filteredRepairs  = (trip.repairs  || []).filter(sr => {
+      const r = sr?.original_repair || {};
+      return keepStationIds.has(r.station_id);
+    });
+    // Recompute totals & priority metrics for the filtered trip
+    let totalDays = 0, totalCost = 0;
+    const splitTotals = Object.create(null);
+    for (const st of filteredStations) {
+      let sDays = 0, sCost = 0;
+      for (const rp of (st.repairs || [])) {
+        if (!keepStationIds.has(rp.station_id)) continue;
+        const d = _tryFloat(rp.days || rp.Days) || 0;
+        const c = _extractRepairCost(rp);
+        sDays += d; sCost += c; totalDays += d; totalCost += c;
+        const smap = _getRepairSplitMap(rp, stationDataMap) || {};
+        for (const [k, mul] of Object.entries(smap)) {
+          if (!Number.isFinite(mul)) continue;
+          const add = c * mul;
+          if (add > 0) splitTotals[k] = (splitTotals[k] || 0) + add;
+        }
+      }
+      st.total_days = sDays;
+      st.total_cost = sCost;
+      st.repair_count = (st.repairs || []).filter(rp => keepStationIds.has(rp.station_id)).length;
+    }
+    const scores = filteredRepairs.map(r => Number(r.score) || 0).sort((a,b)=>b-a);
+    const mean = scores.length ? (scores.reduce((a,b)=>a+b,0)/scores.length) : 0;
+    const max  = scores.length ? scores[0] : 0;
+    const median = scores.length ? (scores.length % 2 ? scores[(scores.length-1)/2]
+                          : (scores[scores.length/2-1] + scores[scores.length/2])/2) : 0;
+    return {
+      ...trip,
+      stations: filteredStations,
+      repairs: filteredRepairs,
+      total_days: totalDays,
+      total_cost: totalCost,
+      total_split_costs: splitTotals,
+      priority_metrics: { mean, max, median, scores },
+      // keep existing priority_mode/score; recompute score from same rule
+      priority_score: (trip.priority_mode === 'tripmax') ? max : mean
+    };
+  }
+
   // Track yearly budgets/constraints
   const yearlyBudgets = {};
   const yearlyTemporal = {};
@@ -768,14 +875,13 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
   for (const p of (fixed_parameters || [])) {
     if (!p) continue;
     if (p.type === 'monetary') {
-      const splitSrc = (p.split_condition && p.split_condition.enabled)
-        ? _canon(p.split_condition.source)
-        : null;
+      const splitSrc = (p.split_condition && p.split_condition.enabled) ? _canon(p.split_condition.source) : null;
       constraint_columns.push({
         type: 'monetary',
         key: _monKey(p.field_name, splitSrc),                        // unique key
         field_name: p.field_name,
-        label: splitSrc ? p.split_condition.source : p.field_name,   // show source token when split
+        // label shows source token if split to make per-source columns clear
+        label: splitSrc ? p.split_condition.source : p.field_name,
         unit: p.unit || '$',
         cumulative: !!p.cumulative,
         split_source: splitSrc
@@ -841,9 +947,12 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
     
     for (const year of years) {
       let canAssign = true;
+      // Apply Design filter first (output should exclude failing stations)
+      const tripFiltered = _filterTripByDesign(trip, year);
+      if (!tripFiltered.stations.length) { canAssign = false; }
       
       // Check all constraints for this trip's repairs
-      for (const repair of trip.repairs) {
+      for (const repair of (tripFiltered.repairs || [])) {
         const originalRepair = repair.original_repair;
         
         for (const param of fixed_parameters) {
@@ -862,6 +971,12 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
               canAssign = false;
               break;
             }
+          } else if (param.type === 'design') {
+            const st = stationDataMap[originalRepair.station_id] || {};
+            if (!checkDesignConstraintStation(st, param, year)) {
+              canAssign = false;
+              break;
+            }
           }
         }
         
@@ -873,7 +988,7 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
         // Calculate trip totals for cumulative constraints
         const tripTotals = {};
         
-        for (const repair of trip.repairs) {
+        for (const repair of (tripFiltered.repairs || [])) {
           const originalRepair = repair.original_repair;
           const stationId = originalRepair.station_id;
           const station = stationDataMap[stationId] || {};
@@ -941,7 +1056,7 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
             }
           }
           
-          assignments[year].push(trip);
+          assignments[year].push(tripFiltered);
           // If placed in first year, mark all its repairs as placed for warning coverage.
           if (year === firstYear) {
             for (const sr of (trip.repairs || [])) {
@@ -1091,6 +1206,9 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
           if (!checkTemporalConstraint(r, p, stationDataMap, y)) { ok = false; break; }
         } else if (p.type === 'monetary' && !p.cumulative) {
           if (!checkMonetaryConstraint(r, p, stationDataMap, y)) { ok = false; break; }
+        } else if (p.type === 'design') {
+          const st = stationDataMap[r.station_id] || {};
+          if (!checkDesignConstraintStation(st, p, y)) { ok = false; break; }
         }
       }
       if (!ok) continue;

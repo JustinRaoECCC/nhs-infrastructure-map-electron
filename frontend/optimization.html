@@ -158,6 +158,7 @@
           <option value="geographical">Geographical</option>
           <option value="temporal">Temporal</option>
           <option value="monetary">Monetary</option>
+          <option value="design">Design</option>
         </select>
       </div>
 
@@ -240,6 +241,29 @@
         </div>
       </div>
 
+      <!-- Design Fields -->
+      <div id="designFields" class="constraint-fields" style="display:none; margin-top:1em;">
+        <div style="margin-bottom:0.5em;">
+          <label>Operator</label><br/>
+          <select id="designOperator" style="width:100%; padding:0.5em;">
+            <option value="=">=  (equals)</option>
+            <option value="!=">!= (not equals)</option>
+            <option value="contains">contains</option>
+            <option value="<">&lt;  (less than)</option>
+            <option value="<=">&le; (less than or equal)</option>
+            <option value=">">&gt;  (greater than)</option>
+            <option value=">=">&ge; (greater than or equal)</option>
+          </select>
+        </div>
+        <div>
+          <label>Value</label><br/>
+          <input type="text" id="designValue" placeholder="e.g., Approved, 3, 2024-06" style="width:100%; padding:0.5em;"/>
+        </div>
+        <p style="font-size:0.85em; color:#666; margin-top:0.5em;">
+          Stations failing this check for the selected year will be removed from assignment output.
+        </p>
+      </div>
+
       <!-- SPLIT Condition (Monetary only) -->
       <div id="splitConditionContainer" style="display:none; margin-top:1.2em; padding-top:1em; border-top:2px solid #ddd;">
         <div style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.5em;">
@@ -251,22 +275,17 @@
           associated with the selected <strong>Source</strong> parsed from the repair’s category column
           (<code>O&amp;M</code>, <code>Capital</code>, or <code>Decommission</code>) before comparison to the limit.
         </p>
-       <div id="splitFields" style="display:none; padding:0.8em; background:#f8f9fa; border-radius:4px;">
-          <div style="margin-bottom:0.5em;">
-            <label>Source</label><br/>
-            <input
-              type="text"
-              id="splitSourceInput"
-              placeholder="Type or pick a Source (e.g., F, P, P(OTH), P(BCH), etc."
-              style="width:100%; padding:0.5em;"
-            />
-            <div style="font-size:0.85em; color:#666; margin-top:0.4em;">
-              Suggestions are collected from the <strong>O&amp;M</strong>, <strong>Capital</strong>, and
-              <strong>Decommission</strong> columns in your repairs sheet (e.g., split strings like
-              <code>50%F-50%P</code> or <code>100%P(OTH)</code>).
-            </div>
-          </div>
-        </div>
+      <div id="splitFields" style="display:none; padding:0.8em; background:#f8f9fa; border-radius:4px;">
+         <div style="margin-bottom:0.5em;">
+           <label>Sources</label>
+           <div style="font-size:0.85em; color:#666; margin-top:0.4em;">
+             Enter one or more source tokens (e.g., <code>F</code>, <code>P</code>, <code>P(OTH)</code>, <code>P(BCH)</code>).
+             Suggestions are collected from the <strong>O&amp;M</strong>, <strong>Capital</strong>, and <strong>Decommission</strong>
+             columns in your repairs sheet (e.g., splits like <code>50%F-50%P</code> or <code>100%P(OTH)</code>).
+           </div>
+         </div>
+         <!-- Rows and the "+ Source" button are injected by optimization.js -->
+       </div>
       </div>
 
       <!-- IF Condition (Optional) -->
