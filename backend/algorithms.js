@@ -75,14 +75,27 @@ function _parseSplitSpec(spec) {
   return found ? out : null;
 }
 
+// Merge multiple split maps (later entries overwrite earlier ones for the same key)
+function _mergeSplitMaps(...maps) {
+  const out = Object.create(null);
+  for (const m of maps || []) {
+    if (!m) continue;
+    for (const [k, v] of Object.entries(m)) out[k] = v;
+  }
+  return out;
+}
+
 // Determine which category column (O&M / Capital / Decommission) has a value and parse it.
 function _getRepairSplitMap(repair, station_data) {
-  // prefer repair fields; use findFieldAnywhere so case/variant-insensitive
-  const om = findFieldAnywhere(repair, station_data[repair.station_id] || {}, 'O&M');
-  const cap = findFieldAnywhere(repair, station_data[repair.station_id] || {}, 'Capital');
-  const dec = findFieldAnywhere(repair, station_data[repair.station_id] || {}, 'Decommission');
-  const spec = om || cap || dec || null;
-  return _parseSplitSpec(spec);
+  // Merge splits across O&M, Capital, and Decommission (from repair and station rows)
+  const station = station_data[repair.station_id] || {};
+  const om  = findFieldAnywhere(repair, station, 'O&M');
+  const cap = findFieldAnywhere(repair, station, 'Capital');
+  const dec = findFieldAnywhere(repair, station, 'Decommission');
+  const mapOm  = _parseSplitSpec(om)  || {};
+  const mapCap = _parseSplitSpec(cap) || {};
+  const mapDec = _parseSplitSpec(dec) || {};
+  return _mergeSplitMaps(mapOm, mapCap, mapDec);
 }
 
 // Apply split multiplier when configured on a monetary fixed parameter.
@@ -94,6 +107,14 @@ function _applyMonetarySplitIfAny(amount, param, repair, station_data) {
   if (!splitMap) return amount;
   const mul = splitMap[_canon(srcRaw)];
   return amount * (Number.isFinite(mul) ? mul : 0); // if missing source => 0 contribution
+}
+
+// Build a unique key for monetary constraints; distinguishes split sources.
+// e.g., cost__split__f, cost__split__p, cost__split__p(bch)
+function _monKey(fieldName, splitSource) {
+  const base = _canon(fieldName);
+  const src  = _canon(splitSource || '');
+  return src ? `${base}__split__${src}` : base;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -734,17 +755,30 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
   const yearlyTemporal = {};
   // Describe which constraints should be surfaced in UI (monetary/temporal only)
   const constraint_columns = [];
+
+  // helper: build a unique key for monetary constraints
+  const monKey = (p) => {
+    const base = _canon(p.field_name);
+    const splitOn = (p.split_condition && p.split_condition.enabled && p.split_condition.source)
+      ? `__split__${_canon(p.split_condition.source)}`
+      : '';
+    return `${base}${splitOn}`;
+  };
+
   for (const p of (fixed_parameters || [])) {
     if (!p) continue;
     if (p.type === 'monetary') {
+      const splitSrc = (p.split_condition && p.split_condition.enabled)
+        ? _canon(p.split_condition.source)
+        : null;
       constraint_columns.push({
         type: 'monetary',
-        key: _canon(p.field_name),
+        key: _monKey(p.field_name, splitSrc),                        // unique key
         field_name: p.field_name,
-        label: (p.split_condition && p.split_condition.enabled && p.split_condition.source) ? String(p.split_condition.source) : p.field_name,
+        label: splitSrc ? p.split_condition.source : p.field_name,   // show source token when split
         unit: p.unit || '$',
         cumulative: !!p.cumulative,
-        split_source: (p.split_condition && p.split_condition.enabled) ? _canon(p.split_condition.source) : null
+        split_source: splitSrc
       });
     } else if (p.type === 'temporal') {
       constraint_columns.push({
@@ -764,14 +798,17 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
     
     for (const param of fixed_parameters) {
       if (param.type === 'monetary' && param.years && param.years[year]) {
-        const key = _canon(param.field_name);
+        const splitSrc = (param.split_condition && param.split_condition.enabled)
+          ? _canon(param.split_condition.source)
+          : null;
+        const key = _monKey(param.field_name, splitSrc);             // unique key
         yearlyBudgets[year][key] = {
           total: _tryFloat(param.years[year].value) || 0,
           used: 0,
           cumulative: !!param.cumulative,
-          label: (param.split_condition && param.split_condition.enabled && param.split_condition.source) ? String(param.split_condition.source) : param.field_name,
+          label: splitSrc ? String(param.split_condition.source) : param.field_name,
           unit: param.unit || '$',
-          split_source: (param.split_condition && param.split_condition.enabled) ? _canon(param.split_condition.source) : null,
+          split_source: splitSrc,
           type: 'monetary'
         };
       } else if (param.type === 'temporal' && param.years && param.years[year]) {
@@ -847,11 +884,15 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
             
             if (param.type === 'monetary') {
               const fieldName = _canon(param.field_name);
+              const splitSrc  = (param.split_condition && param.split_condition.enabled)
+                ? _canon(param.split_condition.source)
+                : null;
+              const key = _monKey(param.field_name, splitSrc);        // unique key
               const value = findFieldAnywhere(originalRepair, station, fieldName);
               let amount = _tryFloat(value) || 0;
               // Apply SPLIT multiplier if configured
               amount = _applyMonetarySplitIfAny(amount, param, originalRepair, stationDataMap);
-              tripTotals[fieldName] = (tripTotals[fieldName] || 0) + amount;
+              tripTotals[key] = (tripTotals[key] || 0) + amount;      // accumulate by unique key
             } else if (param.type === 'temporal') {
               const fieldName = _canon(param.name);
               const value = findFieldAnywhere(originalRepair, station, fieldName);

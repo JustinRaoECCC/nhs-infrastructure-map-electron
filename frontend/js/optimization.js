@@ -1516,18 +1516,23 @@ document.addEventListener('DOMContentLoaded', () => {
         const found = Object.keys(obj).find(k => _canon(k) === _canon(key));
         return found ? obj[found] : undefined;
       };
-      const spec = get(repair, 'O&M') || get(station, 'O&M') ||
-                   get(repair, 'Capital') || get(station, 'Capital') ||
-                   get(repair, 'Decommission') || get(station, 'Decommission') || null;
-      if (!spec) return {};
+      // Merge O&M, Capital, Decommission splits (repair-level + station-level)
+      const specs = [
+        get(repair, 'O&M') ?? get(station, 'O&M'),
+        get(repair, 'Capital') ?? get(station, 'Capital'),
+        get(repair, 'Decommission') ?? get(station, 'Decommission'),
+      ].filter(Boolean);
+      if (!specs.length) return {};
       const out = {};
-      String(spec).split(/\s*-\s*/).forEach(seg => {
-        const m = String(seg).match(/(-?\d+(?:\.\d+)?)%\s*([A-Za-z0-9()[\]\/\-\s]+)$/);
-        if (!m) return;
-        const pct = Number(m[1]);
-        const src = _canon(m[2] || '');
-        if (Number.isFinite(pct) && src) out[src] = pct / 100;
-      });
+      for (const spec of specs) {
+        String(spec).split(/\s*-\s*/).forEach(seg => {
+          const m = String(seg).match(/(-?\d+(?:\.\d+)?)%\s*([A-Za-z0-9()[\]\/\-\s]+)$/);
+          if (!m) return;
+          const pct = Number(m[1]);
+          const src = _canon(m[2] || '');
+          if (Number.isFinite(pct) && src) out[src] = pct / 100;
+        });
+      }
       return out;
     }
 
@@ -1687,14 +1692,50 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderOpt3Results(result) {
       opt3Results.innerHTML = '';
+
+      // Columns available for the WARNING table (monetary & temporal only).
+      // Hoist this so it’s always in scope.
+      const constraintCols = Array.isArray(result.constraint_columns)
+        ? result.constraint_columns.filter(c => c && (c.type === 'monetary' || c.type === 'temporal'))
+        : [];
+
+      // Helper: find which year a repair (by key) is already scheduled in
+      function findScheduledYearForKey(key) {
+        const yearsSorted = Object.keys(result.assigned_keys_by_year || {})
+          .map(y => parseInt(y, 10))
+          .filter(Number.isFinite)
+          .sort((a, b) => a - b);
+        for (const y of yearsSorted) {
+          const list = result.assigned_keys_by_year[String(y)] || [];
+          if (list.includes(key)) return String(y);
+        }
+        return '';
+      }
     
-      const constraintCols = (result.constraint_columns || []).filter(c => c.type === 'monetary' || c.type === 'temporal');
+      // Collect ALL split keys present across the year's assigned trips,
+      // scanning stations -> repairs (not tied to fixed parameters).
+      function collectYearSplitKeys(trips) {
+        const found = new Set();
+        (trips || []).forEach(t => {
+          (t.stations || []).forEach(st => {
+            (st.repairs || []).forEach(rp => {
+              const smap = getSplitMapFromRepair(rp);
+              Object.entries(smap || {}).forEach(([k, mul]) => {
+                // Only include positive splits
+                if (Number(mul) > 0) found.add(k);
+              });
+            });
+          });
+        });
+        return Array.from(found).sort();
+      }
 
       // Warnings block: high-priority repairs missing from Year 1
       if (result.warnings && result.warnings.missing_in_year1 && result.warnings.missing_in_year1.length) {
         const w = result.warnings;
         const warnBox = document.createElement('div');
         warnBox.className = 'callout-warn';
+
         // derive the earliest assigned calendar year for display (e.g., 2025)
         const assignedYearsSorted = Object.keys(result.assignments || {})
           .map(y => parseInt(y, 10))
@@ -1712,7 +1753,7 @@ document.addEventListener('DOMContentLoaded', () => {
         tbl.innerHTML = `
           <thead>
             <tr>
-              <th>Station</th><th>Repair</th><th>Score</th>
+              <th>Station</th><th>Repair</th><th>Score</th><th>Scheduled</th>
               ${constraintCols.map(c => `<th>${c.label}</th>`).join('')}
               <th>Add to Year</th>
             </tr>
@@ -1727,16 +1768,22 @@ document.addEventListener('DOMContentLoaded', () => {
           })()) || null;
           const key = `sid:${m.station_id ?? ''}::name:${m.repair_name ?? ''}`;
           const usage = result.per_repair_usage?.[key] || { monetary:{}, temporal:{} };
+          const scheduled = findScheduledYearForKey(key);
           const tr = document.createElement('tr');
           tr.innerHTML = `
-            <td>${m.station_id || ''}</td>
-            <td>${m.repair_name || ''}</td>
-            <td class="num">${Number(m.score || 0).toFixed(2)}</td>
+            <td class="txt">${m.station_id || ''}</td>
+            <td class="txt">${m.repair_name || ''}</td>
+            <td class="txt">${String(Number(m.score || 0).toFixed(2))}</td>
+            <td class="txt">${scheduled || '—'}</td>
             ${constraintCols.map(c => {
-              if (c.type === 'monetary') return `<td class="num">${formatCurrency(usage.monetary?.[_canon(c.field_name)] || 0)}</td>`;
-              const hrs = Number(usage.temporal?.[_canon(c.name)] || 0);
+              if (c.type === 'monetary') {
+                // usage is stored by unique key from backend (includes split source when present)
+                return `<td class="txt">${formatCurrency(usage.monetary?.[c.key] || 0)}</td>`;
+              }
+              // temporal usage is stored in HOURS by c.key
+              const hrs = Number(usage.temporal?.[c.key] || 0);
               const disp = _fromHours(hrs, c.unit);
-              return `<td class="num">${disp.toFixed(2)} ${c.unit}</td>`;
+              return `<td class="txt">${String(disp.toFixed(2))} ${c.unit}</td>`;
             }).join('')}
             <td class="add-buttons" data-key="${key}"></td>
           `;
@@ -1780,21 +1827,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const splitTotals = ysum.total_split_costs || {};
         const splitKeys = Object.keys(splitTotals).filter(k => Number(splitTotals[k]) > 0).sort();
         const splitChips = splitKeys.map(k => `<span class="chip">${k}: ${formatCurrency(splitTotals[k])}</span>`).join('');
-        // Remaining chips (highlighted)
+        // We keep the remaining-capacity chips logic, but do not render constraint-based table columns below.
         const cs = result.constraints_state?.[year] || { budgets:{}, temporal:{} };
-        const remainChips = [];
-        constraintCols.forEach(c => {
-          if (c.type === 'monetary') {
-            const b = cs.budgets?.[_canon(c.key)] || cs.budgets?.[_canon(c.field_name)];
-            if (!b) return;
-            remainChips.push(`<span class="chip chip-remaining"><strong>${c.label} Remaining:</strong> ${formatCurrency(b.remaining || 0)}</span>`);
-          } else if (c.type === 'temporal') {
-            const t = cs.temporal?.[_canon(c.key)] || cs.temporal?.[_canon(c.name)];
-            if (!t) return;
-            const disp = _fromHours(Number(t.remaining || 0), c.unit);
-            remainChips.push(`<span class="chip chip-remaining"><strong>${c.label} Remaining:</strong> ${disp.toFixed(2)} ${c.unit}</span>`);
-          }
-        });
+        const remainChips = []; // optional chips if you still want to show remaining capacities above the table
+        // (leave as-is or populate if desired; columns below no longer depend on fixed parameters)
 
         const yearSection = document.createElement('section');
         yearSection.className = 'opt-trip';
@@ -1809,6 +1845,9 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
         `;
 
+        // Split columns for this year (display-only; independent of fixed parameters)
+        const yearSplitKeys = collectYearSplitKeys(trips);
+
         // Expandable trips → stations → repairs
         const table = document.createElement('table');
         table.className = 'opt-table';
@@ -1820,52 +1859,39 @@ document.addEventListener('DOMContentLoaded', () => {
               <th>City of Travel</th>
               <th>Access Type</th>
               <th>Cost</th>
-              <th>Days</th>
+              <th>Trip Days</th>
               <th>Stations</th>
               <th>Score</th>
-              ${constraintCols.map(c => `<th>${c.label}</th>`).join('')}
+              ${yearSplitKeys.map(k => `<th>Split: ${k}</th>`).join('')}
             </tr>
           </thead>
           <tbody></tbody>
         `;
         const tbody = table.querySelector('tbody');
         trips.forEach((trip, idx) => {
-          // aggregate constraint usage at trip level from per-repair usage
-          const agg = {};
-          constraintCols.forEach(c => agg[_canon(c.label)] = 0);
-          (trip.repairs || []).forEach(sr => {
-            const key = Number.isInteger(sr.row_index) ? `idx:${sr.row_index}` :
-                        `sid:${sr?.original_repair?.station_id ?? ''}::name:${sr?.original_repair?.name ?? sr?.original_repair?.repair_name ?? ''}`;
-            const u = result.per_repair_usage?.[key] || { monetary:{}, temporal:{} };
-            constraintCols.forEach(c => {
-              if (c.type === 'monetary') agg[_canon(c.label)] += Number(u.monetary?.[_canon(c.key)] || u.monetary?.[_canon(c.field_name)] || 0);
-              else {
-                const hrs = Number(u.temporal?.[_canon(c.key)] || u.temporal?.[_canon(c.name)] || 0);
-                agg[_canon(c.label)] += _fromHours(hrs, c.unit);
-              }
-            });
-          });
           const tr = document.createElement('tr');
           tr.className = 'tr-trip';
           tr.innerHTML = `
             <td><button class="toggle" aria-label="Expand trip">▸</button></td>
-            <td>${idx + 1}</td>
-            <td>${trip.city_of_travel}</td>
-            <td>${trip.access_type}</td>
-            <td class="num">${formatCurrency(trip.total_cost || 0)}</td>
-            <td>${trip.total_days}</td>
-            <td>${trip.stations.length}</td>
-            <td class="num">${Number(trip.priority_score || 0).toFixed(2)}</td>
-            ${constraintCols.map(c => {
-              const val = agg[_canon(c.label)];
-              return `<td class="num">${c.type === 'monetary' ? formatCurrency(val) : `${val.toFixed(2)} ${c.unit}`}</td>`;
+            <td class="txt">${String(idx + 1)}</td>
+            <td class="txt">${trip.city_of_travel}</td>
+            <td class="txt">${trip.access_type}</td>
+            <td class="txt">${formatCurrency(trip.total_cost || 0)}</td>
+            <td class="txt">${String(trip.total_days)}</td>
+            <td class="txt">${String(trip.stations.length)}</td>
+            <td class="txt">${String(Number(trip.priority_score || 0).toFixed(2))}</td>
+            ${yearSplitKeys.map(k => {
+              const val = Number((trip.total_split_costs || {})[k] || 0);
+              return `<td class="txt">${val ? formatCurrency(val) : ''}</td>`;
             }).join('')}
           `;
           tbody.appendChild(tr);
           // nested stations container row
           const nestRow = document.createElement('tr');
           const nestCell = document.createElement('td');
-          nestCell.colSpan = 8 + constraintCols.length + 1;
+          // columns: 8 static (incl. toggle) + split columns
+          const topColCount = 8 + yearSplitKeys.length;
+          nestCell.colSpan = topColCount;
           const stationsWrap = document.createElement('div');
           stationsWrap.className = 'nested-wrap';
           stationsWrap.style.display = 'none';
@@ -1877,8 +1903,8 @@ document.addEventListener('DOMContentLoaded', () => {
               <tr>
                 <th></th>
                 <th>Station ID</th><th>Site</th><th>City</th><th>Time to Site (hr)</th>
-                <th>Repairs</th><th>Days</th>
-                ${constraintCols.map(c => `<th>${c.label}</th>`).join('')}
+                <th>Repairs</th><th>Station Days</th>
+                ${yearSplitKeys.map(k => `<th>Split: ${k}</th>`).join('')}
               </tr>
             </thead>
             <tbody></tbody>
@@ -1887,45 +1913,44 @@ document.addEventListener('DOMContentLoaded', () => {
           trip.stations.forEach(st => {
             const sTr = document.createElement('tr');
             sTr.className = 'tr-station';
-            // aggregate constraints per station
-            const sAgg = {};
-            constraintCols.forEach(c => sAgg[_canon(c.label)] = 0);
+            // split totals per station
+            const sSplit = {};
             (st.repairs || []).forEach(rp => {
-              const key = `sid:${rp.station_id ?? ''}::name:${rp.name ?? rp.repair_name ?? ''}`;
-              const u = result.per_repair_usage?.[key] || { monetary:{}, temporal:{} };
-              constraintCols.forEach(c => {
-                if (c.type === 'monetary') sAgg[_canon(c.label)] += Number(u.monetary?.[_canon(c.key)] || u.monetary?.[_canon(c.field_name)] || 0);
-                else {
-                  const hrs = Number(u.temporal?.[_canon(c.key)] || u.temporal?.[_canon(c.name)] || 0);
-                  sAgg[_canon(c.label)] += _fromHours(hrs, c.unit);
-                }
+              // compute station split totals
+              const cst = _tryFloat(rp.cost || findFieldAnywhere(rp, window._stationDataMap?.[rp.station_id], 'Cost')) || 0;
+              const smap = getSplitMapFromRepair(rp);
+              yearSplitKeys.forEach(k => {
+                const mul = Number(smap[_canon(k)] || 0);
+                if (mul > 0) sSplit[k] = (sSplit[k] || 0) + (cst * mul);
               });
             });
             sTr.innerHTML = `
               <td><button class="toggle" aria-label="Expand station">▸</button></td>
-              <td>${st.station_id}</td>
-              <td>${st.site_name || ''}</td>
-              <td>${st.city_of_travel || ''}</td>
-              <td>${st.time_to_site || ''}</td>
-              <td>${st.repair_count}</td>
-              <td>${st.total_days}</td>
-              ${constraintCols.map(c => {
-                const val = sAgg[_canon(c.label)];
-                return `<td class="num">${c.type === 'monetary' ? formatCurrency(val) : `${val.toFixed(2)} ${c.unit}`}</td>`;
+              <td class="txt">${st.station_id}</td>
+              <td class="txt">${st.site_name || ''}</td>
+              <td class="txt">${st.city_of_travel || ''}</td>
+              <td class="txt">${st.time_to_site || ''}</td>
+              <td class="txt">${String(st.repair_count)}</td>
+              <td class="txt">${String(st.total_days)}</td>
+              ${yearSplitKeys.map(k => {
+                const val = Number(sSplit[k] || 0);
+                return `<td class="txt">${val ? formatCurrency(val) : ''}</td>`;
               }).join('')}
             `;
             stBody.appendChild(sTr);
             // nested repairs table
             const rNestRow = document.createElement('tr');
             const rCell = document.createElement('td');
-            rCell.colSpan = 7 + constraintCols.length + 1;
+            // columns: 7 static (incl. toggle) + split columns
+            const stationColCount = 7 + yearSplitKeys.length;
+            rCell.colSpan = stationColCount;
             const rTable = document.createElement('table');
             rTable.className = 'opt-table nested-table deepest';
             rTable.innerHTML = `
               <thead>
                 <tr>
-                  <th>Repair</th><th>Days</th><th>Cost</th>
-                  ${constraintCols.map(c => `<th>${c.label}</th>`).join('')}
+                  <th>Repair</th><th>Repair Days</th><th>Cost</th>
+                  ${yearSplitKeys.map(k => `<th>Split: ${k}</th>`).join('')}
                 </tr>
               </thead>
               <tbody></tbody>
@@ -1933,18 +1958,18 @@ document.addEventListener('DOMContentLoaded', () => {
             const rBody = rTable.querySelector('tbody');
             (st.repairs || []).forEach(rp => {
               const key = `sid:${rp.station_id ?? ''}::name:${rp.name ?? rp.repair_name ?? ''}`;
-              const u = result.per_repair_usage?.[key] || { monetary:{}, temporal:{} };
               const d = _tryFloat(rp.days || rp.Days) || 0;
               const cst = _tryFloat(rp.cost || findFieldAnywhere(rp, window._stationDataMap?.[rp.station_id], 'Cost')) || 0;
               const rr = document.createElement('tr');
               rr.innerHTML = `
-                <td>${rp.name || rp.repair_name || ''}</td>
-                <td>${d}</td>
-                <td class="num">${formatCurrency(cst)}</td>
-                ${constraintCols.map(c => {
-                  if (c.type === 'monetary') return `<td class="num">${formatCurrency(u.monetary?.[_canon(c.key)] || u.monetary?.[_canon(c.field_name)] || 0)}</td>`;
-                  const hrs = Number(u.temporal?.[_canon(c.key)] || u.temporal?.[_canon(c.name)] || 0);
-                  return `<td class="num">${_fromHours(hrs, c.unit).toFixed(2)} ${c.unit}</td>`;
+                <td class="txt">${rp.name || rp.repair_name || ''}</td>
+                <td class="txt">${String(d)}</td>
+                <td class="txt">${formatCurrency(cst)}</td>
+                ${yearSplitKeys.map(k => {
+                  const smap = getSplitMapFromRepair(rp);
+                  const mul = Number(smap[_canon(k)] || 0);
+                  const val = mul > 0 ? cst * mul : 0;
+                  return `<td class="txt">${val ? formatCurrency(val) : ''}</td>`;
                 }).join('')}
               `;
               rBody.appendChild(rr);
@@ -2012,6 +2037,9 @@ document.addEventListener('DOMContentLoaded', () => {
     .nested-table.deepest { margin-left: 3.2rem; }
     .btn.btn-add { padding: .25rem .5rem; border: 1px solid #3c78d8; color:#3c78d8; background:#fff; border-radius:6px; cursor:pointer; }
     .btn.btn-add:hover { background:#f0f6ff; }
+    /* Treat numeric-looking data as plain text for alignment */
+    td.txt { text-align: left; white-space: nowrap; }
+    th { white-space: nowrap; }
   `;
   document.head.appendChild(style);
 
