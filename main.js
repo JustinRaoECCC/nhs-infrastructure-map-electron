@@ -512,3 +512,8 @@ ipcMain.handle('excel:saveFundingSettingsForAssetType', async (_evt, company, lo
 ipcMain.handle('excel:getAllFundingSettings', async (_evt, company) =>
   getExcelClient().getAllFundingSettings(company)
 );
+
+// Field catalog for dropdowns (scans data/companies/<company>/<location>.xlsx)
+ipcMain.handle('excel:getWorkbookFieldCatalog', async (_evt, company, locationName) =>
+  getExcelClient().getWorkbookFieldCatalog(company, locationName)
+);

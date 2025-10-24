@@ -163,6 +163,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('excel:saveFundingSettingsForAssetType', company, location, assetType, settings),
   getAllFundingSettings: (company) =>
     ipcRenderer.invoke('excel:getAllFundingSettings', company),
+  // Field catalog from the active workbook (sheet-qualified headers)
+  getWorkbookFieldCatalog: (company, location) =>
+    ipcRenderer.invoke('excel:getWorkbookFieldCatalog', company, location),
 });
 
 // --- BEGIN: appAlert (custom modal replacement for window.alert) ---

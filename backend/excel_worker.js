@@ -3218,6 +3218,107 @@ async function hasAuthUsers() {
   return { hasUsers: sheet.rowCount > 1 };
 }
 
+// Read a single row of headers and return trimmed, non-empty field names
+function readRowHeaders(ws, rowIdx) {
+  const row = ws.getRow(rowIdx);
+  const maxCol = ws.actualColumnCount || row.cellCount || 0;
+  const out = [];
+  for (let c = 1; c <= maxCol; c++) {
+    const v = takeText(row.getCell(c));
+    if (v) out.push(v);
+  }
+  return out;
+}
+
+/**
+ * Build a catalog of field names for a location workbook:
+ * - Repairs sheet: fields are on ROW 1
+ * - Other sheets:  fields are on ROW 2 (fallback to ROW 1 if row 2 is empty)
+ * Returns: { repairs: string[], sheets: { [sheetName]: string[] } }
+ */
+async function getWorkbookFieldCatalog(company = null, locationName = null) {
+  ensureDir(COMPANIES_DIR);
+  const _ExcelJS = getExcel();
+  const result = { repairs: [], sheets: {} };
+
+  function readRowHeaders(ws, rowIdx) {
+    const row = ws.getRow(rowIdx);
+    const maxCol = ws.actualColumnCount || row.cellCount || 0;
+    const out = [];
+    for (let c = 1; c <= maxCol; c++) {
+      const v = takeText(row.getCell(c));
+      if (v) out.push(v);
+    }
+    return out;
+  }
+
+  try {
+    let filesToScan = [];
+    
+    if (company && locationName) {
+      const filePath = getLocationFilePath(company, locationName);
+      if (fs.existsSync(filePath)) {
+        filesToScan.push({ path: filePath, company, location: locationName });
+      }
+    } else {
+      // Scan ALL files
+      const companies = fs.readdirSync(COMPANIES_DIR, { withFileTypes: true })
+        .filter(d => d.isDirectory()).map(d => d.name);
+      
+      for (const comp of companies) {
+        const dir = getCompanyDir(comp);
+        if (!fs.existsSync(dir)) continue;
+        const files = fs.readdirSync(dir).filter(f => f.endsWith('.xlsx') && !f.startsWith('~$'));
+        for (const f of files) {
+          filesToScan.push({
+            path: path.join(dir, f),
+            company: comp,
+            location: path.basename(f, '.xlsx')
+          });
+        }
+      }
+    }
+
+    const repairsFieldsSet = new Set();
+    const sheetFieldsMap = new Map();
+
+    for (const fileInfo of filesToScan) {
+      const wb = new _ExcelJS.Workbook();
+      try { await wb.xlsx.readFile(fileInfo.path); }
+      catch (e) { continue; }
+
+      for (const ws of wb.worksheets) {
+        if (!ws || !ws.name) continue;
+        const name = String(ws.name);
+        const isRepairs = lc(name) === lc(REPAIRS_SHEET);
+
+        if (isRepairs) {
+          const fields = readRowHeaders(ws, 1);
+          fields.forEach(f => repairsFieldsSet.add(f));
+        } else {
+          const row2HasAny = (ws.getRow(2)?.actualCellCount || 0) > 0;
+          const fields = row2HasAny ? readRowHeaders(ws, 2) : readRowHeaders(ws, 1);
+          
+          if (!sheetFieldsMap.has(name)) {
+            sheetFieldsMap.set(name, new Set());
+          }
+          fields.forEach(f => sheetFieldsMap.get(name).add(f));
+        }
+      }
+    }
+
+    result.repairs = Array.from(repairsFieldsSet).sort();
+    for (const [sheetName, fieldsSet] of sheetFieldsMap.entries()) {
+      result.sheets[sheetName] = Array.from(fieldsSet).sort();
+    }
+
+    return result;
+  } catch (e) {
+    console.error('[getWorkbookFieldCatalog] Error:', e);
+    return { repairs: [], sheets: {} };
+  }
+}
+
 // ─── RPC shim ─────────────────────────────────────────────────────────────
 const handlers = {
   ping: async () => 'pong',
@@ -3271,6 +3372,7 @@ const handlers = {
   saveFundingSettingsForAssetType,
   getAllFundingSettings,
   normalizeFundingOverrides,
+  getWorkbookFieldCatalog,
 };
 
 parentPort.on('message', async (msg) => {

@@ -78,51 +78,67 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function loadAvailableFields() {
     try {
-      // Get all station data to extract field names
-      const stations = await window.electronAPI.getStationData();
-      const fieldSet = new Set();
-      
-      // Extract all unique field names from station data (use EXACT headers; do not split on dashes)
-      if (stations && stations.length > 0) {
-        stations.forEach(station => {
-          Object.keys(station).forEach(key => {
-            fieldSet.add(String(key || '').trim());
-          });
-        });
+      // Call without parameters to scan ALL workbooks
+      let catalog = null;
+      if (window.electronAPI.getWorkbookFieldCatalog) {
+        catalog = await window.electronAPI.getWorkbookFieldCatalog();
       }
 
-      // Get all repairs to extract repair-specific fields
-      const repairs = await window.electronAPI.getAllRepairs();
-      if (repairs && repairs.length > 0) {
-        repairs.forEach(repair => {
-          Object.keys(repair).forEach(key => {
-            fieldSet.add(String(key || '').trim());
+      if (catalog && (Array.isArray(catalog.repairs) || catalog.sheets)) {
+        const fieldCounts = new Map();
+        const fieldSources = new Map();
+
+        // Count repairs fields
+        (catalog.repairs || []).forEach(field => {
+          const key = field.toLowerCase();
+          fieldCounts.set(key, (fieldCounts.get(key) || 0) + 1);
+          if (!fieldSources.has(key)) fieldSources.set(key, []);
+          fieldSources.get(key).push({ sheet: 'Repairs', field });
+        });
+
+        // Count asset sheet fields
+        Object.entries(catalog.sheets || {}).forEach(([sheetName, fields]) => {
+          (fields || []).forEach(field => {
+            const key = field.toLowerCase();
+            fieldCounts.set(key, (fieldCounts.get(key) || 0) + 1);
+            if (!fieldSources.has(key)) fieldSources.set(key, []);
+            fieldSources.get(key).push({ sheet: sheetName, field });
           });
         });
+
+        // Build qualified field names
+        const qualifiedFields = [];
+        
+        for (const [key, sources] of fieldSources.entries()) {
+          const count = fieldCounts.get(key) || 0;
+          
+          if (count === 1) {
+            // Unique - no qualifier needed
+            qualifiedFields.push(sources[0].field);
+          } else {
+            // Duplicate - add sheet qualifier to ALL instances
+            sources.forEach(({ sheet, field }) => {
+              qualifiedFields.push(`${field} (${sheet})`);
+            });
+          }
+        }
+
+        availableFieldNames = uniqCaseInsensitive(qualifiedFields).sort((a,b)=>a.localeCompare(b));
+        availableParameterNames = [];
+        availableAllNames = availableFieldNames.slice();
+
+        console.log('[loadAvailableFields] Loaded', availableFieldNames.length, 'fields');
+        
+      } else {
+        console.warn('[loadAvailableFields] No catalog, using fallback');
+        // Fallback...
+        const stations = await window.electronAPI.getStationData();
+        const repairs  = await window.electronAPI.getAllRepairs();
+        const fieldSet = new Set();
+        (stations || []).forEach(st => Object.keys(st).forEach(k => fieldSet.add(k + ' (Station)')));
+        (repairs  || []).forEach(rp => Object.keys(rp).forEach(k => fieldSet.add(k + ' (Repairs)')));
+        availableFieldNames = uniqCaseInsensitive(Array.from(fieldSet)).sort();
       }
-
-      // Use the exact headers; case-insensitive de-dupe, then sort
-      const exactFields = uniqCaseInsensitive(Array.from(fieldSet));
-      exactFields.sort((a,b) => a.localeCompare(b));
-      availableFieldNames = exactFields;
-
-      // Load existing parameter names for autocomplete
-      const params = await window.electronAPI.getAlgorithmParameters();
-      const paramSet = new Set();
-      params.forEach(p => {
-        if (p.parameter) paramSet.add(p.parameter);
-      });
-      
-      // Load fixed parameters too
-      const fixedParams = await window.electronAPI.getFixedParameters();
-      fixedParams.forEach(p => {
-        if (p.name) paramSet.add(p.name);
-      });
-
-      availableParameterNames = Array.from(paramSet).sort();
-
-      // UNION: field names + parameter names (case-insensitive unique)
-      availableAllNames = uniqCaseInsensitive([...availableFieldNames, ...availableParameterNames]);
       
     } catch (e) {
       console.error('Failed to load available fields:', e);
@@ -368,15 +384,20 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!dashPlaceholder.innerHTML.trim()) {
       const html = await fetch('optimization.html').then(r => r.text());
       dashPlaceholder.innerHTML = html;
+      
+      // Load fields BEFORE UI init
+      await loadAvailableFields();
+      await loadAvailableSplitSources();
+      
       await initDashboardUI();
+    } else {
+      // Refresh if already initialized
+      await loadAvailableFields();
+      await loadAvailableSplitSources();
     }
     dashPlaceholder.style.display = 'block';
     resetOptimizationViews();
-    
-    // Load available fields for autocomplete
-    await loadAvailableFields();
-    // Load split sources for monetary "SPLIT" condition
-    await loadAvailableSplitSources();
+
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -478,7 +499,7 @@ document.addEventListener('DOMContentLoaded', () => {
           const r = makeOptionRow(o.label, o.weight);
           optionsList.appendChild(r);
         });
-        // suggestions for name
+        // suggestions for name (sheet-qualified)
         setupAutocomplete(paramNameInput, availableFieldNames);
       });
       return row;
@@ -554,7 +575,7 @@ document.addEventListener('DOMContentLoaded', () => {
       optionsList.appendChild(makeOptionRow());
       addParamModal.style.display='flex';
       
-      // Setup autocomplete for parameter name
+      // Setup autocomplete for parameter name (sheet-qualified)
       setupAutocomplete(paramNameInput, availableFieldNames);
     });
     
@@ -700,7 +721,14 @@ document.addEventListener('DOMContentLoaded', () => {
       // Only show "Match Using" for types that have a field_name
       const hasFieldName = (type === 'monetary');
       matchUsingContainer.style.display = hasFieldName ? 'block' : 'none';
-      if (type === 'monetary') setupSplitSourceList(['']);
+      if (type === 'monetary') {
+        setupSplitSourceList(['']);
+      } else {
+        // Ensure split UI is fully reset when switching away from monetary
+        enableSplitCondition.checked = false;
+        splitFields.style.display = 'none';
+        setupSplitSourceList(['']);
+      }
     });
 
     // Toggle IF condition section
@@ -741,6 +769,22 @@ document.addEventListener('DOMContentLoaded', () => {
       if (param.type === 'monetary' || param.type === 'temporal') {
         row.dataset.cumulative = param.cumulative ? 'true' : 'false';
       }
+
+      // Persist structured metadata for robust edit/rebuild
+      row.dataset.type = param.type || '';
+      row.dataset.name = param.name || '';
+      if (param.type === 'monetary') {
+        row.dataset.matchUsing  = param.match_using || 'parameter_name';
+        row.dataset.fieldName   = param.field_name || '';
+        row.dataset.conditional = param.conditional || '<=';
+        row.dataset.unit        = param.unit || '';
+      } else if (param.type === 'temporal') {
+        row.dataset.unit  = param.unit || 'hours';
+        row.dataset.scope = param.scope || '';
+      } else if (param.type === 'design') {
+        row.dataset.operator = param.operator || '=';
+      }
+
       // Store IF and SPLIT condition in dataset for extraction
       if (param.if_condition) {
         row.dataset.ifCondition = JSON.stringify(param.if_condition);
@@ -759,7 +803,7 @@ document.addEventListener('DOMContentLoaded', () => {
       
       // Left side: Parameter info
       let infoHTML = `
-        <div style="margin-bottom:1em;">
+        <div class="param-info" style="margin-bottom:1em;">
           <h4 style="margin:0 0 0.5em 0;">${param.name}</h4>
           <div><strong>Type:</strong> ${param.type}</div>
       `;
@@ -889,7 +933,14 @@ document.addEventListener('DOMContentLoaded', () => {
          document.getElementById('temporalScope').value = data.scope || 'per_day';
           document.getElementById('temporalUnit').value = data.unit || 'hours';
           document.getElementById('temporalCumulative').checked = !!data.cumulative;
-          // do not touch value here; year values editable inline
+          // Pre-fill modal value from FIRST year
+          try {
+            const years = Object.keys(data.years || {}).sort();
+            const fy = years[0];
+            const v = (fy && data.years[fy] && data.years[fy].value != null) ? data.years[fy].value : '';
+            const inp = document.getElementById('temporalValue');
+            if (inp) inp.value = (v === '' ? '' : String(v));
+          } catch {}
         } else if (data.type === 'monetary') {
           fixedParamMatchUsing.value = data.match_using || 'parameter_name';
           document.getElementById('monetaryFieldName').value = data.field_name || '';
@@ -905,9 +956,23 @@ document.addEventListener('DOMContentLoaded', () => {
           splitConditionContainer.style.display = 'block';
           splitFields.style.display = enable ? 'block' : 'none';
           setupSplitSourceList(enable ? splits : ['']);
+          // Pre-fill modal value from FIRST year
+          try {
+            const years = Object.keys(data.years || {}).sort();
+            const fy = years[0];
+            const v = (fy && data.years[fy] && data.years[fy].value != null) ? data.years[fy].value : '';
+            const inp = document.getElementById('monetaryValue');
+            if (inp) inp.value = (v === '' ? '' : String(v));
+          } catch {}
         } else if (data.type === 'design') {
           if (designOperator) designOperator.value = data.operator || '=';
-          if (designValue)    designValue.value   = '';
+          // Pre-fill modal value from FIRST year (so edits know what to update)
+          try {
+            const years = Object.keys(data.years || {}).sort();
+            const fy = years[0];
+            const v = (fy && data.years[fy]) ? data.years[fy].value : '';
+            if (designValue) designValue.value = (v == null ? '' : String(v));
+          } catch {}
         }
         // rewire autocompletes
         setupFixedParamAutocomplete();
@@ -994,68 +1059,63 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     function extractParamData(row) {
-      // Extract parameter data from the DOM
-      const name = row.querySelector('h4').textContent;
-      const typeText = Array.from(row.querySelectorAll('div')).find(d => d.textContent.startsWith('Type:'))?.textContent || '';
-      const type = typeText.replace('Type:', '').trim().toLowerCase();
-      
+      // Robust helpers
+      const _num = (s) => {
+        const v = Number(String(s ?? '').replace(/,/g, '').trim());
+        return Number.isFinite(v) ? v : 0;
+      };
+      const name = row.querySelector('h4')?.textContent?.trim() || (row.dataset.name || '');
+      const type = (row.dataset.type || '').toLowerCase();
       const param = { name, type };
 
-      // Extract cumulative flag for monetary/temporal
+      // Cumulative (only for monetary/temporal)
       if (type === 'monetary' || type === 'temporal') {
         param.cumulative = row.dataset.cumulative === 'true';
       }
-      
-      // Extract basic fields from info section
-      const infoDiv = row.querySelector('div');
-      Array.from(infoDiv.querySelectorAll('div')).forEach(div => {
-        const text = div.textContent;
-        if (text.includes('Scope:')) {
-          param.scope = text.replace('Scope:', '').trim();
-        } else if (text.includes('Unit:') && type === 'temporal') {
-          param.unit = text.replace('Unit:', '').trim();
-        } else if (text.includes('Unit:') && type === 'monetary') {
-          param.unit = text.replace('Unit:', '').trim();
-        } else if (text.includes('Operator:')) {
-          param.operator = text.replace('Operator:', '').trim();
-        } else if (text.includes('Match Using:')) {
-          param.match_using = text.includes('Field Name') ? 'field_name' : 'parameter_name';
-        } else if (text.includes('Field:')) {
-          param.field_name = text.replace('Field:', '').trim();
-        } else if (text.includes('Conditional:')) {
-          param.conditional = text.replace('Conditional:', '').trim();
-        } else if (text.includes('Condition:')) {
-          param.condition = text.replace('Condition:', '').trim();
-        } else if (text.includes('Base Values:')) {
-          param.values = text.replace('Base Values:', '').trim().split(',').map(v => v.trim());
-        }
-      });
-      
-      // Extract yearly data
+
+      // Prefer structured data-*; fall back to the info block only if missing
+      const infoDiv = row.querySelector('.param-info');
+      const getTextAfter = (label) => {
+        const el = Array.from(infoDiv?.querySelectorAll('div') || [])
+          .find(d => d.textContent.includes(label));
+        return el ? el.textContent.replace(label, '').trim() : '';
+      };
+
+      if (type === 'temporal') {
+        param.scope = row.dataset.scope || getTextAfter('Scope:');
+        param.unit  = row.dataset.unit  || getTextAfter('Unit:') || 'hours';
+      } else if (type === 'monetary') {
+        param.match_using = row.dataset.matchUsing || (getTextAfter('Match Using:').includes('Field Name') ? 'field_name' : 'parameter_name');
+        param.field_name  = row.dataset.fieldName  || getTextAfter('Field:');
+        param.conditional = row.dataset.conditional || getTextAfter('Conditional:') || '<=';
+        param.unit        = row.dataset.unit        || getTextAfter('Unit:') || '$';
+      } else if (type === 'design') {
+        param.operator = row.dataset.operator || getTextAfter('Operator:') || '=';
+      } else if (type === 'geographical') {
+        const base = getTextAfter('Base Values:');
+        param.values = base ? base.split(',').map(v => v.trim()).filter(Boolean) : [];
+      }
+
+      // Yearly data
       param.years = {};
       row.querySelectorAll('.year-column').forEach(col => {
         const year = col.dataset.year;
         param.years[year] = {};
-        
         if (type === 'geographical') {
           const textarea = col.querySelector('.year-geo-values');
           if (textarea) {
-            param.years[year].values = textarea.value.split('\n').map(v => v.trim()).filter(v => v);
+            param.years[year].values = textarea.value.split('\n').map(v => v.trim()).filter(Boolean);
           }
         } else if (type === 'temporal' || type === 'monetary') {
           const input = col.querySelector('.year-value');
-          if (input) {
-            param.years[year].value = parseFloat(input.value) || 0;
-          }
+          if (input) param.years[year].value = _num(input.value);
         } else if (type === 'design') {
           const input = col.querySelector('.year-design-value');
-          if (input) {
-            param.years[year].value = input.value;
-          }
+          if (input) param.years[year].value = input.value;
         }
       });
 
-      // Extract IF condition if displayed
+      // IF condition (dataset if present)
       const ifData = row.dataset.ifCondition;
       if (ifData) param.if_condition = JSON.parse(ifData);
       // Extract SPLIT condition(s) if stored
@@ -1145,9 +1205,9 @@ document.addEventListener('DOMContentLoaded', () => {
       let fpName = document.getElementById('fixedParamNameInput');
       let monField = document.getElementById('monetaryFieldName');
 
-      // 1) Geographical, Temporal, Design → suggest on Fixed Parameter Name only (UNION of field + parameter names)
+      // 1) Geographical, Temporal, Design → suggest on Fixed Parameter Name using FIELD catalog
       if (type === 'geographical' || type === 'temporal' || type === 'design') {
-        if (fpName)  fpName  = applyAutocomplete(fpName, availableAllNames);
+        if (fpName)  fpName  = applyAutocomplete(fpName, availableFieldNames);
         if (monField) monField = unwireAutocomplete(monField);
         return;
       }
@@ -1161,8 +1221,8 @@ document.addEventListener('DOMContentLoaded', () => {
           if (fieldInput) applyAutocomplete(fieldInput, availableFieldNames);
           if (fpName)     fpName = unwireAutocomplete(fpName);
         } else {
-          // matchUsing === 'parameter_name' → wire Fixed Parameter Name to UNION suggestions
-          if (fpName)     fpName = applyAutocomplete(fpName, availableAllNames);
+          // matchUsing === 'parameter_name' → still restrict to FIELD catalog
+          if (fpName)     fpName = applyAutocomplete(fpName, availableFieldNames);
           if (fieldInput) unwireAutocomplete(fieldInput);
         }
       }
@@ -1183,6 +1243,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Save new fixed parameter
     saveFixedParamBtn.addEventListener('click', () => {
+      const _num = (s) => {
+        const v = Number(String(s ?? '').replace(/,/g, '').trim());
+        return Number.isFinite(v) ? v : 0;
+      };
       // Grab the live element to avoid stale references from autocomplete cloning
       const nameEl = document.getElementById('fixedParamNameInput');
       const name = nameEl ? nameEl.value.trim() : '';
@@ -1234,7 +1298,7 @@ document.addEventListener('DOMContentLoaded', () => {
           appAlert('Please enter a temporal value');
           return;
         }
-        param.years[currentYear] = { value: parseFloat(value) };
+        param.years[currentYear] = { value: _num(value) };
       } else if (type === 'design') {
         param.operator = (designOperator && designOperator.value) || '=';
         const dval = (designValue && designValue.value.trim()) || '';
@@ -1266,14 +1330,44 @@ document.addEventListener('DOMContentLoaded', () => {
           // Multi-split: store as array; display/serialization will fan-out later
           param.split_conditions = srcs;
         }
-        param.years[currentYear] = { value: parseFloat(value) };
+        param.years[currentYear] = { value: _num(value) };
       }
 
       // If editing, preserve current years and replace row; else append
       if (_editingFixedRow) {
         const existing = extractParamData(_editingFixedRow);
-        // keep year data as-is
-        if (existing && existing.years) param.years = existing.years;
+        // keep existing years but update FIRST year value from the modal for types that use it
+        if (existing && existing.years) {
+          param.years = existing.years;
+        }
+        // Determine first year key (create one if missing)
+        let years = Object.keys(param.years || {}).sort();
+        if (!years.length) {
+          const cy = String(new Date().getFullYear());
+          param.years[cy] = (type === 'geographical') ? { values: (param.values || []) } : { value: 0 };
+          years = [cy];
+        }
+        const firstYear = years[0];
+        // Apply modal "value" to FIRST year for relevant types
+        if (type === 'temporal') {
+          const tv = document.getElementById('temporalValue')?.value ?? '';
+          param.years[firstYear] = { value: _num(tv) };
+          // carry over scope/unit/cumulative already set above
+        } else if (type === 'monetary') {
+          const mv = document.getElementById('monetaryValue')?.value ?? '';
+          param.years[firstYear] = { value: _num(mv) };
+        } else if (type === 'design') {
+          const dv = document.getElementById('designValue')?.value ?? '';
+          param.years[firstYear] = { value: dv };
+        } else if (type === 'geographical') {
+          // If user changed base values in modal, mirror them into FIRST year column
+          const vals = Array.from(document.querySelectorAll('#geoValuesList .geo-value'))
+            .map(i => i.value.trim()).filter(Boolean);
+          if (vals.length) {
+            param.values = vals;
+            param.years[firstYear] = { values: vals };
+          }
+        }
         const newRow = makeFixedParamDisplayRow(param);
         _editingFixedRow.replaceWith(newRow);
         _editingFixedRow = null;

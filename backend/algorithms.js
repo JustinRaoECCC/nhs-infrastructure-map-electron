@@ -195,24 +195,50 @@ function _matchOptionWeight(paramCfg, value) {
   return { matched: false, weight: 0 };
 }
 
-// Search both repair and station data for a field
+// Parse a sheet-qualified field label like "Category (Repairs)" or "Category (Cableway BC)"
+// Returns { field: "Category", scope: "repairs"|"station", sheet: "Repairs"|"Cableway BC"|null }
+function _parseFieldRef(name) {
+  const raw = String(name ?? '').trim();
+  if (!raw) return { field: '', scope: null, sheet: null };
+  const m = raw.match(/^(.+?)\s*\(([^()]+)\)\s*$/);
+  if (m) {
+    const field = m[1].trim();
+    const sheet = m[2].trim();
+    const sc = (_canon(sheet) === 'repairs') ? 'repairs' : 'station';
+    return { field, scope: sc, sheet };
+  }
+  // No explicit sheet → fallback legacy behavior
+  return { field: raw, scope: null, sheet: null };
+}
+
+// Search for a field, honoring sheet-qualified labels when provided.
+// - "<Field> (Repairs)" → only search repair row
+// - "<Field> (<Asset Sheet>)" → only search station row
+// - "<Field>" (no qualifier) → legacy: search repair then station
 function findFieldAnywhere(repair, station, fieldName) {
-  const canon = _canon(fieldName);
-  
-  // Search repair first
-  for (const [key, value] of Object.entries(repair)) {
-    if (_canon(key) === canon) {
-      return value;
+  const ref = _parseFieldRef(fieldName);
+  const want = _canon(ref.field);
+  if (!want) return null;
+
+  if (ref.scope === 'repairs') {
+    for (const [k, v] of Object.entries(repair || {})) {
+      if (_canon(k) === want) return v;
     }
+    return null;
   }
-  
-  // Then search station
-  for (const [key, value] of Object.entries(station)) {
-    if (_canon(key) === canon) {
-      return value;
+  if (ref.scope === 'station') {
+    for (const [k, v] of Object.entries(station || {})) {
+      if (_canon(k) === want) return v;
     }
+    return null;
   }
-  
+  // Legacy fallback (no qualifier)
+  for (const [k, v] of Object.entries(repair || {})) {
+    if (_canon(k) === want) return v;
+  }
+  for (const [k, v] of Object.entries(station || {})) {
+    if (_canon(k) === want) return v;
+  }
   return null;
 }
 
@@ -578,7 +604,7 @@ function checkGeographicalConstraint(repair, param, station_data, year) {
     return true;
   }  
   
-  const paramName = _canon(param.name);
+  const paramName = param.name; // may be sheet-qualified
   // Prefer year-specific allowed values if provided; fall back to base list.
   const yearVals =
     (param.years && year && param.years[year] && param.years[year].values) || null;
@@ -601,7 +627,7 @@ function checkTemporalConstraint(repair, param, station_data, year) {
     return true;
   }  
   
-  const paramName = _canon(param.name);
+  const paramName = param.name; // may be sheet-qualified
   const station = station_data[repair.station_id] || {};
   
   const value = findFieldAnywhere(repair, station, paramName);
@@ -681,7 +707,7 @@ function checkMonetaryConstraint(repair, param, station_data, year) {
     return true;
   }  
   
-  const fieldName = _canon(param.field_name);
+  const fieldName = param.field_name; // may be sheet-qualified
   const station = station_data[repair.station_id] || {};
   
   // Read and parse numeric; allow 0 as a valid value.
@@ -865,7 +891,7 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
 
   // helper: build a unique key for monetary constraints
   const monKey = (p) => {
-    const base = _canon(p.field_name);
+    const base = _canon(p.field_name); // keep qualifier in label elsewhere; key is canonical
     const splitOn = (p.split_condition && p.split_condition.enabled && p.split_condition.source)
       ? `__split__${_canon(p.split_condition.source)}`
       : '';
@@ -998,7 +1024,7 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
             if (!checkIfCondition(originalRepair, param, stationDataMap)) continue;
             
             if (param.type === 'monetary') {
-              const fieldName = _canon(param.field_name);
+              const fieldName = param.field_name; // may be sheet-qualified
               const splitSrc  = (param.split_condition && param.split_condition.enabled)
                 ? _canon(param.split_condition.source)
                 : null;
@@ -1009,7 +1035,7 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
               amount = _applyMonetarySplitIfAny(amount, param, originalRepair, stationDataMap);
               tripTotals[key] = (tripTotals[key] || 0) + amount;      // accumulate by unique key
             } else if (param.type === 'temporal') {
-              const fieldName = _canon(param.name);
+              const fieldName = param.name; // may be sheet-qualified
               const value = findFieldAnywhere(originalRepair, station, fieldName);
               const amount = _tryFloat(value) || 0;
               // Convert each repair's temporal value to hours before summing
@@ -1173,7 +1199,7 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
     const tUse = Object.create(null);
     for (const c of constraint_columns) {
       if (c.type === 'monetary') {
-        const raw = findFieldAnywhere(r, station, c.field_name);
+        const raw = findFieldAnywhere(r, station, c.field_name); // sheet-qualified ok
         const base = _tryFloat(raw) || 0;
         let mul = 1;
         if (c.split_source) {
@@ -1184,7 +1210,7 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
         const amt = base * mul;
         mUse[c.key] = amt;
       } else if (c.type === 'temporal') {
-        const raw = findFieldAnywhere(r, station, c.name);
+        const raw = findFieldAnywhere(r, station, c.name); // sheet-qualified ok
         const val = _tryFloat(raw) || 0;
         const ru = _detectUnitFromFieldName(c.name) || _normalizeUnit(c.unit) || 'hours';
         tUse[c.key] = _toHours(val, ru);

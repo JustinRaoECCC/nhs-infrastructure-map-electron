@@ -114,4 +114,6 @@ module.exports = {
   getAllFundingSettings: (company) =>
     call('getAllFundingSettings', company),
   normalizeFundingOverrides: () => call('normalizeFundingOverrides'),
+  getWorkbookFieldCatalog: (company, locationName) =>
+    call('getWorkbookFieldCatalog', company, locationName),
 };
