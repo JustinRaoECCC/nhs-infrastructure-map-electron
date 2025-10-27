@@ -4387,6 +4387,62 @@ html.modal-open, body.modal-open { overflow: hidden; }
    Scoped to .nhs-dashboard to avoid conflicts with existing styles
    ========================================================================== */
 
+/* Opt1 Results Container - Fixed height with scroll */
+.nhs-dashboard #opt1Results {
+  max-height: calc(100vh - 300px);
+  overflow-y: auto;
+  overflow-x: auto;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 12px;
+  margin-top: 2rem;
+}
+
+/* Sticky header for Opt1 table */
+.nhs-dashboard #opt1Results .opt-table {
+  position: relative;
+}
+
+nhs-dashboard #opt1Results .opt-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg, #ffffff);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.nhs-dashboard #opt1Results .opt-table thead th {
+ background: var(--bg, #ffffff);
+  border-bottom: 2px solid var(--border, #e5e7eb);
+}
+
+/* Ensure smooth scrolling for Opt1 */
+.nhs-dashboard #opt1Results {
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Custom scrollbar for Opt1 results */
+.nhs-dashboard #opt1Results::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.nhs-dashboard #opt1Results::-webkit-scrollbar-track {
+  background: var(--bg-subtle, #f7f9fc);
+  border-radius: 6px;
+}
+
+.nhs-dashboard #opt1Results::-webkit-scrollbar-thumb {
+  background: var(--border-2, #d1d5db);
+  border-radius: 6px;
+  border: 2px solid var(--bg-subtle, #f7f9fc);
+}
+
+.nhs-dashboard #opt1Results::-webkit-scrollbar-thumb:hover {
+  background: var(--muted, #6b7280);
+}
+
+
 /* Virtual scroll container for Opt1 */
 .nhs-dashboard .virtual-scroll-container {
   position: relative;
@@ -4694,6 +4750,19 @@ html.modal-open, body.modal-open { overflow: hidden; }
   overflow-x: auto;
 }
 
+/* Responsive height adjustments for Opt1 */
+@media (max-width: 768px) {
+  .nhs-dashboard #opt1Results {
+    max-height: calc(100vh - 200px);
+  }
+}
+
+@media (min-width: 1920px) {
+  .nhs-dashboard #opt1Results {
+    max-height: calc(100vh - 350px);
+  }
+}
+
 /* Fix for deeply nested content */
 .nhs-dashboard .nested-table.deepest {
   font-size: 0.9rem;
@@ -4702,4 +4771,15 @@ html.modal-open, body.modal-open { overflow: hidden; }
 .nhs-dashboard .nested-table.deepest th,
 .nhs-dashboard .nested-table.deepest td {
   padding: 0.45rem 0.6rem;
+}
+
+/* Dark mode for Opt1 scrollbar */
+@media (prefers-color-scheme: dark) {
+  .nhs-dashboard #opt1Results::-webkit-scrollbar-track {
+    background: #0b1326;
+  }
+  .nhs-dashboard #opt1Results::-webkit-scrollbar-thumb {
+    background: #1f2937;
+    border-color: #0b1326;
+  }
 }

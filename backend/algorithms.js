@@ -129,7 +129,6 @@ function _buildParamIndex(parameters = []) {
     const grp = (out[pname] ||= {
       max_weight: null,
       options: Object.create(null),
-      condition: row?.condition,
     });
     if (row?.max_weight != null && row?.max_weight !== '') {
       const mw = _tryFloat(row.max_weight);
@@ -939,7 +938,6 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
           used: 0,
           cumulative: !!param.cumulative,
           label: splitSrc ? String(param.split_condition.source) : param.field_name,
-          unit: param.unit || '$',
           split_source: splitSrc,
           type: 'monetary'
         };

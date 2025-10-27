@@ -449,9 +449,6 @@ document.addEventListener('DOMContentLoaded', () => {
       row.dataset.maxWeight = max_weight;
       row.innerHTML = `
         <input type="text" class="param-name" value="${parameter}" disabled />
-        <select class="param-condition" disabled>
-          <option value="${condition}" selected>${condition}</option>
-        </select>
         <select class="param-options"></select>
         <span class="param-weight-display"></span>
         <button class="editParamBtn" title="Edit parameter" style="margin-left:.5em;">✎</button>
@@ -459,8 +456,6 @@ document.addEventListener('DOMContentLoaded', () => {
                style="width:60px; margin-left:0.5em;" title="Enter % (total should sum to 100)" />%
         <button class="deleteParamBtn">×</button>
       `;
-      const condSel = row.querySelector('.param-condition'); 
-      condSel.disabled = true;
       const optSel = row.querySelector('.param-options');
       const weightDisplay = row.querySelector('.param-weight-display');
       options.forEach(o => {
@@ -486,7 +481,6 @@ document.addEventListener('DOMContentLoaded', () => {
         // open the Add Param modal pre-filled from this row
         _editingSoftRow = row;
         const name = row.querySelector('.param-name')?.value?.trim() || '';
-        const cond = row.querySelector('.param-condition')?.value || 'IF';
         const maxW = parseInt(row.dataset.maxWeight, 10) || 1;
         const opts = Array.from(row.querySelectorAll('.param-options option')).map(o => ({
           label: o.textContent, weight: parseInt(o.value, 10) || 0
@@ -494,7 +488,6 @@ document.addEventListener('DOMContentLoaded', () => {
         // populate modal
         addParamModal.style.display='flex';
         paramNameInput.value = name;
-        paramConditionSel.value = cond;
         paramMaxWeightInp.value = String(maxW);
         optionsList.innerHTML = '';
         opts.forEach(o => {
@@ -509,7 +502,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function _replaceSoftParamInStorage(oldKeyParam, oldKeyCond, newRows) {
       const all = await window.electronAPI.getAlgorithmParameters();
-      const filtered = (all || []).filter(p => !(String(p.parameter) === String(oldKeyParam) && String(p.condition) === String(oldKeyCond)));
+      const filtered = (all || []).filter(p => !(String(p.parameter) === String(oldKeyParam)));
       const merged = [...filtered, ...newRows];
       await window.electronAPI.saveAlgorithmParameters(merged, { replace: true });
     }
@@ -547,12 +540,11 @@ document.addEventListener('DOMContentLoaded', () => {
     paramContainer.innerHTML = '';
     const grouped = {};
     (existing || []).forEach(e => {
-      // Note: data_source no longer used, but keep for backward compatibility
-      const key = `${e.parameter}||${e.condition}`;
+      const key = e.parameter;
       if (!grouped[key]) {
         grouped[key] = {
           parameter: e.parameter,
-          condition: e.condition, 
+          condition: 'IF',
           max_weight: e.max_weight, 
           options: []
         };
@@ -571,7 +563,6 @@ document.addEventListener('DOMContentLoaded', () => {
     
     addBtn.addEventListener('click', () => {
       paramNameInput.value=''; 
-      paramConditionSel.value='IF'; 
       paramMaxWeightInp.value='3';
       optionsList.innerHTML=''; 
       optionsList.appendChild(makeOptionRow());
@@ -592,7 +583,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Save new parameter
     saveParamBtn.addEventListener('click', async () => {
       const parameter = paramNameInput.value.trim();
-      const condition = paramConditionSel.value;
       const maxWeight = parseInt(paramMaxWeightInp.value, 10) || 1;
       const options = Array.from(optionsList.querySelectorAll('.option-row')).map(r => ({
         label:  r.querySelector('.option-name').value.trim(),
@@ -604,7 +594,7 @@ document.addEventListener('DOMContentLoaded', () => {
         rows.push({
           parameter, 
           data_source: 'all', // Set to 'all' since we search everything now
-          condition, 
+          condition: 'IF',
           max_weight: maxWeight, 
           option: o.label, 
           weight: o.weight
@@ -614,8 +604,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // detect edit mode
       if (_editingSoftRow) {
         const oldParam = _editingSoftRow.querySelector('.param-name')?.value?.trim() || parameter;
-        const oldCond  = _editingSoftRow.querySelector('.param-condition')?.value || condition;
-        await _replaceSoftParamInStorage(oldParam, oldCond, rows);
+        await _replaceSoftParamInStorage(oldParam, 'IF', rows);
         // preserve % value
         const oldPct = _editingSoftRow.querySelector('.param-percentage')?.value || '0';
         const newRow = makeDisplayRow({
@@ -643,11 +632,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const toSave = Array.from(paramContainer.querySelectorAll('.param-row')).flatMap(r => {
         const maxW    = parseInt(r.dataset.maxWeight, 10);
         const param   = r.querySelector('.param-name').value.trim();
-        const cond    = r.querySelector('.param-condition').value;
         return Array.from(r.querySelectorAll('.param-options option')).map(opt => ({
           parameter: param,
           data_source: 'all', // Always 'all' now
-          condition: cond,
+          condition: 'IF',
           max_weight: maxW, 
           option: opt.textContent, 
           weight: parseInt(opt.value,10), 
@@ -665,27 +653,215 @@ document.addEventListener('DOMContentLoaded', () => {
     const addFixedParamBtn = document.getElementById('addFixedParamBtn');
     const saveFixedParamsBtn = document.getElementById('saveFixedParamsBtn');
     const addFixedParamModal = document.getElementById('addFixedParamModal');
-    const closeAddFixedParamModal = document.getElementById('closeAddFixedParamModal');
     const cancelFixedParamBtn = document.getElementById('cancelFixedParamBtn');
     const saveFixedParamBtn = document.getElementById('saveFixedParamBtn');
-    const fixedParamNameInput = document.getElementById('fixedParamNameInput');
+    
+    // Step containers
+    const step1Container = document.getElementById('step1Container');
+    const step2Container = document.getElementById('step2Container');
+    const step3Container = document.getElementById('step3Container');
+    
+    // Navigation buttons
+    const step1NextBtn = document.getElementById('step1NextBtn');
+    const step2BackBtn = document.getElementById('step2BackBtn');
+    const step2NextBtn = document.getElementById('step2NextBtn');
+    const step3BackBtn = document.getElementById('step3BackBtn');
+    
+    // Type selector
     const fixedParamTypeSelect = document.getElementById('fixedParamTypeSelect');
+    
+    // Input elements
+    const fixedParamNameInput = document.getElementById('fixedParamNameInput');
     const fixedParamMatchUsing = document.getElementById('fixedParamMatchUsing');
-    const matchUsingContainer = document.getElementById('matchUsingContainer');
 
-    // Design fields
-    const designFields   = document.getElementById('designFields');
-    const designOperator = document.getElementById('designOperator');
-    const designValue    = document.getElementById('designValue');
-
-    // SPLIT Condition UI
-    const splitConditionContainer = document.getElementById('splitConditionContainer');
-    const enableSplitCondition = document.getElementById('enableSplitCondition');
-    const splitFields = document.getElementById('splitFields');    // will host multi-split rows 
-    // Constraint-specific fields
+    // Field groups
+    const parameterNameContainer = document.getElementById('parameterNameContainer');
+    const monetaryMatchUsing = document.getElementById('monetaryMatchUsing');
     const geographicalFields = document.getElementById('geographicalFields');
     const temporalFields = document.getElementById('temporalFields');
     const monetaryFields = document.getElementById('monetaryFields');
+    const designFields = document.getElementById('designFields');
+    
+    // Step 3 elements
+    const cumulativeContainer = document.getElementById('cumulativeContainer');
+    const cumulativeCheckbox = document.getElementById('cumulativeCheckbox');
+    const cumulativeLabel = document.getElementById('cumulativeLabel');
+    const cumulativeExplanation = document.getElementById('cumulativeExplanation');
+    const splitSection = document.getElementById('splitSection');
+    const ifSection = document.getElementById('ifSection');
+    const enableSplitCondition = document.getElementById('enableSplitCondition');
+    const splitFields = document.getElementById('splitFields');
+    const enableIfCondition = document.getElementById('enableIfCondition');
+    const ifConditionFields = document.getElementById('ifConditionFields');
+    
+    // Other elements
+    const geoValuesList = document.getElementById('geoValuesList');
+    const addGeoValueBtn = document.getElementById('addGeoValueBtn');
+
+    let currentStep = 1;
+    let monetarySubStep = 1; // For monetary: 1=match_using, 2=fields
+
+    function updateStepIndicators() {
+      document.querySelectorAll('.step-dot').forEach((dot, idx) => {
+        const step = idx + 1;
+        dot.classList.remove('active', 'completed');
+        if (step < currentStep) {
+          dot.classList.add('completed');
+        } else if (step === currentStep) {
+          dot.classList.add('active');
+        }
+      });
+    }
+ 
+    function showStep(step) {
+      currentStep = step;
+      step1Container.style.display = step === 1 ? 'block' : 'none';
+      step2Container.style.display = step === 2 ? 'block' : 'none';
+      step3Container.style.display = step === 3 ? 'block' : 'none';
+      updateStepIndicators();
+    }
+ 
+    function configureStep2ForType(type) {
+      // Hide all constraint fields
+      geographicalFields.style.display = 'none';
+      temporalFields.style.display = 'none';
+      monetaryFields.style.display = 'none';
+      designFields.style.display = 'none';
+      monetaryMatchUsing.style.display = 'none';
+      parameterNameContainer.style.display = 'none';
+ 
+      const step2Title = document.getElementById('step2Title');
+ 
+      if (type === 'geographical') {
+        step2Title.textContent = 'Step 2: Configure Geographical Constraint';
+        parameterNameContainer.style.display = 'block';
+        geographicalFields.style.display = 'block';
+      } else if (type === 'temporal') {
+        step2Title.textContent = 'Step 2: Configure Temporal Constraint';
+        parameterNameContainer.style.display = 'block';
+        temporalFields.style.display = 'block';
+      } else if (type === 'monetary') {
+        if (monetarySubStep === 1) {
+          step2Title.textContent = 'Step 2a: Choose Matching Method';
+          monetaryMatchUsing.style.display = 'block';
+        } else {
+          step2Title.textContent = 'Step 2b: Configure Monetary Constraint';
+          parameterNameContainer.style.display = 'block';
+          monetaryFields.style.display = 'block';
+        }
+      } else if (type === 'design') {
+        step2Title.textContent = 'Step 2: Configure Design Constraint';
+        parameterNameContainer.style.display = 'block';
+        designFields.style.display = 'block';
+      }
+    }
+
+    function configureStep3ForType(type) {
+      // Show/hide cumulative for temporal and monetary
+      if (type === 'temporal') {
+        cumulativeContainer.style.display = 'block';
+        cumulativeLabel.textContent = 'Cumulative (sum all repairs)';
+        cumulativeExplanation.textContent = 'When checked, the system adds up the temporal values from all repairs in the year and compares the total against the limit. When unchecked, each repair is checked individually against the limit.';
+      } else if (type === 'monetary') {
+        cumulativeContainer.style.display = 'block';
+        cumulativeLabel.textContent = 'Cumulative Budget';
+        cumulativeExplanation.textContent = 'When checked, the system treats this as a total yearly budget and tracks spending across all repairs. When unchecked, each repair is checked individually against the limit.';
+      } else {
+        cumulativeContainer.style.display = 'none';
+      }
+
+      // Show split section only for monetary
+      splitSection.style.display = (type === 'monetary') ? 'block' : 'none';
+
+      // IF section always visible in step 3
+      ifSection.style.display = 'block';
+    }
+
+    // Step navigation
+    step1NextBtn.addEventListener('click', () => {
+      const type = fixedParamTypeSelect.value;
+      monetarySubStep = (type === 'monetary') ? 1 : 2;
+      configureStep2ForType(type);
+      showStep(2);
+      setupFixedParamAutocomplete();
+    });
+
+    step2BackBtn.addEventListener('click', () => {
+      const type = fixedParamTypeSelect.value;
+      if (type === 'monetary' && monetarySubStep === 2) {
+        monetarySubStep = 1;
+        configureStep2ForType(type);
+      } else {
+        showStep(1);
+      }
+    });
+
+    step2NextBtn.addEventListener('click', () => {
+      const type = fixedParamTypeSelect.value;
+      
+      // Validation
+      if (type === 'monetary' && monetarySubStep === 1) {
+        monetarySubStep = 2;
+        configureStep2ForType(type);
+        setupFixedParamAutocomplete();
+        return;
+      }
+
+      // Validate required fields
+      if (type === 'geographical') {
+        const name = (document.getElementById('fixedParamNameInput')?.value || '').trim();
+        const values = Array.from(geoValuesList.querySelectorAll('.geo-value'))
+          .map(input => input.value.trim())
+          .filter(v => v);
+        if (!name || !values.length) {
+          appAlert('Please enter a parameter name and at least one allowed value');
+          return;
+        }
+      } else if (type === 'temporal') {
+        const name = (document.getElementById('fixedParamNameInput')?.value || '').trim();
+        const value = document.getElementById('temporalValue').value;
+        if (!name || !value) {
+          appAlert('Please enter a parameter name and value');
+          return;
+        }
+      } else if (type === 'monetary') {
+        const name = (document.getElementById('fixedParamNameInput')?.value || '').trim();
+        const fieldName = document.getElementById('monetaryFieldName').value.trim();
+        const value = document.getElementById('monetaryValue').value;
+        if (!name || !fieldName || !value) {
+          appAlert('Please fill in all monetary constraint fields');
+          return;
+        }
+      } else if (type === 'design') {
+        const name = (document.getElementById('fixedParamNameInput')?.value || '').trim();
+        const designValue = document.getElementById('designValue');
+        const value = designValue ? designValue.value.trim() : '';
+        if (!name || !value) {
+          appAlert('Please enter a parameter name and value');
+          return;
+        }
+      }
+
+      configureStep3ForType(type);
+      showStep(3);
+      setupFixedParamAutocomplete();
+    });
+
+    step3BackBtn.addEventListener('click', () => {
+      showStep(2);
+    });
+
+    // Toggle handlers for step 3
+    enableSplitCondition.addEventListener('change', () => {
+      splitFields.style.display = enableSplitCondition.checked ? 'block' : 'none';
+      if (enableSplitCondition.checked && splitFields.children.length === 0) {
+        setupSplitSourceList(['']);
+      }
+    });
+
+    enableIfCondition.addEventListener('change', () => {
+      ifConditionFields.style.display = enableIfCondition.checked ? 'block' : 'none';
+    });
 
     // helper to (re)build split list UI with optional values
     function setupSplitSourceList(values = ['']) {
@@ -706,43 +882,6 @@ document.addEventListener('DOMContentLoaded', () => {
       splitFields.appendChild(addBtn);
       _rewireAllSplitInputs();
     }
-
-    // Toggle constraint fields AND match using based on type
-    fixedParamTypeSelect.addEventListener('change', () => {
-      document.querySelectorAll('.constraint-fields').forEach(el => el.style.display = 'none');
-      const type = fixedParamTypeSelect.value;
-      if (type === 'geographical') geographicalFields.style.display = 'block';
-      if (type === 'temporal') temporalFields.style.display = 'block';
-      if (type === 'monetary') monetaryFields.style.display = 'block';
-      if (type === 'design') designFields.style.display = 'block';
-
-      // Show SPLIT condition controls only for monetary
-      splitConditionContainer.style.display = (type === 'monetary') ? 'block' : 'none';
-      splitFields.style.display = (type === 'monetary' && enableSplitCondition.checked) ? 'block' : 'none';
-      
-      // Only show "Match Using" for types that have a field_name
-      const hasFieldName = (type === 'monetary');
-      matchUsingContainer.style.display = hasFieldName ? 'block' : 'none';
-      if (type === 'monetary') {
-        setupSplitSourceList(['']);
-      } else {
-        // Ensure split UI is fully reset when switching away from monetary
-        enableSplitCondition.checked = false;
-        splitFields.style.display = 'none';
-        setupSplitSourceList(['']);
-      }
-    });
-
-    // Toggle IF condition section
-    const enableIfCondition = document.getElementById('enableIfCondition');
-    const ifConditionFields = document.getElementById('ifConditionFields');
-    
-    enableIfCondition.addEventListener('change', () => {
-      ifConditionFields.style.display = enableIfCondition.checked ? 'block' : 'none';
-    });
-
-    const geoValuesList = document.getElementById('geoValuesList');
-    const addGeoValueBtn = document.getElementById('addGeoValueBtn');
 
     function makeGeoValueRow(value = '') {
       const row = document.createElement('div');
@@ -906,79 +1045,7 @@ document.addEventListener('DOMContentLoaded', () => {
       row.querySelector('.deleteFixedParamBtn').addEventListener('click', () => row.remove());
 
       row.querySelector('.editFixedParamBtn').addEventListener('click', () => {
-        // open modal pre-filled from this row
-       const data = extractParamData(row);
-        _editingFixedRow = row;
-        // reset UI
-        fixedParamMatchUsing.value = data.match_using || 'parameter_name';
-        fixedParamTypeSelect.value = data.type || 'geographical';
-        document.querySelectorAll('.constraint-fields').forEach(el => el.style.display = 'none');
-        if (data.type === 'geographical') geographicalFields.style.display = 'block';
-        if (data.type === 'temporal') temporalFields.style.display = 'block';
-        if (data.type === 'monetary') monetaryFields.style.display = 'block';
-        if (data.type === 'design') designFields.style.display = 'block';
-        matchUsingContainer.style.display = (data.type === 'monetary') ? 'block' : 'none';
-        // IF condition
-        const hasIf = !!data.if_condition;
-        document.getElementById('enableIfCondition').checked = hasIf;
-        document.getElementById('ifConditionFields').style.display = hasIf ? 'block' : 'none';
-        document.getElementById('ifFieldName').value = hasIf ? (data.if_condition.field || '') : '';
-        document.getElementById('ifOperator').value = hasIf ? (data.if_condition.operator || '=') : '=';
-        document.getElementById('ifValue').value = hasIf ? (data.if_condition.value || '') : '';
-        // name and per-type fields
-        const nameEl = document.getElementById('fixedParamNameInput');
-        if (nameEl) nameEl.value = data.name || '';
-        if (data.type === 'geographical') {
-          geoValuesList.innerHTML = '';
-          (data.values || ['']).forEach(v => geoValuesList.appendChild(makeGeoValueRow(v)));
-        } else if (data.type === 'temporal') {
-         document.getElementById('temporalScope').value = data.scope || 'per_day';
-          document.getElementById('temporalUnit').value = data.unit || 'hours';
-          document.getElementById('temporalCumulative').checked = !!data.cumulative;
-          // Pre-fill modal value from FIRST year
-          try {
-            const years = Object.keys(data.years || {}).sort();
-            const fy = years[0];
-            const v = (fy && data.years[fy] && data.years[fy].value != null) ? data.years[fy].value : '';
-            const inp = document.getElementById('temporalValue');
-            if (inp) inp.value = (v === '' ? '' : String(v));
-          } catch {}
-        } else if (data.type === 'monetary') {
-          fixedParamMatchUsing.value = data.match_using || 'parameter_name';
-          document.getElementById('monetaryFieldName').value = data.field_name || '';
-          document.getElementById('monetaryConditional').value = data.conditional || '<=';
-          document.getElementById('monetaryUnit').value = data.unit || '';
-          document.getElementById('monetaryCumulative').checked = !!data.cumulative;
-          // SPLIT (multi)
-          const splits = Array.isArray(data.split_conditions)
-            ? data.split_conditions
-            : (data.split_condition && data.split_condition.enabled ? [data.split_condition.source] : []);
-          const enable = splits.length > 0;
-          enableSplitCondition.checked = enable;
-          splitConditionContainer.style.display = 'block';
-          splitFields.style.display = enable ? 'block' : 'none';
-          setupSplitSourceList(enable ? splits : ['']);
-          // Pre-fill modal value from FIRST year
-          try {
-            const years = Object.keys(data.years || {}).sort();
-            const fy = years[0];
-            const v = (fy && data.years[fy] && data.years[fy].value != null) ? data.years[fy].value : '';
-            const inp = document.getElementById('monetaryValue');
-            if (inp) inp.value = (v === '' ? '' : String(v));
-          } catch {}
-        } else if (data.type === 'design') {
-          if (designOperator) designOperator.value = data.operator || '=';
-          // Pre-fill modal value from FIRST year (so edits know what to update)
-          try {
-            const years = Object.keys(data.years || {}).sort();
-            const fy = years[0];
-            const v = (fy && data.years[fy]) ? data.years[fy].value : '';
-            if (designValue) designValue.value = (v == null ? '' : String(v));
-          } catch {}
-        }
-        // rewire autocompletes
-        setupFixedParamAutocomplete();
-        addFixedParamModal.style.display = 'flex';
+        editFixedParameter(row);
       });
       
       row.querySelector('.addYearColumnBtn').addEventListener('click', () => {
@@ -1058,6 +1125,83 @@ document.addEventListener('DOMContentLoaded', () => {
       });
       
       return row;
+    }
+
+    // Edit handler - populate stepped UI
+    function editFixedParameter(row) {
+      const data = extractParamData(row);
+      _editingFixedRow = row;
+      
+      // Start at step 1
+      showStep(1);
+      monetarySubStep = 1;
+      
+      // Set type
+      fixedParamTypeSelect.value = data.type || 'geographical';
+      
+      // Populate step 2 fields
+      const nameEl = document.getElementById('fixedParamNameInput');
+      if (nameEl) nameEl.value = data.name || '';
+      
+      if (data.type === 'geographical') {
+        geoValuesList.innerHTML = '';
+        (data.values || ['']).forEach(v => geoValuesList.appendChild(makeGeoValueRow(v)));
+      } else if (data.type === 'temporal') {
+        document.getElementById('temporalScope').value = data.scope || 'per_day';
+        document.getElementById('temporalUnit').value = data.unit || 'hours';
+        try {
+          const years = Object.keys(data.years || {}).sort();
+          const fy = years[0];
+          const v = (fy && data.years[fy] && data.years[fy].value != null) ? data.years[fy].value : '';
+          const inp = document.getElementById('temporalValue');
+          if (inp) inp.value = (v === '' ? '' : String(v));
+        } catch {}
+      } else if (data.type === 'monetary') {
+        fixedParamMatchUsing.value = data.match_using || 'parameter_name';
+        document.getElementById('monetaryFieldName').value = data.field_name || '';
+        document.getElementById('monetaryConditional').value = data.conditional || '<=';
+        try {
+          const years = Object.keys(data.years || {}).sort();
+          const fy = years[0];
+          const v = (fy && data.years[fy] && data.years[fy].value != null) ? data.years[fy].value : '';
+          const inp = document.getElementById('monetaryValue');
+          if (inp) inp.value = (v === '' ? '' : String(v));
+        } catch {}
+        
+        // SPLIT
+        const splits = Array.isArray(data.split_conditions)
+          ? data.split_conditions
+          : (data.split_condition && data.split_condition.enabled ? [data.split_condition.source] : []);
+        const enable = splits.length > 0;
+        enableSplitCondition.checked = enable;
+        splitFields.style.display = enable ? 'block' : 'none';
+        setupSplitSourceList(enable ? splits : ['']);
+      } else if (data.type === 'design') {
+        const designOperator = document.getElementById('designOperator');
+        const designValue = document.getElementById('designValue');
+        if (designOperator) designOperator.value = data.operator || '=';
+        try {
+          const years = Object.keys(data.years || {}).sort();
+          const fy = years[0];
+          const v = (fy && data.years[fy]) ? data.years[fy].value : '';
+          if (designValue) designValue.value = (v == null ? '' : String(v));
+        } catch {}
+      }
+      
+      // Populate step 3 fields (cumulative)
+      if (data.type === 'monetary' || data.type === 'temporal') {
+        cumulativeCheckbox.checked = !!data.cumulative;
+      }
+      
+      // IF condition
+      const hasIf = !!data.if_condition;
+      enableIfCondition.checked = hasIf;
+      ifConditionFields.style.display = hasIf ? 'block' : 'none';
+      document.getElementById('ifFieldName').value = hasIf ? (data.if_condition.field || '') : '';
+      document.getElementById('ifOperator').value = hasIf ? (data.if_condition.operator || '=') : '=';
+      document.getElementById('ifValue').value = hasIf ? (data.if_condition.value || '') : '';
+      
+      addFixedParamModal.style.display = 'flex';
     }
     
     function extractParamData(row) {
@@ -1146,52 +1290,53 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Open add fixed parameter modal
     addFixedParamBtn.addEventListener('click', () => {
-      // Always read the current DOM element in case autocomplete rewired the input
+      // Reset to step 1
+      showStep(1);
+      monetarySubStep = 1;
+      
+      // Reset all inputs
       const nameEl = document.getElementById('fixedParamNameInput');
       if (nameEl) nameEl.value = '';
       fixedParamMatchUsing.value = 'parameter_name';
       fixedParamTypeSelect.value = 'geographical';
+
+      // Clear geographical values
       geoValuesList.innerHTML = '';
       geoValuesList.appendChild(makeGeoValueRow());
+
+      // Reset temporal
       document.getElementById('temporalScope').value = 'per_day';
       document.getElementById('temporalValue').value = '';
       document.getElementById('temporalUnit').value = 'hours';
-      document.getElementById('temporalCumulative').checked = false;
+
+      // Reset monetary
       document.getElementById('monetaryFieldName').value = '';
-      document.getElementById('monetaryConditional').value = '<';
+      document.getElementById('monetaryConditional').value = '<=';
       document.getElementById('monetaryValue').value = '';
-      document.getElementById('monetaryUnit').value = '';
-      document.getElementById('monetaryCumulative').checked = false;
       
       // Reset Design
+      const designOperator = document.getElementById('designOperator');
+      const designValue = document.getElementById('designValue');
       if (designOperator) designOperator.value = '=';
-      if (designValue)    designValue.value = '';
+      if (designValue) designValue.value = '';
 
-      // Reset IF condition
-      document.getElementById('enableIfCondition').checked = false;
-      document.getElementById('ifConditionFields').style.display = 'none';
+      // Reset step 3 options
+      cumulativeCheckbox.checked = false;
+      enableIfCondition.checked = false;
+      ifConditionFields.style.display = 'none';
       document.getElementById('ifFieldName').value = '';
       document.getElementById('ifOperator').value = '=';
       document.getElementById('ifValue').value = '';
       
-      document.querySelectorAll('.constraint-fields').forEach(el => el.style.display = 'none');
-      geographicalFields.style.display = 'block';
-      matchUsingContainer.style.display = 'none';
-      addFixedParamModal.style.display = 'flex';
-
-      // Setup autocomplete based on match_using selection
-      setupFixedParamAutocomplete();
-
-      // Reset SPLIT condition defaults
-      setupSplitSourceList(['']);
       enableSplitCondition.checked = false;
       splitFields.style.display = 'none';
+      setupSplitSourceList(['']);
+      
+      addFixedParamModal.style.display = 'flex';
     });
 
-    // Toggle SPLIT field visibility
-    enableSplitCondition.addEventListener('change', () => {
-      const type = fixedParamTypeSelect.value;
-      splitFields.style.display = (type === 'monetary' && enableSplitCondition.checked) ? 'block' : 'none';
+    cancelFixedParamBtn.addEventListener('click', () => {
+      addFixedParamModal.style.display = 'none';
     });
 
     function setupFixedParamAutocomplete() {
@@ -1233,15 +1378,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Update autocomplete when match using changes
     fixedParamMatchUsing.addEventListener('change', setupFixedParamAutocomplete);
-    fixedParamTypeSelect.addEventListener('change', setupFixedParamAutocomplete);
-
-    // Disable closing via the "X" button; enforce Save/Cancel only
-    // closeAddFixedParamModal.addEventListener('click', () => addFixedParamModal.style.display = 'none');
-    cancelFixedParamBtn.addEventListener('click', () => addFixedParamModal.style.display = 'none');
-    // Prevent closing by clicking outside the modal
-    // addFixedParamModal.addEventListener('click', e => {
-    //   if (e.target === addFixedParamModal) addFixedParamModal.style.display = 'none';
-    // });
 
     // Save new fixed parameter
     saveFixedParamBtn.addEventListener('click', () => {
@@ -1249,8 +1385,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const v = Number(String(s ?? '').replace(/,/g, '').trim());
         return Number.isFinite(v) ? v : 0;
       };
-      // Grab the live element to avoid stale references from autocomplete cloning
-      const nameEl = document.getElementById('fixedParamNameInput');
+      // Query within modal to get current (possibly cloned) elements
+      const modal = document.getElementById('addFixedParamModal');
+      const nameEl = modal.querySelector('#fixedParamNameInput');
       const name = nameEl ? nameEl.value.trim() : '';
       const type = fixedParamTypeSelect.value;
       const matchUsing = fixedParamMatchUsing.value;
@@ -1265,9 +1402,9 @@ document.addEventListener('DOMContentLoaded', () => {
       param.years = {};
 
       // Capture IF condition if enabled
-      if (document.getElementById('enableIfCondition').checked) {
-        const ifField = document.getElementById('ifFieldName').value.trim();
-        const ifValue = document.getElementById('ifValue').value.trim();
+      if (enableIfCondition.checked) {
+        const ifField = modal.querySelector('#ifFieldName').value.trim();
+        const ifValue = modal.querySelector('#ifValue').value.trim();
         
         if (!ifField || !ifValue) {
           appAlert('Please fill in IF condition field and value, or uncheck the IF condition option');
@@ -1276,7 +1413,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         param.if_condition = {
           field: ifField,
-          operator: document.getElementById('ifOperator').value,
+          operator: modal.querySelector('#ifOperator').value,
           value: ifValue
         };
       }
@@ -1292,16 +1429,18 @@ document.addEventListener('DOMContentLoaded', () => {
         param.values = values;
         param.years[currentYear] = { values };
       } else if (type === 'temporal') {
-        param.scope = document.getElementById('temporalScope').value;
-        const value = document.getElementById('temporalValue').value;
-        param.unit = document.getElementById('temporalUnit').value;
-        param.cumulative = document.getElementById('temporalCumulative').checked;
+        param.scope = modal.querySelector('#temporalScope').value;
+        const value = modal.querySelector('#temporalValue').value;
+        param.unit = modal.querySelector('#temporalUnit').value;
+        param.cumulative = cumulativeCheckbox.checked;
         if (!value) {
           appAlert('Please enter a temporal value');
           return;
         }
         param.years[currentYear] = { value: _num(value) };
       } else if (type === 'design') {
+        const designOperator = modal.querySelector('#designOperator');
+        const designValue = modal.querySelector('#designValue');
         param.operator = (designOperator && designOperator.value) || '=';
         const dval = (designValue && designValue.value.trim()) || '';
         if (!dval) {
@@ -1311,11 +1450,10 @@ document.addEventListener('DOMContentLoaded', () => {
         param.years[currentYear] = { value: dval };
       } else if (type === 'monetary') {
         param.match_using = matchUsing;
-        param.field_name = document.getElementById('monetaryFieldName').value.trim();
-        param.conditional = document.getElementById('monetaryConditional').value;
-        const value = document.getElementById('monetaryValue').value;
-        param.unit = document.getElementById('monetaryUnit').value.trim();
-        param.cumulative = document.getElementById('monetaryCumulative').checked;
+        param.field_name = modal.querySelector('#monetaryFieldName').value.trim();
+        param.conditional = modal.querySelector('#monetaryConditional').value;
+        const value = modal.querySelector('#monetaryValue').value;
+        param.cumulative = cumulativeCheckbox.checked;
         if (!param.field_name || !value) {
           appAlert('Please fill in all monetary constraint fields');
           return;
@@ -1352,14 +1490,18 @@ document.addEventListener('DOMContentLoaded', () => {
         const firstYear = years[0];
         // Apply modal "value" to FIRST year for relevant types
         if (type === 'temporal') {
-          const tv = document.getElementById('temporalValue')?.value ?? '';
+          const modal = document.getElementById('addFixedParamModal');
+          const tv = modal.querySelector('#temporalValue')?.value ?? '';
           param.years[firstYear] = { value: _num(tv) };
           // carry over scope/unit/cumulative already set above
         } else if (type === 'monetary') {
-          const mv = document.getElementById('monetaryValue')?.value ?? '';
+          const modal = document.getElementById('addFixedParamModal');
+          const mv = modal.querySelector('#monetaryValue')?.value ?? '';
           param.years[firstYear] = { value: _num(mv) };
         } else if (type === 'design') {
-          const dv = document.getElementById('designValue')?.value ?? '';
+          const modal = document.getElementById('addFixedParamModal');
+          const designValue = modal.querySelector('#designValue');
+          const dv = (designValue && designValue.value) ?? '';
           param.years[firstYear] = { value: dv };
         } else if (type === 'geographical') {
           // If user changed base values in modal, mirror them into FIRST year column
@@ -2211,7 +2353,7 @@ document.addEventListener('DOMContentLoaded', () => {
             ${constraintCols.map(c => {
               if (c.type === 'monetary') {
                 // usage is stored by unique key from backend (includes split source when present)
-                return `<td class="txt">${formatCurrency(usage.monetary?.[c.key] || 0)}</td>`;
+                return `<td class="txt">$${Number(usage.monetary?.[c.key] || 0).toLocaleString()}</td>`;
               }
               // temporal usage is stored in HOURS by c.key
               const hrs = Number(usage.temporal?.[c.key] || 0);

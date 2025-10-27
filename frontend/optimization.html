@@ -109,13 +109,6 @@
       </div>
 
       <div style="margin-top:1em;">
-        <label>Condition Type</label><br/>
-        <select id="paramConditionSelect" style="width:100%; padding:0.5em;">
-          <option value="IF">IF</option>
-        </select>
-      </div>
-
-      <div style="margin-top:1em;">
         <label>Max Weight (1–Y)</label><br/>
         <input type="number" id="paramMaxWeight" min="1" value="3" style="width:100%; padding:0.5em;"/>
       </div>
@@ -139,20 +132,16 @@
       <span class="close-modal" id="closeAddFixedParamModal">&times;</span>
       <h2 class="modal-header">Add Fixed Parameter</h2>
 
-      <div style="margin-top:1em;">
-        <label>Fixed Parameter Name</label><br/>
-        <input type="text" id="fixedParamNameInput" placeholder="Start typing to see suggestions..." style="width:100%; padding:0.5em;"/>
+      <!-- Step Indicator -->
+      <div id="stepIndicator" style="display:flex; justify-content:center; gap:0.5rem; margin:1rem 0; font-size:0.85rem;">
+        <span class="step-dot active" data-step="1">1</span>
+        <span class="step-dot" data-step="2">2</span>
+        <span class="step-dot" data-step="3">3</span>
       </div>
 
-      <div id="matchUsingContainer" style="margin-top:1em; display:none;">
-        <label>Match Using</label><br/>
-        <select id="fixedParamMatchUsing" style="width:100%; padding:0.5em;">
-          <option value="parameter_name">Fixed Parameter Name</option>
-          <option value="field_name">Field Name</option>
-        </select>
-      </div>
-
-      <div style="margin-top:1em;">
+      <!-- STEP 1: Select Constraint Type -->
+      <div id="step1Container" class="step-container">
+        <h3 style="margin:0 0 1em 0; color:#666;">Step 1: Select Constraint Type</h3>
         <label>Constraint Type</label><br/>
         <select id="fixedParamTypeSelect" style="width:100%; padding:0.5em;">
           <option value="geographical">Geographical</option>
@@ -160,26 +149,40 @@
           <option value="monetary">Monetary</option>
           <option value="design">Design</option>
         </select>
+        <button id="step1NextBtn" class="btn btn-primary" style="margin-top:1.5em; width:100%;">Next →</button>
       </div>
 
+      <!-- STEP 2: Type-Specific Configuration -->
+      <div id="step2Container" class="step-container" style="display:none;">
+        <h3 style="margin:0 0 1em 0; color:#666;" id="step2Title">Step 2: Configure Constraint</h3>
+
+        <!-- Monetary: Match Using (appears first for monetary only) -->
+        <div id="monetaryMatchUsing" style="display:none; margin-bottom:1.5em;">
+          <label>Match Using</label><br/>
+          <select id="fixedParamMatchUsing" style="width:100%; padding:0.5em;">
+            <option value="parameter_name">Fixed Parameter Name</option>
+            <option value="field_name">Field Name</option>
+          </select>
+          <p style="font-size:0.85em; color:#666; margin-top:0.3em;">
+            Choose how to match repairs: by the fixed parameter name or by a specific field in the data.
+          </p>
+        </div>
+
+        <!-- Common: Parameter Name (for all except monetary in first sub-step) -->
+        <div id="parameterNameContainer" style="margin-bottom:1em;">
+          <label>Fixed Parameter Name</label><br/>
+          <input type="text" id="fixedParamNameInput" placeholder="Start typing to see suggestions..." style="width:100%; padding:0.5em;"/>
+        </div>
+
       <!-- Geographical Fields -->
-      <div id="geographicalFields" class="constraint-fields" style="display:none; margin-top:1em;">
+      <div id="geographicalFields" class="constraint-fields" style="display:none;">
         <label>Allowed Values</label>
         <div id="geoValuesList" style="margin-top:0.5em;"></div>
         <button type="button" id="addGeoValueBtn" class="btn" style="margin-top:0.5em;">+ Add Value</button>
       </div>
 
       <!-- Temporal Fields -->
-      <div id="temporalFields" class="constraint-fields" style="display:none; margin-top:1em;">
-        <div style="margin-bottom:0.5em;">
-          <label style="display:flex; align-items:center; gap:0.5em; cursor:pointer;">
-            <input type="checkbox" id="temporalCumulative" style="cursor:pointer;"/>
-            <span>Cumulative (sum all repairs for the year)</span>
-          </label>
-          <p style="font-size:0.85em; color:#666; margin:0.3em 0 0 1.5em;">
-            When checked, adds up all repair values for the year. When unchecked, checks each repair individually.
-          </p>
-        </div>
+      <div id="temporalFields" class="constraint-fields" style="display:none;">
         <div style="margin-bottom:0.5em;">
           <label>Scope</label><br/>
           <select id="temporalScope" style="width:100%; padding:0.5em;">
@@ -206,16 +209,7 @@
       </div>
 
       <!-- Monetary Fields -->
-      <div id="monetaryFields" class="constraint-fields" style="display:none; margin-top:1em;">
-        <div style="margin-bottom:0.5em;">
-          <label style="display:flex; align-items:center; gap:0.5em; cursor:pointer;">
-            <input type="checkbox" id="monetaryCumulative" style="cursor:pointer;"/>
-            <span>Cumulative Budget (sum all repairs for the year)</span>
-          </label>
-          <p style="font-size:0.85em; color:#666; margin:0.3em 0 0 1.5em;">
-            When checked, treats the value as total yearly budget. When unchecked, checks each repair individually.
-          </p>
-        </div>
+      <div id="monetaryFields" class="constraint-fields" style="display:none;">
         <div style="margin-bottom:0.5em;">
           <label>Field Name</label><br/>
           <input type="text" id="monetaryFieldName" placeholder="Start typing to see suggestions..." style="width:100%; padding:0.5em;"/>
@@ -232,17 +226,13 @@
           </select>
         </div>
         <div style="margin-bottom:0.5em;">
-          <label>Value</label><br/>
+          <label>Value ($)</label><br/>
           <input type="number" id="monetaryValue" placeholder="Enter numeric value" style="width:100%; padding:0.5em;"/>
-        </div>
-        <div>
-          <label>Unit</label><br/>
-          <input type="text" id="monetaryUnit" placeholder="$" style="width:100%; padding:0.5em;"/>
         </div>
       </div>
 
       <!-- Design Fields -->
-      <div id="designFields" class="constraint-fields" style="display:none; margin-top:1em;">
+      <div id="designFields" class="constraint-fields" style="display:none;">
         <div style="margin-bottom:0.5em;">
           <label>Operator</label><br/>
           <select id="designOperator" style="width:100%; padding:0.5em;">
@@ -264,68 +254,118 @@
         </p>
       </div>
 
-      <!-- SPLIT Condition (Monetary only) -->
-      <div id="splitConditionContainer" style="display:none; margin-top:1.2em; padding-top:1em; border-top:2px solid #ddd;">
-        <div style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.5em;">
-          <input type="checkbox" id="enableSplitCondition" style="cursor:pointer;"/>
-          <label for="enableSplitCondition" style="cursor:pointer; font-weight:bold;">Add SPLIT Condition (Optional)</label>
-        </div>
-        <p style="font-size:0.9em; color:#666; margin:0 0 1em 0;">
-          When enabled, the monetary <em>field value</em> for each repair will be multiplied by the percentage
-          associated with the selected <strong>Source</strong> parsed from the repair’s category column
-          (<code>O&amp;M</code>, <code>Capital</code>, or <code>Decommission</code>) before comparison to the limit.
-        </p>
-      <div id="splitFields" style="display:none; padding:0.8em; background:#f8f9fa; border-radius:4px;">
-         <div style="margin-bottom:0.5em;">
-           <label>Sources</label>
-           <div style="font-size:0.85em; color:#666; margin-top:0.4em;">
-             Enter one or more source tokens (e.g., <code>F</code>, <code>P</code>, <code>P(OTH)</code>, <code>P(BCH)</code>).
-             Suggestions are collected from the <strong>O&amp;M</strong>, <strong>Capital</strong>, and <strong>Decommission</strong>
-             columns in your repairs sheet (e.g., splits like <code>50%F-50%P</code> or <code>100%P(OTH)</code>).
-           </div>
-         </div>
-         <!-- Rows and the "+ Source" button are injected by optimization.js -->
-       </div>
-      </div>
-
-      <!-- IF Condition (Optional) -->
-      <div style="margin-top:1.5em; padding-top:1em; border-top:2px solid #ddd;">
-        <div style="display:flex; align-items:center; gap:0.5em; margin-bottom:0.5em;">
-          <input type="checkbox" id="enableIfCondition" style="cursor:pointer;"/>
-          <label for="enableIfCondition" style="cursor:pointer; font-weight:bold;">Add IF Condition (Optional)</label>
-        </div>
-        <p style="font-size:0.9em; color:#666; margin:0 0 1em 0;">
-          Only apply this constraint when a condition is met (e.g., Cost &lt; 30,000 IF Type = "O&M")
-        </p>
-        
-        <div id="ifConditionFields" style="display:none; padding:1em; background:#f8f9fa; border-radius:4px;">
-          <div style="margin-bottom:0.5em;">
-            <label>Field Name</label><br/>
-            <input type="text" id="ifFieldName" placeholder="Start typing to see suggestions..." style="width:100%; padding:0.5em;"/>
-          </div>
-          
-          <div style="margin-bottom:0.5em;">
-            <label>Operator</label><br/>
-            <select id="ifOperator" style="width:100%; padding:0.5em;">
-              <option value="=">=  (equals)</option>
-              <option value="!=">!= (not equals)</option>
-              <option value="contains">contains</option>
-            </select>
-          </div>
-          
-          <div>
-            <label>Value</label><br/>
-            <input type="text" id="ifValue" placeholder="e.g., O&M, Capital, Decommission" style="width:100%; padding:0.5em;"/>
-          </div>
+        <div style="margin-top:1.5em; display:flex; gap:0.5rem;">
+          <button id="step2BackBtn" class="btn" style="flex:1;">← Back</button>
+          <button id="step2NextBtn" class="btn btn-primary" style="flex:1;">Next →</button>
         </div>
       </div>
 
-      <div style="margin-top:1.5em; text-align:right;">
-        <button id="saveFixedParamBtn" class="btn btn-primary">Save Fixed Parameter</button>
-        <button id="cancelFixedParamBtn" class="btn">Cancel</button>
+      <!-- STEP 3: Advanced Options -->
+      <div id="step3Container" class="step-container" style="display:none;">
+        <h3 style="margin:0 0 1em 0; color:#666;">Step 3: Advanced Options</h3>
+
+        <!-- Cumulative Checkbox (for Temporal and Monetary only) -->
+        <div id="cumulativeContainer" style="display:none; margin-bottom:1.5em; padding:1em; background:#f0f7ff; border-radius:6px; border:1px solid #d0e7ff;">
+          <label style="display:flex; align-items:center; gap:0.5em; cursor:pointer; font-weight:600;">
+            <input type="checkbox" id="cumulativeCheckbox" style="cursor:pointer;"/>
+            <span id="cumulativeLabel">Cumulative</span>
+          </label>
+          <p id="cumulativeExplanation" style="font-size:0.85em; color:#555; margin:0.5em 0 0 1.8em; line-height:1.4;">
+          </p>
+        </div>
+
+        <!-- SPLIT Condition Section (Monetary only) -->
+        <div id="splitSection" style="display:none; margin-bottom:1.5em;">
+          <div style="padding:1em; background:#fff9e6; border-radius:6px; border:1px solid #ffe7a3;">
+            <label style="display:flex; align-items:center; gap:0.5em; cursor:pointer; font-weight:600;">
+              <input type="checkbox" id="enableSplitCondition" style="cursor:pointer;"/>
+              <span>Add SPLIT Condition (Optional)</span>
+            </label>
+            <p style="font-size:0.85em; color:#555; margin:0.5em 0 0 1.8em; line-height:1.4;">
+              Split the monetary value by source tokens from O&M, Capital, or Decommission columns.
+            </p>
+            <div id="splitFields" style="display:none; margin-top:1em;">
+              <label style="font-size:0.9em; font-weight:600;">Sources</label>
+              <div style="font-size:0.85em; color:#666; margin:0.3em 0 0.5em 0;">
+                Enter source tokens (e.g., F, P, P(OTH), P(BCH))
+              </div>
+              <!-- Rows injected by JS -->
+            </div>
+          </div>
+        </div>
+
+        <!-- IF Condition Section (all types) -->
+        <div id="ifSection" style="margin-bottom:1.5em;">
+          <div style="padding:1em; background:#fff3cd; border-radius:6px; border:1px solid #ffc107;">
+            <label style="display:flex; align-items:center; gap:0.5em; cursor:pointer; font-weight:600;">
+              <input type="checkbox" id="enableIfCondition" style="cursor:pointer;"/>
+              <span>Add IF Condition (Optional)</span>
+            </label>
+            <p style="font-size:0.85em; color:#555; margin:0.5em 0 0 1.8em; line-height:1.4;">
+              Only apply this constraint when a specific condition is met.
+            </p>
+            <div id="ifConditionFields" style="display:none; margin-top:1em;">
+              <div style="margin-bottom:0.5em;">
+                <label>Field Name</label><br/>
+                <input type="text" id="ifFieldName" placeholder="Start typing to see suggestions..." style="width:100%; padding:0.5em;"/>
+              </div>
+              <div style="margin-bottom:0.5em;">
+                <label>Operator</label><br/>
+                <select id="ifOperator" style="width:100%; padding:0.5em;">
+                  <option value="=">=  (equals)</option>
+                  <option value="!=">!= (not equals)</option>
+                  <option value="contains">contains</option>
+                </select>
+              </div>
+              <div>
+                <label>Value</label><br/>
+                <input type="text" id="ifValue" placeholder="e.g., O&M, Capital" style="width:100%; padding:0.5em;"/>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:1.5em; display:flex; gap:0.5rem;">
+          <button id="step3BackBtn" class="btn" style="flex:1;">← Back</button>
+          <button id="saveFixedParamBtn" class="btn btn-primary" style="flex:2;">Save Fixed Parameter</button>
+        </div>
+
       </div>
+
+      <!-- Cancel button (always visible) -->
+      <div style="margin-top:1em; text-align:center;">
+        <button id="cancelFixedParamBtn" class="btn" style="background:transparent; border:none; color:#666;">Cancel</button>
+      </div>
+
     </div>
   </div>
+
+  <style>
+    .step-container {
+      min-height: 300px;
+    }
+    .step-dot {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: #e0e0e0;
+      color: #999;
+      font-weight: 600;
+      transition: all 0.3s ease;
+    }
+    .step-dot.active {
+      background: #3c78d8;
+      color: white;
+      transform: scale(1.1);
+    }
+    .step-dot.completed {
+      background: #5cb85c;
+      color: white;
+    }
+  </style>
   
   <!-- Add Year Modal -->
   <div id="addYearModal" class="modal" style="display:none;">
