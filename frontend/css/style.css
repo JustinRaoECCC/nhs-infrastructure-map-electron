@@ -4381,3 +4381,325 @@ html.modal-open, body.modal-open { overflow: hidden; }
 .nhs-dashboard .opt-table tbody td {
   vertical-align: middle;
 }
+
+/* ==========================================================================
+   OPTIMIZATION DASHBOARD — Performance & Polish
+   Scoped to .nhs-dashboard to avoid conflicts with existing styles
+   ========================================================================== */
+
+/* Virtual scroll container for Opt1 */
+.nhs-dashboard .virtual-scroll-container {
+  position: relative;
+  overflow: auto;
+  height: 600px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+.nhs-dashboard .virtual-scroll-spacer {
+  position: relative;
+  width: 1px;
+}
+
+.nhs-dashboard .virtual-scroll-viewport {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+}
+
+/* Lazy-loaded sections (Opt2 & Opt3) */
+.nhs-dashboard .toggle-trip,
+.nhs-dashboard .toggle-year {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.25rem;
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.nhs-dashboard .toggle-trip:hover,
+.nhs-dashboard .toggle-year:hover {
+  color: var(--text);
+  transform: scale(1.1);
+}
+
+.nhs-dashboard .trip-details,
+.nhs-dashboard .year-details {
+  margin-top: 0.75rem;
+}
+
+/* Opt2/3 trip sections with lazy rendering */
+.nhs-dashboard .trip-title button {
+  margin-right: 0.5rem;
+  vertical-align: middle;
+}
+
+/* Smooth collapse/expand animations */
+.nhs-dashboard .trip-details,
+.nhs-dashboard .year-details,
+.nhs-dashboard .nested-wrap {
+  transition: opacity 0.2s ease;
+}
+
+.nhs-dashboard .trip-details[style*="display: none"],
+.nhs-dashboard .year-details[style*="display: none"],
+.nhs-dashboard .nested-wrap[style*="display: none"] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Nested table lazy loading indicator (optional) */
+.nhs-dashboard .loading-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* Performance: reduce paint on hover for large tables */
+.nhs-dashboard .opt-table tbody tr {
+  will-change: background-color;
+}
+
+/* Optimize for larger datasets - lighter hover effect */
+.nhs-dashboard .opt-table.large-dataset tbody tr:hover {
+  background: rgba(239, 246, 255, 0.5) !important;
+}
+
+/* Virtual scroll performance optimizations */
+.nhs-dashboard .virtual-scroll-container {
+  contain: layout style paint;
+  transform: translateZ(0);
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Reduce repaints during scroll */
+.nhs-dashboard .virtual-scroll-viewport table {
+  backface-visibility: hidden;
+  transform: translate3d(0, 0, 0);
+}
+
+/* Sticky header performance for virtual scroll */
+.nhs-dashboard .virtual-scroll-container thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  will-change: transform;
+}
+
+/* Progressive rendering animation (subtle) */
+@keyframes nhs-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.nhs-dashboard .opt-trip.progressive,
+.nhs-dashboard .year-section.progressive {
+  animation: nhs-fade-in 0.3s ease-out;
+}
+
+/* Improve scrollbar visibility for better UX */
+.nhs-dashboard .virtual-scroll-container::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.nhs-dashboard .virtual-scroll-container::-webkit-scrollbar-track {
+  background: var(--bg-subtle, #f7f9fc);
+  border-radius: 6px;
+}
+
+.nhs-dashboard .virtual-scroll-container::-webkit-scrollbar-thumb {
+  background: var(--border-2, #d1d5db);
+  border-radius: 6px;
+  border: 2px solid var(--bg-subtle, #f7f9fc);
+}
+
+.nhs-dashboard .virtual-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: var(--muted, #6b7280);
+}
+
+/* Collapse toggle buttons in nested tables */
+.nhs-dashboard .opt-table .toggle {
+  font-size: 0.875rem;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s ease;
+}
+
+.nhs-dashboard .opt-table .toggle:hover {
+  transform: scale(1.15);
+}
+
+/* Nested table containers */
+.nhs-dashboard .nested-wrap {
+  animation: nhs-fade-in 0.25s ease-out;
+}
+
+/* Reduce motion for users who prefer it */
+@media (prefers-reduced-motion: reduce) {
+  .nhs-dashboard .toggle-trip,
+  .nhs-dashboard .toggle-year,
+  .nhs-dashboard .toggle,
+  .nhs-dashboard .opt-trip.progressive,
+  .nhs-dashboard .year-section.progressive,
+  .nhs-dashboard .nested-wrap,
+  .nhs-dashboard .trip-details,
+  .nhs-dashboard .year-details {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* Loading states for lazy content */
+.nhs-dashboard .skeleton-row {
+  background: linear-gradient(
+    90deg,
+    var(--bg-subtle) 0%,
+    rgba(255, 255, 255, 0.5) 50%,
+    var(--bg-subtle) 100%
+  );
+  background-size: 200% 100%;
+  animation: nhs-skeleton 1.5s ease-in-out infinite;
+  height: 2rem;
+  border-radius: 8px;
+  margin: 0.5rem 0;
+}
+
+@keyframes nhs-skeleton {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Empty state improvements */
+.nhs-dashboard .opt-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 1rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.nhs-dashboard .opt-empty svg {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 1rem;
+  opacity: 0.5;
+}
+
+/* Responsive optimizations for mobile */
+@media (max-width: 768px) {
+  .nhs-dashboard .virtual-scroll-container {
+    height: 400px;
+  }
+  
+  .nhs-dashboard .opt-table {
+    font-size: 0.85rem;
+  }
+  
+  .nhs-dashboard .opt-table th,
+  .nhs-dashboard .opt-table td {
+    padding: 0.4rem 0.5rem;
+  }
+}
+
+/* Dark mode optimizations */
+@media (prefers-color-scheme: dark) {
+  .nhs-dashboard .virtual-scroll-container::-webkit-scrollbar-track {
+    background: #0b1326;
+  }
+  
+  .nhs-dashboard .virtual-scroll-container::-webkit-scrollbar-thumb {
+    background: #1f2937;
+    border-color: #0b1326;
+  }
+  
+  .nhs-dashboard .virtual-scroll-container::-webkit-scrollbar-thumb:hover {
+    background: #374151;
+  }
+  
+  .nhs-dashboard .skeleton-row {
+    background: linear-gradient(
+      90deg,
+      #0b1326 0%,
+      rgba(31, 41, 55, 0.5) 50%,
+      #0b1326 100%
+    );
+  }
+}
+
+/* Performance hint for browser */
+.nhs-dashboard .opt-container {
+  contain: layout style;
+}
+
+/* Optimize table rendering */
+.nhs-dashboard .opt-table tbody {
+  contain: layout style;
+}
+
+/* Ensure smooth scrolling on all devices */
+.nhs-dashboard .virtual-scroll-container,
+.nhs-dashboard .table-scroll {
+  scroll-behavior: smooth;
+}
+
+/* Fix for trip/year section spacing */
+.nhs-dashboard .opt-trip,
+.nhs-dashboard .year-section {
+  margin: 1rem 0;
+}
+
+.nhs-dashboard .opt-trip:first-child,
+.nhs-dashboard .year-section:first-child {
+  margin-top: 0.5rem;
+}
+
+/* Ensure buttons in headers align properly */
+.nhs-dashboard .trip-title,
+.nhs-dashboard .year-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Add visual feedback for interactive elements */
+.nhs-dashboard .toggle:active,
+.nhs-dashboard .toggle-trip:active,
+.nhs-dashboard .toggle-year:active {
+  transform: scale(0.95);
+}
+
+/* Ensure nested tables don't overflow */
+.nhs-dashboard .nested-table {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* Fix for deeply nested content */
+.nhs-dashboard .nested-table.deepest {
+  font-size: 0.9rem;
+}
+
+.nhs-dashboard .nested-table.deepest th,
+.nhs-dashboard .nested-table.deepest td {
+  padding: 0.45rem 0.6rem;
+}

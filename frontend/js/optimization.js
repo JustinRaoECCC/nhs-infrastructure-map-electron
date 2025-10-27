@@ -381,6 +381,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const rightToggleBtn = document.getElementById('toggleRight');
     if (rightToggleBtn) rightToggleBtn.style.display = 'none';
 
+    // Ensure dashboard styles scope applies
+    if (dashPlaceholder) dashPlaceholder.classList.add('nhs-dashboard');
     if (!dashPlaceholder.innerHTML.trim()) {
       const html = await fetch('optimization.html').then(r => r.text());
       dashPlaceholder.innerHTML = html;
@@ -1447,7 +1449,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!isFinite(num)) return '';
         return '$' + num.toLocaleString(undefined, { maximumFractionDigits: 0 });
       };
-      // Collect all split keys present (with positive amounts) to make dynamic columns
+
+      // Collect split keys
       const splitKeysSet = new Set();
       (result.ranking || []).forEach(item => {
         const sa = item.split_amounts || {};
@@ -1467,6 +1470,8 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
       opt1Results.appendChild(summary);
 
+      // Always render standard table (virtual table removed)
+      const items = result.ranking || [];
       const table = document.createElement('table');
       table.className = 'opt-table';
       table.innerHTML = `
@@ -1484,34 +1489,30 @@ document.addEventListener('DOMContentLoaded', () => {
         </thead>
         <tbody></tbody>
       `;
-      
       const tbody = table.querySelector('tbody');
-      (result.ranking || []).forEach(item => {
+      items.forEach(item => {
         const cost = Number(item.cost || 0);
         const tr = document.createElement('tr');
         let html = `
-          <td class="txt">${item.rank}</td>
-          <td class="txt">${item.station_id || ''}</td>
-          <td class="txt">${item.location || ''}</td>
-          <td class="txt">${item.asset_type || ''}</td>
-          <td class="txt">${item.repair_name || ''}</td>
-          <td class="txt">${formatCurrency(cost)}</td>
-        `;
-        // per-source split columns (blank when zero/nonexistent)
+            <td class="txt">${item.rank}</td>
+            <td class="txt">${item.station_id || ''}</td>
+            <td class="txt">${item.location || ''}</td>
+            <td class="txt">${item.asset_type || ''}</td>
+            <td class="txt">${item.repair_name || ''}</td>
+            <td class="txt">${formatCurrency(cost)}</td>
+          `;
         const sa = item.split_amounts || {};
         splitKeys.forEach(k => {
           const v = Number(sa[k] || 0);
           html += `<td class="txt">${v > 0 ? formatCurrency(v) : ''}</td>`;
         });
-        html += `
-          <td class="txt">${Number(item.score).toFixed(2)}%</td>
-        `;
+        html += `<td class="txt">${Number(item.score).toFixed(2)}%</td>`;
         tr.innerHTML = html;
         tbody.appendChild(tr);
       });
-
       opt1Results.appendChild(table);
     }
+
 
     // ═══════════════════════════════════════════════════════════════════════
     // OPTIMIZATION 2 - Trip Grouping
@@ -1607,18 +1608,23 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
       opt2Results.appendChild(summary);
 
+      // Render trips with lazy-loading tables
       result.trips.forEach((trip, idx) => {
         const tripSection = document.createElement('section');
         tripSection.className = 'opt-trip';
         const labels = (trip.group_labels && trip.group_labels.length)
             ? trip.group_labels.map(gl => `${gl.name}: ${gl.value}`).join(' • ')
             : `Access Type: ${trip.access_type || ''} • City of Travel: ${trip.city_of_travel || ''}`;
-        // build split total chips (skip zeros/nonexistent)
+        
         const splitTotals = trip.total_split_costs || {};
         const splitKeys = Object.keys(splitTotals).filter(k => Number(splitTotals[k]) > 0).sort();
         const splitChips = splitKeys.map(k => `<span class="chip">${k}: ${formatCurrency(splitTotals[k])}</span>`).join('');
+        
         tripSection.innerHTML = `
-          <div class="trip-title">Trip ${idx + 1}: ${labels}</div>
+          <div class="trip-title">
+            <button class="toggle-trip" data-trip-idx="${idx}" aria-label="Expand trip">▸</button>
+            Trip ${idx + 1}: ${labels}
+          </div>
           <div class="trip-summary">
             <span class="chip">Total Days: ${trip.total_days}</span>
             <span class="chip">Stations: ${trip.stations.length}</span>
@@ -1627,43 +1633,71 @@ document.addEventListener('DOMContentLoaded', () => {
             <span class="chip">Score: ${Number(trip.priority_score || 0).toFixed(2)} (${trip.priority_mode || 'tripmean'})</span>            
             ${splitChips}
           </div>
+          <div class="trip-details" style="display:none;"></div>
         `;
 
-        const table = document.createElement('table');
-        table.className = 'opt-table';
-        table.innerHTML = `
-          <thead>
-            <tr>
-              <th>Station ID</th>
-              <th>Site Name</th>
-              <th>City of Travel</th>
-              <th>Time to Site (hr)</th>
-              <th>Repairs</th>
-              <th>Days</th>
-              <th>TripMean</th>
-              <th>TripMax</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        `;
+        // Lazy render table on expand
+        const toggleBtn = tripSection.querySelector('.toggle-trip');
+        const detailsDiv = tripSection.querySelector('.trip-details');
+        let rendered = false;
+        
+        toggleBtn.addEventListener('click', () => {
+          const isOpen = detailsDiv.style.display !== 'none';
+          
+          if (isOpen) {
+            detailsDiv.style.display = 'none';
+            toggleBtn.textContent = '▸';
+          } else {
+            if (!rendered) {
+              // Render table on first expand
+              {
+                // Regular table
+                const table = document.createElement('table');
+                table.className = 'opt-table';
+                table.innerHTML = `
+                  <thead>
+                    <tr>
+                      <th>Station ID</th>
+                      <th>Site Name</th>
+                      <th>City of Travel</th>
+                      <th>Time to Site (hr)</th>
+                      <th>Repairs</th>
+                      <th>Days</th>
+                      <th>TripMean</th>
+                      <th>TripMax</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                `;
 
-        const tbody = table.querySelector('tbody');
-        trip.stations.forEach(station => {
-          const tr = document.createElement('tr');
-          tr.innerHTML = `
-            <td>${station.station_id}</td>
-            <td>${station.site_name || ''}</td>
-            <td>${station.city_of_travel || ''}</td>
-            <td>${station.time_to_site || ''}</td>
-            <td>${station.repair_count}</td>
-            <td>${station.total_days}</td>
-            <td class="txt">${Number(trip.priority_metrics?.mean || 0).toFixed(2)}</td>
-            <td class="txt">${Number(trip.priority_metrics?.max || 0).toFixed(2)}</td>
-          `;
-          tbody.appendChild(tr);
+                const tbody = table.querySelector('tbody');
+                trip.stations.forEach(station => {
+                  const tr = document.createElement('tr');
+                  tr.innerHTML = `
+                    <td>${station.station_id}</td>
+                    <td>${station.site_name || ''}</td>
+                    <td>${station.city_of_travel || ''}</td>
+                    <td>${station.time_to_site || ''}</td>
+                    <td>${station.repair_count}</td>
+                    <td>${station.total_days}</td>
+                    <td class="txt">${Number(trip.priority_metrics?.mean || 0).toFixed(2)}</td>
+                    <td class="txt">${Number(trip.priority_metrics?.max || 0).toFixed(2)}</td>
+                  `;
+                  tbody.appendChild(tr);
+
+                });
+
+                detailsDiv.appendChild(table);
+
+              }
+
+              rendered = true;
+            }
+            detailsDiv.style.display = '';
+            toggleBtn.textContent = '▾';
+          }
         });
 
-        tripSection.appendChild(table);
         opt2Results.appendChild(tripSection);
       });
     }
@@ -1960,6 +1994,135 @@ document.addEventListener('DOMContentLoaded', () => {
 
     }
 
+    // Optimized station table rendering with lazy repair expansion
+    function renderStationsTable(container, trip, yearSplitKeys/*, useVirtual = false*/) {
+      {
+        // Regular table for smaller datasets, but still with lazy repair expansion
+        const stTable = document.createElement('table');
+        stTable.className = 'opt-table nested-table';
+        stTable.innerHTML = `
+          <thead>
+            <tr>
+              <th></th>
+              <th>Station ID</th><th>Site</th><th>City</th><th>Time to Site (hr)</th>
+              <th>Repairs</th><th>Station Days</th>
+              ${yearSplitKeys.map(k => `<th>Split: ${k}</th>`).join('')}
+            </tr>
+          </thead>
+          <tbody></tbody>
+        `;
+        const stBody = stTable.querySelector('tbody');
+      
+        // Limit initial station rendering for performance
+        const stationsToRender = trip.stations.slice(0, 50);
+        let moreStations = trip.stations.length > 50;
+        
+        stationsToRender.forEach(st => {
+          const sTr = document.createElement('tr');
+          sTr.className = 'tr-station';
+          
+          const sSplit = {};
+          (st.repairs || []).forEach(rp => {
+            const cst = _tryFloat(rp.cost || findFieldAnywhere(rp, window._stationDataMap?.[rp.station_id], 'Cost')) || 0;
+            const smap = getSplitMapFromRepair(rp);
+            yearSplitKeys.forEach(k => {
+              const mul = Number(smap[_canon(k)] || 0);
+              if (mul > 0) sSplit[k] = (sSplit[k] || 0) + (cst * mul);
+            });
+          });
+
+          sTr.innerHTML = `
+            <td><button class="toggle" aria-label="Expand station">▸</button></td>
+            <td class="txt">${st.station_id}</td>
+            <td class="txt">${st.site_name || ''}</td>
+            <td class="txt">${st.city_of_travel || ''}</td>
+            <td class="txt">${st.time_to_site || ''}</td>
+            <td class="txt">${String(st.repair_count)}</td>
+            <td class="txt">${String(st.total_days)}</td>
+            ${yearSplitKeys.map(k => {
+              const val = Number(sSplit[k] || 0);
+              return `<td class="txt">${val ? formatCurrency(val) : ''}</td>`;
+            }).join('')}
+          `;
+          stBody.appendChild(sTr);
+
+          // Nested repairs - defer rendering
+          const rNestRow = document.createElement('tr');
+          const rCell = document.createElement('td');
+          const stationColCount = 7 + yearSplitKeys.length;
+          rCell.colSpan = stationColCount;
+          const repairsWrap = document.createElement('div');
+          repairsWrap.style.display = 'none';
+          rCell.appendChild(repairsWrap);
+          rNestRow.appendChild(rCell);
+          stBody.appendChild(rNestRow);
+        
+          // Station toggle - only render repairs when needed
+          sTr.querySelector('.toggle')?.addEventListener('click', () => {
+            const open = repairsWrap.style.display !== 'none';
+          
+            if (open) {
+              repairsWrap.style.display = 'none';
+              sTr.querySelector('.toggle').textContent = '▸';
+            } else {
+              // Only render repairs table on first open
+              if (repairsWrap.children.length === 0 && st.repairs.length <= 50) {
+                const rTable = document.createElement('table');
+                rTable.className = 'opt-table nested-table deepest';
+                rTable.innerHTML = `
+                  <thead>
+                    <tr>
+                      <th>Repair</th><th>Repair Days</th><th>Cost</th>
+                      ${yearSplitKeys.map(k => `<th>Split: ${k}</th>`).join('')}
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                `;
+                const rBody = rTable.querySelector('tbody');
+             
+                (st.repairs || []).forEach(rp => {
+                  const d = _tryFloat(rp.days || rp.Days) || 0;
+                  const cst = _tryFloat(rp.cost || findFieldAnywhere(rp, window._stationDataMap?.[rp.station_id], 'Cost')) || 0;
+                  const rr = document.createElement('tr');
+                  rr.innerHTML = `
+                    <td class="txt">${rp.name || rp.repair_name || ''}</td>
+                    <td class="txt">${String(d)}</td>
+                    <td class="txt">${formatCurrency(cst)}</td>
+                    ${yearSplitKeys.map(k => {
+                      const smap = getSplitMapFromRepair(rp);
+                      const mul = Number(smap[_canon(k)] || 0);
+                      const val = mul > 0 ? cst * mul : 0;
+                      return `<td class="txt">${val ? formatCurrency(val) : ''}</td>`;
+                    }).join('')}
+                  `;
+                  rBody.appendChild(rr);
+                });
+              
+                repairsWrap.appendChild(rTable);
+              } else if (st.repairs.length > 50) {
+                repairsWrap.innerHTML = `<div style="padding: 1em; color: #666;">Too many repairs (${st.repairs.length}) to display. Consider filtering.</div>`;
+              }
+              repairsWrap.style.display = '';
+              sTr.querySelector('.toggle').textContent = '▾';
+
+            }
+          });
+        });
+
+        if (moreStations) {
+          const loadMore = document.createElement('tr');
+          loadMore.innerHTML = `<td colspan="${7 + yearSplitKeys.length}" style="text-align:center; padding:1em;">
+            <button class="btn" onclick="this.closest('tbody').innerHTML=''; renderStationsTable(this.closest('.nested-wrap'), trip, yearSplitKeys, true)">
+              Load all ${trip.stations.length} stations (may be slow)
+            </button>
+          </td>`;
+          stBody.appendChild(loadMore);
+        }
+
+        container.appendChild(stTable);
+      }
+    }
+
     function renderOpt3Results(result) {
       opt3Results.innerHTML = '';
 
@@ -2091,21 +2254,25 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
       opt3Results.appendChild(summary);
 
-      Object.keys(result.assignments).sort().forEach(year => {
+      const yearKeys = Object.keys(result.assignments).sort();
+
+      yearKeys.forEach((year) => {
         const trips = result.assignments[year];
         const ysum = (result.year_summaries && result.year_summaries[year]) ? result.year_summaries[year] : { total_cost: 0, total_days: 0, total_split_costs: {} };
         const splitTotals = ysum.total_split_costs || {};
         const splitKeys = Object.keys(splitTotals).filter(k => Number(splitTotals[k]) > 0).sort();
         const splitChips = splitKeys.map(k => `<span class="chip">${k}: ${formatCurrency(splitTotals[k])}</span>`).join('');
-        // We keep the remaining-capacity chips logic, but do not render constraint-based table columns below.
+        
         const cs = result.constraints_state?.[year] || { budgets:{}, temporal:{} };
-        const remainChips = []; // optional chips if you still want to show remaining capacities above the table
-        // (leave as-is or populate if desired; columns below no longer depend on fixed parameters)
+        const remainChips = [];
 
         const yearSection = document.createElement('section');
         yearSection.className = 'opt-trip';
         yearSection.innerHTML = `
-          <div class="trip-title">Year ${year}</div>
+          <div class="trip-title">
+            <button class="toggle-year" data-year="${year}" aria-label="Expand year">▸</button>
+            Year ${year}
+          </div>
           <div class="trip-summary">
             <span class="chip">Trips: ${trips.length}</span>
             <span class="chip">Total Days: ${ysum.total_days}</span>
@@ -2113,162 +2280,109 @@ document.addEventListener('DOMContentLoaded', () => {
             ${splitChips}
             ${remainChips.join('')}
           </div>
+          <div class="year-details" style="display:none;"></div>
         `;
 
-        // Split columns for this year (display-only; independent of fixed parameters)
         const yearSplitKeys = collectYearSplitKeys(trips);
+        const toggleBtn = yearSection.querySelector('.toggle-year');
+        const detailsDiv = yearSection.querySelector('.year-details');
+        let rendered = false;
 
-        // Expandable trips → stations → repairs
-        const table = document.createElement('table');
-        table.className = 'opt-table';
-        table.innerHTML = `
-          <thead>
-            <tr>
-              <th></th>
-              <th>Priority</th>
-              <th>City of Travel</th>
-              <th>Access Type</th>
-              <th>Cost</th>
-              <th>Trip Days</th>
-              <th>Stations</th>
-              <th>Score</th>
-              ${yearSplitKeys.map(k => `<th>Split: ${k}</th>`).join('')}
-            </tr>
-          </thead>
-          <tbody></tbody>
-        `;
-        const tbody = table.querySelector('tbody');
-        trips.forEach((trip, idx) => {
-          const tr = document.createElement('tr');
-          tr.className = 'tr-trip';
-          tr.innerHTML = `
-            <td><button class="toggle" aria-label="Expand trip">▸</button></td>
-            <td class="txt">${String(idx + 1)}</td>
-            <td class="txt">${trip.city_of_travel}</td>
-            <td class="txt">${trip.access_type}</td>
-            <td class="txt">${formatCurrency(trip.total_cost || 0)}</td>
-            <td class="txt">${String(trip.total_days)}</td>
-            <td class="txt">${String(trip.stations.length)}</td>
-            <td class="txt">${String(Number(trip.priority_score || 0).toFixed(2))}</td>
-            ${yearSplitKeys.map(k => {
-              const val = Number((trip.total_split_costs || {})[k] || 0);
-              return `<td class="txt">${val ? formatCurrency(val) : ''}</td>`;
-            }).join('')}
-          `;
-          tbody.appendChild(tr);
-          // nested stations container row
-          const nestRow = document.createElement('tr');
-          const nestCell = document.createElement('td');
-          // columns: 8 static (incl. toggle) + split columns
-          const topColCount = 8 + yearSplitKeys.length;
-          nestCell.colSpan = topColCount;
-          const stationsWrap = document.createElement('div');
-          stationsWrap.className = 'nested-wrap';
-          stationsWrap.style.display = 'none';
-          // stations table
-          const stTable = document.createElement('table');
-          stTable.className = 'opt-table nested-table';
-          stTable.innerHTML = `
-            <thead>
-              <tr>
-                <th></th>
-                <th>Station ID</th><th>Site</th><th>City</th><th>Time to Site (hr)</th>
-                <th>Repairs</th><th>Station Days</th>
-                ${yearSplitKeys.map(k => `<th>Split: ${k}</th>`).join('')}
-              </tr>
-            </thead>
-            <tbody></tbody>
-          `;
-          const stBody = stTable.querySelector('tbody');
-          trip.stations.forEach(st => {
-            const sTr = document.createElement('tr');
-            sTr.className = 'tr-station';
-            // split totals per station
-            const sSplit = {};
-            (st.repairs || []).forEach(rp => {
-              // compute station split totals
-              const cst = _tryFloat(rp.cost || findFieldAnywhere(rp, window._stationDataMap?.[rp.station_id], 'Cost')) || 0;
-              const smap = getSplitMapFromRepair(rp);
-              yearSplitKeys.forEach(k => {
-                const mul = Number(smap[_canon(k)] || 0);
-                if (mul > 0) sSplit[k] = (sSplit[k] || 0) + (cst * mul);
-              });
-            });
-            sTr.innerHTML = `
-              <td><button class="toggle" aria-label="Expand station">▸</button></td>
-              <td class="txt">${st.station_id}</td>
-              <td class="txt">${st.site_name || ''}</td>
-              <td class="txt">${st.city_of_travel || ''}</td>
-              <td class="txt">${st.time_to_site || ''}</td>
-              <td class="txt">${String(st.repair_count)}</td>
-              <td class="txt">${String(st.total_days)}</td>
-              ${yearSplitKeys.map(k => {
-                const val = Number(sSplit[k] || 0);
-                return `<td class="txt">${val ? formatCurrency(val) : ''}</td>`;
-              }).join('')}
-            `;
-            stBody.appendChild(sTr);
-            // nested repairs table
-            const rNestRow = document.createElement('tr');
-            const rCell = document.createElement('td');
-            // columns: 7 static (incl. toggle) + split columns
-            const stationColCount = 7 + yearSplitKeys.length;
-            rCell.colSpan = stationColCount;
-            const rTable = document.createElement('table');
-            rTable.className = 'opt-table nested-table deepest';
-            rTable.innerHTML = `
-              <thead>
-                <tr>
-                  <th>Repair</th><th>Repair Days</th><th>Cost</th>
-                  ${yearSplitKeys.map(k => `<th>Split: ${k}</th>`).join('')}
-                </tr>
-              </thead>
-              <tbody></tbody>
-            `;
-            const rBody = rTable.querySelector('tbody');
-            (st.repairs || []).forEach(rp => {
-              const key = `sid:${rp.station_id ?? ''}::name:${rp.name ?? rp.repair_name ?? ''}`;
-              const d = _tryFloat(rp.days || rp.Days) || 0;
-              const cst = _tryFloat(rp.cost || findFieldAnywhere(rp, window._stationDataMap?.[rp.station_id], 'Cost')) || 0;
-              const rr = document.createElement('tr');
-              rr.innerHTML = `
-                <td class="txt">${rp.name || rp.repair_name || ''}</td>
-                <td class="txt">${String(d)}</td>
-                <td class="txt">${formatCurrency(cst)}</td>
-                ${yearSplitKeys.map(k => {
-                  const smap = getSplitMapFromRepair(rp);
-                  const mul = Number(smap[_canon(k)] || 0);
-                  const val = mul > 0 ? cst * mul : 0;
-                  return `<td class="txt">${val ? formatCurrency(val) : ''}</td>`;
-                }).join('')}
-              `;
-              rBody.appendChild(rr);
-            });
-            rCell.appendChild(rTable);
-            rNestRow.appendChild(rCell);
-            rNestRow.style.display = 'none';
-            stBody.appendChild(rNestRow);
-            // station toggle
-            sTr.querySelector('.toggle')?.addEventListener('click', () => {
-              const open = rNestRow.style.display !== 'none';
-              rNestRow.style.display = open ? 'none' : '';
-              sTr.querySelector('.toggle').textContent = open ? '▸' : '▾';
-            });
-          });
-          stationsWrap.appendChild(stTable);
-          nestCell.appendChild(stationsWrap);
-          nestRow.appendChild(nestCell);
-          tbody.appendChild(nestRow);
-          // trip toggle
-          tr.querySelector('.toggle')?.addEventListener('click', () => {
-            const open = stationsWrap.style.display !== 'none';
-            stationsWrap.style.display = open ? 'none' : '';
-            tr.querySelector('.toggle').textContent = open ? '▸' : '▾';
-          });
+        toggleBtn.addEventListener('click', () => {
+          const isOpen = detailsDiv.style.display !== 'none';
+          
+          if (isOpen) {
+            detailsDiv.style.display = 'none';
+            toggleBtn.textContent = '▸';
+          } else {
+            if (!rendered) {
+              {
+                // Regular table
+                const table = document.createElement('table');
+                table.className = 'opt-table';
+                table.innerHTML = `
+                  <thead>
+                    <tr>
+                      <th></th>
+                      <th>Priority</th>
+                      <th>City of Travel</th>
+                      <th>Access Type</th>
+                      <th>Cost</th>
+                      <th>Trip Days</th>
+                      <th>Stations</th>
+                      <th>Score</th>
+                      ${yearSplitKeys.map(k => `<th>Split: ${k}</th>`).join('')}
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                `;
+                const tbody = table.querySelector('tbody');
+
+                trips.forEach((trip, idx) => {
+                  const tr = document.createElement('tr');
+                  tr.className = 'tr-trip';
+                  tr.innerHTML = `
+                    <td><button class="toggle" data-year="${year}" data-trip="${idx}" aria-label="Expand trip">▸</button></td>
+                    <td class="txt">${String(idx + 1)}</td>
+                    <td class="txt">${trip.city_of_travel}</td>
+                    <td class="txt">${trip.access_type}</td>
+                    <td class="txt">${formatCurrency(trip.total_cost || 0)}</td>
+                    <td class="txt">${String(trip.total_days)}</td>
+                    <td class="txt">${String(trip.stations.length)}</td>
+                    <td class="txt">${String(Number(trip.priority_score || 0).toFixed(2))}</td>
+                    ${yearSplitKeys.map(k => {
+                      const val = Number((trip.total_split_costs || {})[k] || 0);
+                      return `<td class="txt">${val ? formatCurrency(val) : ''}</td>`;
+                    }).join('')}
+                  `;
+                  tbody.appendChild(tr);
+                
+                  // Nested stations expansion
+                  const nestRow = document.createElement('tr');
+                  const nestCell = document.createElement('td');
+                  const topColCount = 8 + yearSplitKeys.length;
+                  nestCell.colSpan = topColCount;
+                  const stationsWrap = document.createElement('div');
+                  stationsWrap.className = 'nested-wrap';
+                  stationsWrap.style.display = 'none';
+                
+                  // Store trip data for lazy rendering
+                  nestCell.dataset.tripData = JSON.stringify({ year, tripIdx: idx, yearSplitKeys });
+                
+                  nestCell.appendChild(stationsWrap);
+                  nestRow.appendChild(nestCell);
+                  tbody.appendChild(nestRow);
+                
+                  // Trip toggle with lazy station rendering
+                  tr.querySelector('.toggle')?.addEventListener('click', () => {
+                    const open = stationsWrap.style.display !== 'none';
+                  
+                    if (open) {
+                      stationsWrap.style.display = 'none';
+                      tr.querySelector('.toggle').textContent = '▸';
+                    } else {
+                      // Lazy render stations with virtual scrolling for large datasets
+                      if (stationsWrap.children.length === 0) {
+                        const useVirtual = trip.stations.length > 20;
+                        renderStationsTable(stationsWrap, trip, yearSplitKeys, useVirtual);
+                      }
+                      stationsWrap.style.display = '';
+                      tr.querySelector('.toggle').textContent = '▾';
+                    }
+                  });
+                });
+                detailsDiv.appendChild(table);
+              }
+              rendered = true;
+            }
+            detailsDiv.style.display = '';
+            toggleBtn.textContent = '▾';
+          }
         });
-        yearSection.appendChild(table);
+
         opt3Results.appendChild(yearSection);
       });
+
     }
 
     // Initialize
