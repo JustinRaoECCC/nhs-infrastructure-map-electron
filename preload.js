@@ -188,6 +188,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Field catalog from the active workbook (sheet-qualified headers)
   getWorkbookFieldCatalog: (company, location) =>
     ipcRenderer.invoke('excel:getWorkbookFieldCatalog', company, location),
+
+  // Photo tab methods
+  getStationPhotoStructure: (siteName, stationId, subPath) => 
+    ipcRenderer.invoke('getStationPhotoStructure', siteName, stationId, subPath),
+  
+  createPhotoFolder: (siteName, stationId, folderPath) => 
+    ipcRenderer.invoke('createPhotoFolder', siteName, stationId, folderPath),
+  
+  savePhotos: (siteName, stationId, folderPath, files) => 
+    ipcRenderer.invoke('savePhotos', siteName, stationId, folderPath, files),
+  
+  getPhotoUrl: (siteName, stationId, photoPath) => 
+    ipcRenderer.invoke('getPhotoUrl', siteName, stationId, photoPath),
+  
+  deletePhoto: (siteName, stationId, photoPath) => 
+    ipcRenderer.invoke('deletePhoto', siteName, stationId, photoPath),
+  
+  deleteFolder: (siteName, stationId, folderPath) => 
+    ipcRenderer.invoke('deleteFolder', siteName, stationId, folderPath),
 });
 
 // --- BEGIN: appAlert (custom modal replacement for window.alert) ---

@@ -94,6 +94,30 @@ async function loadStationPage(stationId, origin = 'map') {
   } catch (e) {
     console.warn('[project-history bootstrap] failed:', e);
   }
+
+  // Load Photo tab template + script, then init
+  try {
+    // 1) Inject the tab template
+    const photoHost = container.querySelector('#photos');
+    if (photoHost) {
+      const tmpl = await fetch('photo_tab.html');
+      if (tmpl.ok) photoHost.innerHTML = await tmpl.text();
+    }
+    // 2) Ensure the script is loaded once
+    if (!window.__photoTabLoaded) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'js/photo_tab.js';
+        s.onload = () => { window.__photoTabLoaded = true; resolve(); };
+        s.onerror = reject;
+        document.head.appendChild(s);
+      });
+    }
+    // 3) Initialize the tab
+    window.initPhotoTab?.(container, stn);
+  } catch (e) {
+    console.warn('[photo-tab bootstrap] failed:', e);
+  }
 }
 
 // -- Per-section edit mode helpers --

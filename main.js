@@ -17,6 +17,8 @@ const auth = require('./backend/auth');
 const config = require('./backend/config');
 const { getPersistence } = require('./backend/persistence');
 
+const photoTab = require('./backend/photo_tab');
+
 // Lazy-load excel_worker_client to avoid starting the worker thread on import
 let excelClient = null;
 function getExcelClient() {
@@ -569,3 +571,63 @@ ipcMain.handle('excel:getAllFundingSettings', async (_evt, company) =>
 ipcMain.handle('excel:getWorkbookFieldCatalog', async (_evt, company, locationName) =>
   getExcelClient().getWorkbookFieldCatalog(company, locationName)
 );
+
+// Get station photo structure
+ipcMain.handle('getStationPhotoStructure', async (event, siteName, stationId, subPath) => {
+  try {
+    return await photoTab.getStationPhotoStructure(siteName, stationId, subPath);
+  } catch (e) {
+    console.error('[IPC] getStationPhotoStructure failed:', e);
+    return { success: false, message: String(e) };
+  }
+});
+
+// Create photo folder
+ipcMain.handle('createPhotoFolder', async (event, siteName, stationId, folderPath) => {
+  try {
+    return await photoTab.createPhotoFolder(siteName, stationId, folderPath);
+  } catch (e) {
+    console.error('[IPC] createPhotoFolder failed:', e);
+    return { success: false, message: String(e) };
+  }
+});
+
+// Save photos
+ipcMain.handle('savePhotos', async (event, siteName, stationId, folderPath, files) => {
+  try {
+    return await photoTab.savePhotos(siteName, stationId, folderPath, files);
+  } catch (e) {
+    console.error('[IPC] savePhotos failed:', e);
+    return { success: false, message: String(e) };
+  }
+});
+
+// Get photo URL
+ipcMain.handle('getPhotoUrl', async (event, siteName, stationId, photoPath) => {
+  try {
+    return await photoTab.getPhotoUrl(siteName, stationId, photoPath);
+  } catch (e) {
+    console.error('[IPC] getPhotoUrl failed:', e);
+    return { success: false, message: String(e) };
+  }
+});
+
+// Delete photo
+ipcMain.handle('deletePhoto', async (event, siteName, stationId, photoPath) => {
+  try {
+    return await photoTab.deletePhoto(siteName, stationId, photoPath);
+  } catch (e) {
+    console.error('[IPC] deletePhoto failed:', e);
+    return { success: false, message: String(e) };
+  }
+});
+
+// Delete folder
+ipcMain.handle('deleteFolder', async (event, siteName, stationId, folderPath) => {
+  try {
+    return await photoTab.deleteFolder(siteName, stationId, folderPath);
+  } catch (e) {
+    console.error('[IPC] deleteFolder failed:', e);
+    return { success: false, message: String(e) };
+  }
+});
