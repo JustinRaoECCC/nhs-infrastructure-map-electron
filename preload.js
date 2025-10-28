@@ -207,6 +207,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   deleteFolder: (siteName, stationId, folderPath) => 
     ipcRenderer.invoke('deleteFolder', siteName, stationId, folderPath),
+
+  // Document tab methods
+  getStationDocumentStructure: (siteName, stationId, subPath) => 
+    ipcRenderer.invoke('getStationDocumentStructure', siteName, stationId, subPath),
+  
+  createDocumentFolder: (siteName, stationId, folderPath) => 
+    ipcRenderer.invoke('createDocumentFolder', siteName, stationId, folderPath),
+  
+  saveDocuments: (siteName, stationId, folderPath, files) => 
+    ipcRenderer.invoke('saveDocuments', siteName, stationId, folderPath, files),
+  
+  openDocument: (siteName, stationId, docPath) => 
+    ipcRenderer.invoke('openDocument', siteName, stationId, docPath),
+  
+  revealDocument: (siteName, stationId, docPath) => 
+    ipcRenderer.invoke('revealDocument', siteName, stationId, docPath),
+  
+  deleteDocument: (siteName, stationId, docPath) => 
+    ipcRenderer.invoke('deleteDocument', siteName, stationId, docPath),
+  
+  deleteDocumentFolder: (siteName, stationId, folderPath) => 
+    ipcRenderer.invoke('deleteDocumentFolder', siteName, stationId, folderPath),
 });
 
 // --- BEGIN: appAlert (custom modal replacement for window.alert) ---

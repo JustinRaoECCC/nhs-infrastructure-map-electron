@@ -118,6 +118,27 @@ async function loadStationPage(stationId, origin = 'map') {
   } catch (e) {
     console.warn('[photo-tab bootstrap] failed:', e);
   }
+
+  // Load Documents tab template + script, then init
+  try {
+    const docHost = container.querySelector('#documents');
+    if (docHost) {
+      const tmpl = await fetch('documents_tab.html');
+      if (tmpl.ok) docHost.innerHTML = await tmpl.text();
+    }
+    if (!window.__documentsTabLoaded) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'js/documents_tab.js';
+        s.onload = () => { window.__documentsTabLoaded = true; resolve(); };
+        s.onerror = reject;
+        document.head.appendChild(s);
+      });
+    }
+    window.initDocumentsTab?.(container, stn);
+  } catch (e) {
+    console.warn('[documents-tab bootstrap] failed:', e);
+  }
 }
 
 // -- Per-section edit mode helpers --

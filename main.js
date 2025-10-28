@@ -19,6 +19,9 @@ const { getPersistence } = require('./backend/persistence');
 
 const photoTab = require('./backend/photo_tab');
 
+const documentsTab = require('./backend/documents_tab');
+const { shell } = require('electron');
+
 // Lazy-load excel_worker_client to avoid starting the worker thread on import
 let excelClient = null;
 function getExcelClient() {
@@ -628,6 +631,86 @@ ipcMain.handle('deleteFolder', async (event, siteName, stationId, folderPath) =>
     return await photoTab.deleteFolder(siteName, stationId, folderPath);
   } catch (e) {
     console.error('[IPC] deleteFolder failed:', e);
+    return { success: false, message: String(e) };
+  }
+});
+
+// Get station document structure
+ipcMain.handle('getStationDocumentStructure', async (event, siteName, stationId, subPath) => {
+  try {
+    return await documentsTab.getStationDocumentStructure(siteName, stationId, subPath);
+  } catch (e) {
+    console.error('[IPC] getStationDocumentStructure failed:', e);
+    return { success: false, message: String(e) };
+  }
+});
+
+// Create document folder
+ipcMain.handle('createDocumentFolder', async (event, siteName, stationId, folderPath) => {
+  try {
+    return await documentsTab.createDocumentFolder(siteName, stationId, folderPath);
+  } catch (e) {
+    console.error('[IPC] createDocumentFolder failed:', e);
+    return { success: false, message: String(e) };
+  }
+});
+
+// Save documents
+ipcMain.handle('saveDocuments', async (event, siteName, stationId, folderPath, files) => {
+  try {
+    return await documentsTab.saveDocuments(siteName, stationId, folderPath, files);
+  } catch (e) {
+    console.error('[IPC] saveDocuments failed:', e);
+    return { success: false, message: String(e) };
+  }
+});
+
+// Open document in default application
+ipcMain.handle('openDocument', async (event, siteName, stationId, docPath) => {
+  try {
+    const result = await documentsTab.getDocumentPath(siteName, stationId, docPath);
+    if (result.success) {
+      await shell.openPath(result.path);
+      return { success: true };
+    }
+    return result;
+  } catch (e) {
+    console.error('[IPC] openDocument failed:', e);
+    return { success: false, message: String(e) };
+  }
+});
+
+// Reveal document in file explorer
+ipcMain.handle('revealDocument', async (event, siteName, stationId, docPath) => {
+  try {
+    const result = await documentsTab.getDocumentPath(siteName, stationId, docPath);
+    if (result.success) {
+      shell.showItemInFolder(result.path);
+      return { success: true };
+    }
+    return result;
+  } catch (e) {
+    console.error('[IPC] revealDocument failed:', e);
+    return { success: false, message: String(e) };
+  }
+});
+
+// Delete document
+ipcMain.handle('deleteDocument', async (event, siteName, stationId, docPath) => {
+  try {
+    return await documentsTab.deleteDocument(siteName, stationId, docPath);
+  } catch (e) {
+    console.error('[IPC] deleteDocument failed:', e);
+    return { success: false, message: String(e) };
+  }
+});
+
+// Delete folder
+ipcMain.handle('deleteDocumentFolder', async (event, siteName, stationId, folderPath) => {
+  try {
+    return await documentsTab.deleteDocumentFolder(siteName, stationId, folderPath);
+  } catch (e) {
+    console.error('[IPC] deleteDocumentFolder failed:', e);
     return { success: false, message: String(e) };
   }
 });
