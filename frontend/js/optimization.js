@@ -2323,7 +2323,8 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
         // Heads-up table with constraint columns + Add buttons
         const tbl = document.createElement('table');
-        tbl.className = 'opt-table';
+        // add a specific class so we can scope scroll styles cleanly
+        tbl.className = 'opt-table opt3-warn-table';
         const yearHeaders = Object.keys(result.assignments || {}).sort();
         tbl.innerHTML = `
           <thead>
@@ -2335,6 +2336,11 @@ document.addEventListener('DOMContentLoaded', () => {
           </thead>
           <tbody></tbody>
         `;
+        // wrap in a scroll container so wide content doesn't overflow the screen
+        const scrollWrap = document.createElement('div');
+        scrollWrap.className = 'table-scroll opt3-warn-scroll';
+        scrollWrap.setAttribute('aria-label', 'Top repairs not in first year — scrollable');
+        scrollWrap.appendChild(tbl);
         const tb = tbl.querySelector('tbody');
         w.missing_in_year1.slice(0, 200).forEach(m => {
           const sr = (window._opt3Result?.assignments && (() => {
@@ -2385,7 +2391,8 @@ document.addEventListener('DOMContentLoaded', () => {
             cell.appendChild(btn);
           });
         });
-        warnBox.appendChild(tbl);
+        // append the scrollable wrapper (not the raw table)
+        warnBox.appendChild(scrollWrap);
         opt3Results.appendChild(warnBox);
       }
 

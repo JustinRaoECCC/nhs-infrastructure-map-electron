@@ -4599,6 +4599,29 @@ nhs-dashboard #opt1Results .opt-table thead {
   -webkit-overflow-scrolling: touch;
 }
 
+/* Generic scroll container for wide/long tables */
+.nhs-dashboard .table-scroll {
+  overflow: auto;              /* both axes */
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Specific tweaks for the Opt3 warning table wrapper */
+.nhs-dashboard .opt3-warn-scroll {
+  max-height: calc(100vh - 320px);  /* keep the table on-screen */
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  background: var(--bg, #ffffff);
+}
+
+/* Sticky header inside the scroll wrapper for readability */
+.nhs-dashboard .opt3-warn-scroll thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg, #ffffff);
+}
+
 /* Custom scrollbar for Opt1 results */
 .nhs-dashboard #opt1Results::-webkit-scrollbar {
   width: 12px;
@@ -4949,6 +4972,12 @@ nhs-dashboard #opt1Results .opt-table thead {
 .nhs-dashboard .nested-table.deepest th,
 .nhs-dashboard .nested-table.deepest td {
   padding: 0.45rem 0.6rem;
+}
+
+@media (max-width: 768px) {
+  .nhs-dashboard .opt3-warn-scroll {
+    max-height: calc(100vh - 240px);
+  }
 }
 
 /* Dark mode for Opt1 scrollbar */
