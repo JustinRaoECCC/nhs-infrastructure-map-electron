@@ -56,6 +56,7 @@ let _cache = {
   locationLinks: new Map(),        // Map<company, Map<location, link>>
   assetTypeLinks: new Map(),       // Map<company, Map<location, Map<assetType, link>>>
   inspectionKeywords: [],
+  projectKeywords: [],
 };
 
 function _invalidateAllCaches() { _cache.mtimeMs = -1; try { fs.unlinkSync(CACHE_PATH); } catch(_) {} }
@@ -111,6 +112,7 @@ function _loadJsonCache(mtimeMs) {
         )
       ),
       inspectionKeywords: Array.isArray(raw.inspectionKeywords) ? raw.inspectionKeywords : [],
+      projectKeywords: Array.isArray(raw.projectKeywords) ? raw.projectKeywords : [],
     };
     return true;
   } catch(_) { return false; }
@@ -165,6 +167,7 @@ function _saveJsonCache() {
         )
       ),
       inspectionKeywords: Array.from(_cache.inspectionKeywords || []),
+      projectKeywords: Array.from(_cache.projectKeywords || []),
     };
     fs.writeFileSync(CACHE_PATH, JSON.stringify(json));
   } catch(_) {}
@@ -241,6 +244,10 @@ async function _primeAllCaches() {
     inspectionKeywords: Array.isArray(snap.inspectionKeywords)
       ? snap.inspectionKeywords
       : ['inspection'],
+    // NEW: project keywords
+    projectKeywords: Array.isArray(snap.projectKeywords)
+      ? snap.projectKeywords
+      : ['project', 'construction', 'maintenance', 'repair', 'decommission'],
   };
   _saveJsonCache()
 }
@@ -273,6 +280,22 @@ async function setInspectionKeywords(keywords = []) {
     : [];
   const persistence = await getPersistence();
   const res = await persistence.setInspectionKeywords(list);
+  _invalidateAllCaches();
+  return res;
+}
+
+// ─── Project keywords (global) ────────────────────────────────────────────
+async function getProjectKeywords() {
+  await _primeAllCaches();
+  return Array.from(_cache.projectKeywords || []);
+}
+
+async function setProjectKeywords(keywords = []) {
+  const list = Array.isArray(keywords)
+    ? keywords.map(normStr).filter(Boolean)
+    : [];
+  const persistence = await getPersistence();
+  const res = await persistence.setProjectKeywords(list);
   _invalidateAllCaches();
   return res;
 }
@@ -508,7 +531,10 @@ module.exports = {
   // NEW: inspection keywords
   getInspectionKeywords,
   setInspectionKeywords,
+  // NEW: project keywords
+  getProjectKeywords,
+  setProjectKeywords,
   // paths
-  LOOKUPS_PATH, 
+  LOOKUPS_PATH,
   DATA_DIR, COMPANIES_DIR,
 };

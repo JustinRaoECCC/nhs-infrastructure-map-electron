@@ -211,6 +211,21 @@ class ExcelPersistence extends IPersistence {
   }
 
   // ════════════════════════════════════════════════════════════════════════════
+  // LOOKUPS - PROJECT KEYWORDS
+  // ════════════════════════════════════════════════════════════════════════════
+
+  async getProjectKeywords() {
+    const excel = getExcel();
+    const snapshot = await excel.readLookupsSnapshot();
+    return snapshot.projectKeywords || [];
+  }
+
+  async setProjectKeywords(keywords) {
+    const excel = getExcel();
+    return await excel.setProjectKeywords(keywords);
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
   // STATIONS - READ
   // ════════════════════════════════════════════════════════════════════════════
 

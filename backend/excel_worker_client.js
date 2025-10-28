@@ -90,6 +90,9 @@ module.exports = {
   // Inspection keywords (global list stored in lookups.xlsx)
   setInspectionKeywords: (keywords) =>
     call('setInspectionKeywords', Array.isArray(keywords) ? keywords : []),
+  // Project keywords (global list stored in lookups.xlsx)
+  setProjectKeywords: (keywords) =>
+    call('setProjectKeywords', Array.isArray(keywords) ? keywords : []),
   // NEW: Algorithm/Workplan
   getAlgorithmParameters: () => call('getAlgorithmParameters'),
   saveAlgorithmParameters: (rows) => call('saveAlgorithmParameters', rows),

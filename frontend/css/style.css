@@ -2363,6 +2363,184 @@ html.modal-open, body.modal-open { overflow: hidden; }
 /* just to be explicit for the modal body too */
 .ih-modal__body { overflow: auto; }
 
+/* ────────────────────────────────────────────────────────────────
+   Project History (ph-*) — mirrors inspection history styling
+   ──────────────────────────────────────────────────────────── */
+.ph-modal .ph-modal__content{
+  max-width: 1024px;
+  width: 92%;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+}
+
+.ph-modal__header{
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 20px 12px;
+  z-index: 1;
+}
+.ph-modal__header h3{
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: .2px;
+}
+.ph-subtitle{
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ph-modal__body{
+  padding: 14px 20px 6px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ph-modal__footer{
+  position: sticky;
+  bottom: 0;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  padding: 12px 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.ph-section{
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+.ph-section__title{ margin: 0 0 10px; font-size: 14px; font-weight: 700; }
+.ph-section__title-row{
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px;
+}
+
+.ph-note{
+  font-size: 12px; color: var(--muted);
+  background: #f3f4f6; border: 1px solid var(--border);
+  padding: 4px 8px; border-radius: 999px;
+}
+
+/* Responsive fields grid */
+.ph-grid{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 720px){
+  .ph-grid{ grid-template-columns: 1fr; }
+}
+
+/* Shared form row look */
+.ph-section .form-row {
+  display: flex; flex-direction: column; gap: 6px; margin: 0;
+}
+.ph-section .form-row label{
+  font-size: 12px; color: #6b7280; font-weight: 700;
+}
+.ph-section .form-row.required label::after{
+  content: " *"; color: #dc2626;
+}
+.ph-section input[type="text"],
+.ph-section input[type="number"],
+.ph-section textarea,
+.ph-section select{
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+  font-size: 14px;
+}
+.ph-help{ font-size: 11px; color: #6b7280; }
+
+/* Files row */
+.ph-file-row{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 720px){
+  .ph-file-row{ grid-template-columns: 1fr; }
+}
+.ph-file-col{ display: flex; align-items: center; gap: 10px; }
+
+.ph-badge{
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 26px; padding: 0 10px; border-radius: 999px;
+  background: #eef2ff; color: #3730a3; font-weight: 700; letter-spacing: .01em;
+  border: 1px solid #e0e7ff; font-size: 12px;
+}
+
+/* Repairs add-row grid */
+.ph-repairs-addGrid{
+  display: grid;
+  grid-template-columns: 1.4fr 0.9fr 0.9fr 0.9fr 0.8fr 0.8fr auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 10px;
+}
+@media (max-width: 960px){
+  .ph-repairs-addGrid{ grid-template-columns: 1fr 1fr; }
+  .ph-repairs-addGrid .form-row--button{ grid-column: 1 / -1; }
+}
+
+/* Table area inside modal */
+.ph-table-scroll{
+  max-height: 240px;
+  border-radius: 10px;
+}
+
+/* Error box */
+.ph-error{
+  border: 1px solid #fecaca;
+  background: #fff1f2;
+  color: #b91c1c;
+  font-weight: 700;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+/* prevent grid items from forcing overflow */
+.ph-repairs-addGrid .form-row,
+.ph-repairs-addGrid input,
+.ph-repairs-addGrid select {
+  min-width: 0;
+}
+
+/* allow sideways scroll as a last resort */
+.ph-repairs-addGrid {
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+/* Toolbar and actions */
+.ph-repairs-toolbar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:8px;
+}
+.ph-repairs-actions{
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+
+/* just to be explicit for the modal body too */
+.ph-modal__body { overflow: auto; }
+
 /* frontend/css/confirm-modal.css */
 .app-confirm-overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45);z-index:2147483647}
 .app-confirm-overlay.show{display:flex}

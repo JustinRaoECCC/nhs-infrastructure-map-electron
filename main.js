@@ -10,6 +10,7 @@ const algorithms  = require('./backend/algorithms');
 const lookups     = require('./backend/lookups_repo');
 const nukeBackend = require('./backend/nuke');
 const inspectionHistory = require('./backend/inspection_history');
+const projectHistory = require('./backend/project_history');
 const repairsBackend = require('./backend/repairs');
 const auth = require('./backend/auth');
 // Persistence layer (MongoDB / Excel)
@@ -350,6 +351,57 @@ ipcMain.handle('inspections:pickReport', async () => {
 // ─── IPC: Inspections (create) ────────────────────────────────────────────
 ipcMain.handle('inspections:create', async (_evt, siteName, stationId, payload) =>
   inspectionHistory.createInspectionFolder(siteName, stationId, payload)
+);
+
+// ─── IPC: Projects ────────────────────────────────────────────────────────
+ipcMain.handle('projects:list', async (_evt, siteName, stationId, opts) =>
+  projectHistory.listProjects(siteName, stationId, 5, opts || {})
+);
+
+// ─── IPC: Project History Keywords (global, lookups.xlsx) ─────────────────
+ipcMain.handle('projectKeywords:get', async () =>
+  lookups.getProjectKeywords()
+);
+ipcMain.handle('projectKeywords:set', async (_evt, keywords) =>
+  lookups.setProjectKeywords(Array.isArray(keywords) ? keywords : [])
+);
+
+ipcMain.handle('projects:delete', async (_evt, siteName, stationId, folderName) =>
+  projectHistory.deleteProjectFolder(siteName, stationId, folderName)
+);
+
+// ─── IPC: Projects (pickers) ──────────────────────────────────────────────
+ipcMain.handle('projects:pickPhotos', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: 'Select project photos',
+    properties: ['openFile', 'multiSelections'],
+    filters: [
+      { name: 'Images', extensions: ['jpg','jpeg','png','gif','webp','bmp','tif','tiff'] }
+    ]
+  });
+  try {
+    const win = BrowserWindow.getFocusedWindow();
+    setTimeout(() => win?.focus(), 0);
+  } catch(_) {}
+  return canceled ? { filePaths: [] } : { filePaths };
+});
+
+ipcMain.handle('projects:pickReport', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: 'Select project report (PDF)',
+    properties: ['openFile'],
+    filters: [{ name: 'PDF', extensions: ['pdf'] }]
+  });
+  try {
+    const win = BrowserWindow.getFocusedWindow();
+    setTimeout(() => win?.focus(), 0);
+  } catch(_) {}
+  return canceled || !filePaths?.length ? { filePath: null } : { filePath: filePaths[0] };
+});
+
+// ─── IPC: Projects (create) ───────────────────────────────────────────────
+ipcMain.handle('projects:create', async (_evt, siteName, stationId, payload) =>
+  projectHistory.createProjectFolder(siteName, stationId, payload)
 );
 
 // ─── IPC: Repairs ─────────────────────────────────────────────────────────

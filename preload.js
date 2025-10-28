@@ -95,6 +95,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
   createInspection: (siteName, stationId, payload) =>
     ipcRenderer.invoke('inspections:create', siteName, stationId, payload),
 
+  // ─── Projects ────────────────────────────────────────────────────────────
+  listProjects: (siteName, stationId, opts) =>
+    ipcRenderer.invoke('projects:list', siteName, stationId, opts),
+
+  // Project History keywords (global, stored in lookups.xlsx)
+  getProjectKeywords: () =>
+    ipcRenderer.invoke('projectKeywords:get'),
+  setProjectKeywords: (keywords) =>
+    ipcRenderer.invoke('projectKeywords:set', Array.isArray(keywords) ? keywords : []),
+
+  deleteProject: (siteName, stationId, folderName) =>
+    ipcRenderer.invoke('projects:delete', siteName, stationId, folderName),
+
+  pickProjectPhotos: () =>
+    ipcRenderer.invoke('projects:pickPhotos'),
+
+  pickProjectReport: () =>
+    ipcRenderer.invoke('projects:pickReport'),
+
+  createProject: (siteName, stationId, payload) =>
+    ipcRenderer.invoke('projects:create', siteName, stationId, payload),
+
   // ─── Repairs ─────────────────────────────────────────────────────────────
   listRepairs: (siteName, stationId) =>
     ipcRenderer.invoke('repairs:list', siteName, stationId),

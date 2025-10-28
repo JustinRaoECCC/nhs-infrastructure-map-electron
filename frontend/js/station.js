@@ -70,6 +70,30 @@ async function loadStationPage(stationId, origin = 'map') {
   } catch (e) {
     console.warn('[inspection-history bootstrap] failed:', e);
   }
+
+  // Load Project History tab template + script, then init
+  try {
+    // 1) Inject the tab template
+    const phHost = container.querySelector('#project-history');
+    if (phHost) {
+      const tmpl = await fetch('project_history.html');
+      if (tmpl.ok) phHost.innerHTML = await tmpl.text();
+    }
+    // 2) Ensure the script is loaded once
+    if (!window.__phLoaded) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'js/project_history.js';
+        s.onload = () => { window.__phLoaded = true; resolve(); };
+        s.onerror = reject;
+        document.head.appendChild(s);
+      });
+    }
+    // 3) Initialize the tab
+    window.initProjectHistoryTab?.(container, stn);
+  } catch (e) {
+    console.warn('[project-history bootstrap] failed:', e);
+  }
 }
 
 // -- Per-section edit mode helpers --

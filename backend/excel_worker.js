@@ -30,6 +30,7 @@ function getLocationFilePath(company, location) {
 }
 
 const IH_KEYWORDS_SHEET = 'Inspection History Keywords';
+const PH_KEYWORDS_SHEET = 'Project History Keywords';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 const ensureDir = (p) => { if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); };
@@ -388,6 +389,15 @@ async function ensureLookupsReady() {
     wsIH.addRow(['Keyword']);
     wsIH.addRow(['inspection']); // default
 
+    // NEW: Project History Keywords (global)
+    const wsPH = wb.addWorksheet(PH_KEYWORDS_SHEET);
+    wsPH.addRow(['Keyword']);
+    wsPH.addRow(['project']);
+    wsPH.addRow(['construction']);
+    wsPH.addRow(['maintenance']);
+    wsPH.addRow(['repair']);
+    wsPH.addRow(['decommission']);
+
     progress('ensure', 70, 'Saving new workbook…');
     await wb.xlsx.writeFile(LOOKUPS_PATH);
     progress('ensure', 80, 'Workbook ready');
@@ -410,6 +420,7 @@ async function readLookupsSnapshot() {
   const wsC = getSheet(wb, 'Companies');
   const wsL = getSheet(wb, 'Locations');
   const wsK = getSheet(wb, IH_KEYWORDS_SHEET);
+  const wsPK = getSheet(wb, PH_KEYWORDS_SHEET);
 
   // NEW: link caches
   const locationLinks = {};        // { company: { location: link } }
@@ -535,6 +546,19 @@ async function readLookupsSnapshot() {
       }
       return wsK ? uniqSorted(out) : ['inspection'];
     })(),
+    // NEW: project keywords
+    projectKeywords: (function () {
+      const out = [];
+      if (wsPK) {
+        wsPK.eachRow({ includeEmpty:false }, (row) => {
+          const v = normStr(row.getCell(1)?.text);
+          if (!v) return;
+          if (v.toLowerCase() === 'keyword') return; // skip header anywhere
+          out.push(v);
+        });
+      }
+      return wsPK ? uniqSorted(out) : ['project', 'construction', 'maintenance', 'repair', 'decommission'];
+    })(),
   };
   progress('done', 100, 'Excel ready');
   return payload;
@@ -557,6 +581,31 @@ async function setInspectionKeywords(keywords = []) {
     wb.removeWorksheet(existing.id);
   }
   const ws = wb.addWorksheet(IH_KEYWORDS_SHEET);
+
+  ws.addRow(['Keyword']);
+  for (const k of list) ws.addRow([k]);
+
+  await wb.xlsx.writeFile(LOOKUPS_PATH);
+  return { success: true, count: list.length };
+}
+
+// ─── Writes: Project Keywords (global list) ────────────────────────────────
+async function setProjectKeywords(keywords = []) {
+  await ensureLookupsReady();
+  const list = Array.isArray(keywords)
+    ? uniqSorted(keywords.map(v => normStr(v)).filter(Boolean))
+    : [];
+
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(LOOKUPS_PATH);
+
+  const existing = getSheet(wb, PH_KEYWORDS_SHEET);
+  if (existing) {
+    // safest: remove and recreate to avoid phantom/Formatted rows
+    wb.removeWorksheet(existing.id);
+  }
+  const ws = wb.addWorksheet(PH_KEYWORDS_SHEET);
 
   ws.addRow(['Keyword']);
   for (const k of list) ws.addRow([k]);
@@ -3346,6 +3395,7 @@ const handlers = {
   setAssetTypeLink,
   appendRepair,
   setInspectionKeywords,
+  setProjectKeywords,
   // New repairs functions
   listRepairsForStation,
   saveStationRepairs,
