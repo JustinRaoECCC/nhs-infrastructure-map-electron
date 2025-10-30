@@ -1137,6 +1137,7 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
       const r = sr?.original_repair || {};
       const ctx = tripLookup.get(key) || {};
       highPriorityMissing.push({
+         _key: key,  // Preserve the canonical key for consistent lookups
         station_id: r.station_id ?? '',
         repair_name: r.name ?? r.repair_name ?? '',
         score: Number(sr.score) || 0,

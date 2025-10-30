@@ -1902,6 +1902,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <th>Asset Type</th>
             <th>Repair</th>
             <th>Cost</th>
+            <th>Funding Type</th>
             ${splitKeys.map(k => `<th>Split: ${k}</th>`).join('')}
             <th>Score</th>
           </tr>
@@ -1911,6 +1912,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const tbody = table.querySelector('tbody');
       items.forEach(item => {
         const cost = Number(item.cost || 0);
+        const repair = item.original_repair || {};
+        const station = window._stationDataMap?.[repair.station_id] || {};
+        // Try "Funding Type" first (TEST mode), then "Category" (normal mode)
+        const fundingType = findFieldAnywhere(repair, station, 'Funding Type') || 
+                           findFieldAnywhere(repair, station, 'Category') || 
+                           '';
         const tr = document.createElement('tr');
         let html = `
             <td class="txt">${item.rank}</td>
@@ -1919,6 +1926,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <td class="txt">${item.asset_type || ''}</td>
             <td class="txt">${item.repair_name || ''}</td>
             <td class="txt">${formatCurrency(cost)}</td>
+            <td class="txt">${fundingType}</td>
           `;
         const sa = item.split_amounts || {};
         splitKeys.forEach(k => {
@@ -2640,7 +2648,8 @@ document.addEventListener('DOMContentLoaded', () => {
             // we don't keep a direct pointer; rebuild a pseudo scored repair object for usage & feasibility lookups
             return null;
           })()) || null;
-          const key = `sid:${m.station_id ?? ''}::name:${m.repair_name ?? ''}`;
+          // Use the preserved canonical key for consistent lookups (critical for TEST mode)
+          const key = m._key || `sid:${m.station_id ?? ''}::name:${m.repair_name ?? ''}`;
           const usage = result.per_repair_usage?.[key] || { monetary:{}, temporal:{} };
           const scheduled = findScheduledYearForKey(key);
           const tr = document.createElement('tr');
