@@ -1,11 +1,57 @@
 <!-- frontend/optimization.html (UPDATED) -->
 <div id="dashboardContainer" class="nhs-dashboard">
   <div class="dashboard-tabs">
+    <button id="testTab" class="dashboard-tab" data-target="testMode" style="display:none;">TEST</button>
     <button class="dashboard-tab active" data-target="softParameters">Soft Parameters</button>
     <button class="dashboard-tab" data-target="fixedParameters">Fixed Parameters</button>
     <button class="dashboard-tab" data-target="optimization1">Optimization 1</button>
     <button class="dashboard-tab" data-target="optimization2">Optimization 2</button>
     <button class="dashboard-tab" data-target="optimization3">Optimization 3</button>
+  </div>
+
+  <!-- 0) TEST MODE - Upload and override repair data -->
+  <div id="testMode" class="dashboard-content">
+    <div class="test-container">
+      <h2>TEST - Upload Test Repair Data</h2>
+      <p class="section-description">
+        Upload an Excel file with test repair data to override the normal repair data flow.
+        <br/>
+        <strong>Required columns:</strong> Repair Name, City of travel, Access Type, Coding, Funding Type, Priority, Cost
+        <br/>
+        <strong>Coding format:</strong> F, P, P(OTH), F-P, F-P-P(OTH) (split is always equal)
+      </p>
+
+      <div class="test-controls" style="margin-top: 1.5em;">
+        <div style="display:flex; gap:1em; align-items:center; margin-bottom:1em;">
+          <label style="display:flex; align-items:center; gap:0.5em; cursor:pointer; font-weight:600;">
+            <input type="checkbox" id="testModeToggle" style="cursor:pointer;"/>
+            <span>Enable TEST Mode</span>
+          </label>
+          <span id="testModeStatus" style="color:#999; font-size:0.9em;"></span>
+        </div>
+
+        <div style="display:flex; gap:0.5em; margin-bottom:1em;">
+          <button id="uploadTestDataBtn" class="btn btn-primary" disabled>Upload Excel File</button>
+          <button id="clearTestDataBtn" class="btn" disabled>Clear TEST Data</button>
+        </div>
+
+        <input type="file" id="testFileInput" accept=".xlsx,.xls" style="display:none;"/>
+      </div>
+
+      <div id="testDataPreview" style="margin-top:2em; display:none;">
+        <h3>Uploaded TEST Data</h3>
+        <div id="testDataInfo" style="margin:1em 0; padding:1em; background:#f0f7ff; border-radius:6px;">
+          <p><strong>Rows:</strong> <span id="testRowCount">0</span></p>
+          <p><strong>Columns:</strong> <span id="testColumnList"></span></p>
+        </div>
+        <div style="max-height:400px; overflow:auto; border:1px solid #ddd; border-radius:6px;">
+          <table id="testDataTable" class="data-table" style="width:100%; border-collapse:collapse;">
+            <thead id="testDataTableHead"></thead>
+            <tbody id="testDataTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- 1) SOFT PARAMETERS (Optimization 1 - Scoring) -->

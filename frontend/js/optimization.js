@@ -78,6 +78,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function loadAvailableFields() {
     try {
+      // If TEST mode is active and has data, use TEST field names only
+      if (window._testMode && window._testRepairs && window._testRepairs.length > 0) {
+        const testFields = Object.keys(window._testRepairs[0]);
+        availableFieldNames = uniqCaseInsensitive(testFields).sort((a,b)=>a.localeCompare(b));
+        availableParameterNames = [];
+        availableAllNames = availableFieldNames.slice();
+        console.log('[loadAvailableFields] Using TEST mode fields:', availableFieldNames.length);
+        return;
+      }
+
       // Call without parameters to scan ALL workbooks
       let catalog = null;
       if (window.electronAPI.getWorkbookFieldCatalog) {
@@ -108,10 +118,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Build qualified field names
         const qualifiedFields = [];
-        
+
         for (const [key, sources] of fieldSources.entries()) {
           const count = fieldCounts.get(key) || 0;
-          
+
           if (count === 1) {
             // Unique - no qualifier needed
             qualifiedFields.push(sources[0].field);
@@ -128,7 +138,7 @@ document.addEventListener('DOMContentLoaded', () => {
         availableAllNames = availableFieldNames.slice();
 
         console.log('[loadAvailableFields] Loaded', availableFieldNames.length, 'fields');
-        
+
       } else {
         console.warn('[loadAvailableFields] No catalog, using fallback');
         // Fallback...
@@ -139,7 +149,7 @@ document.addEventListener('DOMContentLoaded', () => {
         (repairs  || []).forEach(rp => Object.keys(rp).forEach(k => fieldSet.add(k + ' (Repairs)')));
         availableFieldNames = uniqCaseInsensitive(Array.from(fieldSet)).sort();
       }
-      
+
     } catch (e) {
       console.error('Failed to load available fields:', e);
     }
@@ -403,9 +413,25 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
+  // Global TEST mode state
+  window._testMode = false;
+  window._testRepairs = null;
+  window._testFieldNames = [];
+
   async function initDashboardUI() {
     const tabs     = document.querySelectorAll('.dashboard-tab');
     const contents = document.querySelectorAll('.dashboard-content');
+
+    // Check if TEST tab should be visible
+    try {
+      const testTabEnabled = await window.electronAPI.getTestTabEnabled();
+      const testTab = document.getElementById('testTab');
+      if (testTab && testTabEnabled) {
+        testTab.style.display = '';
+      }
+    } catch (e) {
+      console.error('Failed to check TEST tab visibility:', e);
+    }
 
     // Tab switching
     tabs.forEach(tab => {
@@ -416,6 +442,239 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById(tab.dataset.target).classList.add('active');
       });
     });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // TEST MODE - Upload and override repair data
+    // ═══════════════════════════════════════════════════════════════════════
+    const testModeToggle = document.getElementById('testModeToggle');
+    const testModeStatus = document.getElementById('testModeStatus');
+    const uploadTestDataBtn = document.getElementById('uploadTestDataBtn');
+    const clearTestDataBtn = document.getElementById('clearTestDataBtn');
+    const testFileInput = document.getElementById('testFileInput');
+    const testDataPreview = document.getElementById('testDataPreview');
+    const testRowCount = document.getElementById('testRowCount');
+    const testColumnList = document.getElementById('testColumnList');
+    const testDataTableHead = document.getElementById('testDataTableHead');
+    const testDataTableBody = document.getElementById('testDataTableBody');
+
+    function updateTestModeStatus() {
+      if (window._testMode && window._testRepairs) {
+        testModeStatus.textContent = `Active (${window._testRepairs.length} repairs loaded)`;
+        testModeStatus.style.color = '#5cb85c';
+      } else if (window._testMode) {
+        testModeStatus.textContent = 'Active (no data uploaded)';
+        testModeStatus.style.color = '#f0ad4e';
+      } else {
+        testModeStatus.textContent = 'Inactive';
+        testModeStatus.style.color = '#999';
+      }
+    }
+
+    function parseCodingToSplit(coding, fundingType) {
+      // Parse Coding format: F, P, P(OTH), F-P, F-P-P(OTH)
+      // Generate equal split strings based on Funding Type
+      if (!coding) return {};
+
+      const tokens = String(coding).split('-').map(t => t.trim()).filter(Boolean);
+      if (tokens.length === 0) return {};
+
+      // Calculate equal split percentages
+      const equalSplit = 100 / tokens.length;
+      const splitStrings = tokens.map((token, idx) => {
+        // Adjust last token to account for rounding (100% total)
+        const pct = idx === tokens.length - 1
+          ? (100 - equalSplit * (tokens.length - 1)).toFixed(1)
+          : equalSplit.toFixed(1);
+        return `${pct}%${token}`;
+      }).join('-');
+
+      // Normalize funding type for comparison
+      const fundingTypeNorm = String(fundingType || '').trim().toLowerCase();
+
+      // Return split string only for the appropriate column based on Funding Type
+      const result = {
+        'O&M': '',
+        'Capital': '',
+        'Decommission': ''
+      };
+
+      if (fundingTypeNorm === 'capital') {
+        result['Capital'] = splitStrings;
+      } else if (fundingTypeNorm === 'o&m' || fundingTypeNorm === 'o & m' || fundingTypeNorm === 'om') {
+        result['O&M'] = splitStrings;
+      } else if (fundingTypeNorm === 'decommission' || fundingTypeNorm === 'decom') {
+        result['Decommission'] = splitStrings;
+      } else {
+        // If funding type is not recognized, default to Capital
+        result['Capital'] = splitStrings;
+      }
+
+      return result;
+    }
+
+    function renderTestDataPreview(repairs) {
+      if (!repairs || repairs.length === 0) {
+        testDataPreview.style.display = 'none';
+        return;
+      }
+
+      const columns = Object.keys(repairs[0]);
+      testRowCount.textContent = repairs.length;
+      testColumnList.textContent = columns.join(', ');
+
+      // Build table header
+      testDataTableHead.innerHTML = '<tr>' + columns.map(col =>
+        `<th style="padding:0.5em; background:#f5f5f5; border:1px solid #ddd; text-align:left;">${col}</th>`
+      ).join('') + '</tr>';
+
+      // Build table body (limit to first 50 rows for performance)
+      const rowsToShow = repairs.slice(0, 50);
+      testDataTableBody.innerHTML = rowsToShow.map(repair =>
+        '<tr>' + columns.map(col =>
+          `<td style="padding:0.5em; border:1px solid #ddd;">${repair[col] || ''}</td>`
+        ).join('') + '</tr>'
+      ).join('');
+
+      testDataPreview.style.display = 'block';
+    }
+
+    if (testModeToggle) {
+      testModeToggle.addEventListener('change', () => {
+        window._testMode = testModeToggle.checked;
+        uploadTestDataBtn.disabled = !window._testMode;
+        clearTestDataBtn.disabled = !window._testMode || !window._testRepairs;
+        updateTestModeStatus();
+      });
+    }
+
+    if (uploadTestDataBtn) {
+      uploadTestDataBtn.addEventListener('click', () => {
+        testFileInput.click();
+      });
+    }
+
+    if (testFileInput) {
+      testFileInput.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        try {
+          const reader = new FileReader();
+          reader.onload = async (evt) => {
+            try {
+              const b64 = evt.target.result.split(',')[1];
+
+              // List sheets - returns { success, sheets }
+              const sheetResult = await window.electronAPI.excelListSheets(b64);
+              console.log('[TEST Mode] Sheet result:', sheetResult);
+
+              if (!sheetResult || !sheetResult.success || !sheetResult.sheets) {
+                alert('Failed to list sheets in Excel file');
+                return;
+              }
+
+              const sheets = sheetResult.sheets;
+
+              if (!Array.isArray(sheets) || sheets.length === 0) {
+                alert('No sheets found in Excel file');
+                return;
+              }
+
+              // Use first sheet
+              const sheetName = sheets[0];
+              console.log('[TEST Mode] Using sheet:', sheetName);
+
+              if (!sheetName) {
+                alert('Sheet name is undefined. Please check your Excel file format.');
+                return;
+              }
+
+              const result = await window.electronAPI.excelParseRowsFromSheet(b64, sheetName);
+
+              console.log('[TEST Mode] Parse result:', result);
+
+              // parseRowsFromSheet returns { success, rows, sections, headers }
+              if (!result || !result.success || !result.rows) {
+                alert('Failed to parse Excel file: ' + (result?.message || 'Unknown error'));
+                return;
+              }
+
+              const rows = result.rows;
+
+              if (!Array.isArray(rows) || rows.length === 0) {
+                alert('No data found in Excel file');
+                return;
+              }
+
+              // Check if first row exists and is an object
+              if (!rows[0] || typeof rows[0] !== 'object') {
+                alert('Invalid data format in Excel file. First row should contain headers.');
+                return;
+              }
+
+              // Validate required columns
+              const requiredColumns = ['Repair Name', 'City of travel', 'Access Type', 'Coding', 'Funding Type', 'Priority', 'Cost'];
+              const columns = Object.keys(rows[0]);
+
+              console.log('[TEST Mode] Detected columns:', columns);
+              console.log('[TEST Mode] Required columns:', requiredColumns);
+
+              const missingColumns = requiredColumns.filter(col => !columns.includes(col));
+
+              if (missingColumns.length > 0) {
+                alert(`Missing required columns: ${missingColumns.join(', ')}`);
+                return;
+              }
+
+              // Process repairs: add split columns based on Coding and Funding Type
+              const processedRepairs = rows.map(repair => {
+                const splits = parseCodingToSplit(repair['Coding'], repair['Funding Type']);
+                return {
+                  ...repair,
+                  ...splits
+                };
+              });
+
+              // Store TEST repairs and field names
+              window._testRepairs = processedRepairs;
+              window._testFieldNames = columns;
+
+              // Render preview
+              renderTestDataPreview(processedRepairs);
+
+              // Update status
+              clearTestDataBtn.disabled = false;
+              updateTestModeStatus();
+
+              console.log('[TEST Mode] Loaded', processedRepairs.length, 'repairs');
+            } catch (err) {
+              console.error('Error parsing Excel file:', err);
+              alert('Error parsing Excel file: ' + err.message);
+            }
+          };
+          reader.readAsDataURL(file);
+        } catch (err) {
+          console.error('Error reading file:', err);
+          alert('Error reading file: ' + err.message);
+        }
+
+        // Reset file input
+        testFileInput.value = '';
+      });
+    }
+
+    if (clearTestDataBtn) {
+      clearTestDataBtn.addEventListener('click', () => {
+        window._testRepairs = null;
+        window._testFieldNames = [];
+        testDataPreview.style.display = 'none';
+        clearTestDataBtn.disabled = true;
+        updateTestModeStatus();
+      });
+    }
+
+    // Initialize status
+    updateTestModeStatus();
 
     // ═══════════════════════════════════════════════════════════════════════
     // SOFT PARAMETERS (Optimization 1 - Scoring)
@@ -1540,19 +1799,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (runOpt1Btn) {
       runOpt1Btn.addEventListener('click', async () => {
-        const allRepairs = await window.electronAPI.getAllRepairs();
+        // Use TEST repairs if TEST mode is active, otherwise use normal repairs
+        let allRepairs;
+        if (window._testMode && window._testRepairs) {
+          allRepairs = window._testRepairs;
+          console.log('[Opt-1] Using TEST repairs:', allRepairs.length);
+        } else {
+          allRepairs = await window.electronAPI.getAllRepairs();
+        }
+
         if (!allRepairs || !allRepairs.length) {
           opt1Results.innerHTML = '<div class="opt-note">No repairs found.</div>';
           return;
         }
 
-        // Get station data for matching
-        const stationList = await window.electronAPI.getStationData();
-        const stationDataMap = {};
-        (stationList || []).forEach(station => {
-          const stationId = station.station_id || station['Station ID'] || station.id;
-          if (stationId) stationDataMap[stationId] = station;
-        });
+        // Get station data for matching (skip if TEST mode - no station data needed)
+        let stationDataMap = {};
+        if (!window._testMode || !window._testRepairs) {
+          const stationList = await window.electronAPI.getStationData();
+          (stationList || []).forEach(station => {
+            const stationId = station.station_id || station['Station ID'] || station.id;
+            if (stationId) stationDataMap[stationId] = station;
+          });
+        }
 
         // Build overall weights
         const overall = {};
@@ -1585,6 +1854,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderOpt1Results(result) {
       opt1Results.innerHTML = '';
+
+      // Add TEST mode banner if active
+      if (window._testMode && window._testRepairs) {
+        const testBanner = document.createElement('div');
+        testBanner.style.cssText = 'padding:1em; margin-bottom:1em; background:#fff3cd; border:1px solid #ffc107; border-radius:6px; color:#856404;';
+        testBanner.innerHTML = `<strong>⚠️ TEST MODE ACTIVE</strong> - Using ${window._testRepairs.length} test repairs (station data ignored)`;
+        opt1Results.appendChild(testBanner);
+      }
 
       const formatCurrency = (n) => {
         const num = Number(n || 0);
@@ -1725,6 +2002,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderOpt2Results(result) {
       opt2Results.innerHTML = '';
+
+      // Add TEST mode banner if active
+      if (window._testMode && window._testRepairs) {
+        const testBanner = document.createElement('div');
+        testBanner.style.cssText = 'padding:1em; margin-bottom:1em; background:#fff3cd; border:1px solid #ffc107; border-radius:6px; color:#856404;';
+        testBanner.innerHTML = `<strong>⚠️ TEST MODE ACTIVE</strong> - Using TEST repairs' City of travel & Access Type fields`;
+        opt2Results.appendChild(testBanner);
+      }
 
       const formatCurrency = (n) => {
         const num = Number(n || 0);
@@ -2268,8 +2553,16 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderOpt3Results(result) {
       opt3Results.innerHTML = '';
 
+      // Add TEST mode banner if active
+      if (window._testMode && window._testRepairs) {
+        const testBanner = document.createElement('div');
+        testBanner.style.cssText = 'padding:1em; margin-bottom:1em; background:#fff3cd; border:1px solid #ffc107; border-radius:6px; color:#856404;';
+        testBanner.innerHTML = `<strong>⚠️ TEST MODE ACTIVE</strong> - Constraints pull values from TEST repairs only (no station data)`;
+        opt3Results.appendChild(testBanner);
+      }
+
       // Columns available for the WARNING table (monetary & temporal only).
-      // Hoist this so it’s always in scope.
+      // Hoist this so it's always in scope.
       const constraintCols = Array.isArray(result.constraint_columns)
         ? result.constraint_columns.filter(c => c && (c.type === 'monetary' || c.type === 'temporal'))
         : [];

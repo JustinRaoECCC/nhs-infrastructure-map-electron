@@ -16,6 +16,7 @@ const auth = require('./backend/auth');
 // Persistence layer (MongoDB / Excel)
 const config = require('./backend/config');
 const { getPersistence } = require('./backend/persistence');
+const testConfig = require('./backend/config_test_algorithm');
 
 const photoTab = require('./backend/photo_tab');
 
@@ -536,6 +537,11 @@ ipcMain.handle('db:getConfig', async () => {
     readSource: dbConfig.read?.source || 'excel',
     writeTargets: dbConfig.write?.targets || ['excel']
   };
+});
+
+// ─── IPC: Test Algorithm Config ────────────────────────────────────────────
+ipcMain.handle('test:getTabEnabled', async () => {
+  return testConfig.TEST_TAB_ENABLED;
 });
 
 // ─── IPC: Authentication ───────────────────────────────────────────────────

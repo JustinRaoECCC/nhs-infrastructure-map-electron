@@ -168,6 +168,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ─── Database Config ─────────────────────────────────────────────────────
   getDbConfig: () => ipcRenderer.invoke('db:getConfig'),
 
+  // ─── Test Algorithm Config ───────────────────────────────────────────────
+  getTestTabEnabled: () => ipcRenderer.invoke('test:getTabEnabled'),
+
   // ─── Authentication ──────────────────────────────────────────────────────
   hasUsers: () => ipcRenderer.invoke('auth:hasUsers'),
   createUser: (userData) => ipcRenderer.invoke('auth:createUser', userData),
