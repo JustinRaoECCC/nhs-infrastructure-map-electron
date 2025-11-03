@@ -4831,6 +4831,26 @@ html.modal-open, body.modal-open { overflow: hidden; }
   line-height: 1.2; padding-top: 10px; padding-bottom: 10px; /* ~40px rows */
 }
 
+/* Nested virtual tables (Opt3 trips) */
+.nhs-dashboard .virtual-scroll-container.trips {
+  position: relative;
+  overflow: auto;
+  height: 480px;               /* tweak as desired; JS auto-shrinks for <8 rows */
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  margin-top: .4rem;
+}
+.nhs-dashboard .virtual-scroll-container.trips .opt-table { 
+  table-layout: fixed; 
+}
+.nhs-dashboard .virtual-scroll-container.trips .opt-table tbody td {
+  line-height: 1.2; 
+  padding-top: 10px; 
+  padding-bottom: 10px;        /* ≈ 40px rows to match ROW_HEIGHT */
+}
+@media (max-width: 768px) { .nhs-dashboard .virtual-scroll-container.trips { height: 360px; } }
+
 /* ─────────────────────────────────────────────────────────────────────────
    GLOBAL fixed-size cell clipping + hover reveal (Opt-1 parity)
    Apply to ALL optimization tables so columns stay fixed and tooltips show

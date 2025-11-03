@@ -2129,8 +2129,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderOpt2Results(result) {
       // ────────────────────────────────────────────────────────────────────
-      // Helper: virtualized stations table (used per trip)
+      // Helper: compute split keys for a single trip (used by non-virtual
+      // nested station/repair tables so columns are consistent)
       // ────────────────────────────────────────────────────────────────────
+      function _collectSplitKeysForTrip(trip) {
+        const found = new Set();
+        (trip.stations || []).forEach(st => {
+          (st.repairs || []).forEach(rp => {
+            const smap = getSplitMapFromRepair(rp);
+            Object.entries(smap || {}).forEach(([k, mul]) => {
+              if (Number(mul) > 0) found.add(k);
+            });
+          });
+        });
+        return Array.from(found).sort();
+      }
+      // NOTE: We no longer virtualize stations inside a trip so row expansion
+      // (repairs) works normally. Virtualization is reserved for "tables of
+      // trips" (see Opt-3), not the nested tables within them.
       function createVirtualStationsTable(trip) {
         const wrap = document.createElement('div');
         wrap.className = 'virtual-scroll-container stations';
@@ -2330,9 +2346,12 @@ document.addEventListener('DOMContentLoaded', () => {
             toggleBtn.textContent = '▸';
           } else {
             if (!rendered) {
-              // NEW: virtualized stations table
-              const vt = createVirtualStationsTable(trip);
-              detailsDiv.appendChild(vt);
+              // Render a NORMAL (non-virtual) stations table so its rows can expand.
+              const wrap = document.createElement('div');
+              wrap.className = 'nested-wrap';
+              const keys = _collectSplitKeysForTrip(trip);
+              renderStationsTable(wrap, trip, keys);
+              detailsDiv.appendChild(wrap);
               rendered = true;
             }
             detailsDiv.style.display = '';
@@ -2905,6 +2924,176 @@ document.addEventListener('DOMContentLoaded', () => {
         opt3Results.appendChild(warnBox);
       }
 
+      // ────────────────────────────────────────────────────────────────────
+      // Helper: virtualized trips table (per year) — NO nested content
+      // ───────────────────────────────────────────────────────────────────
+      function createVirtualTripsTable(trips, yearSplitKeys, detailsHost) {
+        const wrap = document.createElement('div');
+        wrap.className = 'virtual-scroll-container trips';
+
+        // Sticky header in its own table
+        const headerTable = document.createElement('table');
+        headerTable.className = 'opt-table';
+        headerTable.style.tableLayout = 'fixed';
+        headerTable.innerHTML = `
+          <thead>
+            <tr>
+              <th>Priority</th>
+              <th>City of Travel</th>
+              <th>Access Type</th>
+              <th>Cost</th>
+              <th>Trip Days</th>
+              <th>Stations</th>
+              <th>Score</th>
+              ${yearSplitKeys.map(k => `<th>Split: ${k}</th>`).join('')}
+            </tr>
+          </thead>
+        `;
+        wrap.appendChild(headerTable);
+
+        // Viewport + spacer + body table
+        const viewport = document.createElement('div');
+        viewport.className = 'virtual-scroll-viewport';
+        const spacer = document.createElement('div');
+        spacer.className = 'virtual-scroll-spacer';
+        wrap.appendChild(viewport);
+        wrap.appendChild(spacer);
+
+        const bodyTable = document.createElement('table');
+        bodyTable.className = 'opt-table';
+        bodyTable.style.tableLayout = 'fixed';
+        bodyTable.innerHTML = `<tbody></tbody>`;
+        viewport.appendChild(bodyTable);
+        const tbody = bodyTable.querySelector('tbody');
+
+        const items = trips || [];
+        const ROW_HEIGHT = 40;  // keep in sync with table cell padding
+        const OVERSCAN   = 6;
+        const totalRows = items.length;
+        spacer.style.height = (totalRows * ROW_HEIGHT) + 'px';
+
+        // clip + tooltip on overflow
+        const esc = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+        const cell = (v) => {
+          const t = esc(v);
+          return `<span class="cell-clip" data-full="${t}">${t}</span>`;
+        };
+        const maybeApplyOverflowTitles = (root) => {
+          root.querySelectorAll('.cell-clip').forEach(el => {
+            if (el.scrollWidth > el.clientWidth) {
+              el.title = el.dataset.full || el.textContent;
+              el.classList.add('truncated');
+            } else {
+              el.removeAttribute('title');
+              el.classList.remove('truncated');
+            }
+          });
+        };
+
+        function rowHtml(trip, idx) {
+          let cells = `
+            <td class="txt">${cell(String(idx + 1))}</td>
+            <td class="txt">${cell(trip.city_of_travel || '')}</td>
+            <td class="txt">${cell(trip.access_type || '')}</td>
+            <td class="txt">${cell(formatCurrency(trip.total_cost || 0))}</td>
+            <td class="txt">${cell(String(trip.total_days || 0))}</td>
+            <td class="txt">${cell(String((trip.stations || []).length))}</td>
+            <td class="txt">${cell(Number(trip.priority_score || 0).toFixed(2))}</td>
+          `;
+          for (const k of yearSplitKeys) {
+            const v = Number((trip.total_split_costs || {})[k] || 0);
+            cells += `<td class="txt">${v ? formatCurrency(v) : ''}</td>`;
+          }
+          return `<tr>${cells}</tr>`;
+        }
+
+        function sizeContainer() {
+          const headerH = headerTable.offsetHeight || 40;
+          // If fewer than 11 trips, shrink the container to fit rows exactly.
+          if (totalRows < 11) {
+            // header + rows (≈ ROW_HEIGHT per row) + small border fudge
+            const h = headerH + (totalRows * ROW_HEIGHT) + 2;
+            wrap.style.height = `${h}px`;
+            wrap.style.overflowY = 'hidden';
+          } else {
+            // Reset to default CSS-managed height for larger lists
+            wrap.style.height = '';
+            wrap.style.overflowY = 'auto';
+          }
+        }
+
+        // For nested details below the trips table
+        function _collectSplitKeysForTrip(trip) {
+          const found = new Set();
+          (trip.stations || []).forEach(st => {
+            (st.repairs || []).forEach(rp => {
+              const smap = getSplitMapFromRepair(rp);
+              Object.entries(smap || {}).forEach(([k, mul]) => {
+                if (Number(mul) > 0) found.add(k);
+              });
+            });
+          });
+          return Array.from(found).sort();
+        }
+
+        function renderWindow() {
+          const containerH = wrap.clientHeight || 600;
+          const scrollTop = wrap.scrollTop || 0;
+          const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+          const end   = Math.min(totalRows, Math.ceil((scrollTop + containerH) / ROW_HEIGHT) + OVERSCAN);
+          const offsetY = start * ROW_HEIGHT + (headerTable.offsetHeight || 0);
+          viewport.style.transform = `translateY(${offsetY}px)`;
+          let html = '';
+          for (let i = start; i < end; i++) html += rowHtml(items[i], i);
+          tbody.innerHTML = html;
+          requestAnimationFrame(() => maybeApplyOverflowTitles(tbody));
+
+          // Attach click handlers so a selected trip shows its stations/repairs
+          // with NORMAL rendering in the provided detailsHost.
+          if (detailsHost) {
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            rows.forEach((tr, i) => {
+              const idx = start + i;
+              tr.style.cursor = 'pointer';
+              tr.title = 'Click to view trip details';
+              tr.onclick = () => {
+                // Clear previous details and render the selected trip's stations normally.
+                detailsHost.innerHTML = '';
+                const trip = items[idx];
+
+                const panel = document.createElement('div');
+                panel.className = 'nested-wrap';
+
+                const header = document.createElement('div');
+                header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem;';
+                header.innerHTML = `
+                  <strong>Trip ${idx + 1} — ${trip.city_of_travel || ''} • ${trip.access_type || ''}</strong>
+                  <button class="btn btn-ghost" aria-label="Close">Close</button>
+                `;
+                header.querySelector('button').addEventListener('click', () => { detailsHost.innerHTML = ''; });
+                panel.appendChild(header);
+
+                const keys = _collectSplitKeysForTrip(trip);
+                renderStationsTable(panel, trip, keys);
+                detailsHost.appendChild(panel);
+                try { detailsHost.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch {}
+              };
+            });
+          }
+        }
+
+        wrap.addEventListener('scroll', () => requestAnimationFrame(renderWindow), { passive: true });
+        window.addEventListener('resize', () => {
+          sizeContainer();
+          requestAnimationFrame(() => {
+            renderWindow();
+            maybeApplyOverflowTitles(tbody);
+          });
+        });
+        requestAnimationFrame(() => { sizeContainer(); renderWindow(); });
+        return wrap;
+      }
+
       const summary = document.createElement('div');
       summary.className = 'opt-header';
       summary.innerHTML = `
@@ -2948,89 +3137,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
         toggleBtn.addEventListener('click', () => {
           const isOpen = detailsDiv.style.display !== 'none';
-          
           if (isOpen) {
             detailsDiv.style.display = 'none';
             toggleBtn.textContent = '▸';
           } else {
             if (!rendered) {
-              {
-                // Regular table
-                const table = document.createElement('table');
-                table.className = 'opt-table';
-                table.innerHTML = `
-                  <thead>
-                    <tr>
-                      <th></th>
-                      <th>Priority</th>
-                      <th>City of Travel</th>
-                      <th>Access Type</th>
-                      <th>Cost</th>
-                      <th>Trip Days</th>
-                      <th>Stations</th>
-                      <th>Score</th>
-                      ${yearSplitKeys.map(k => `<th>Split: ${k}</th>`).join('')}
-                    </tr>
-                  </thead>
-                  <tbody></tbody>
-                `;
-                const tbody = table.querySelector('tbody');
-
-                trips.forEach((trip, idx) => {
-                  const tr = document.createElement('tr');
-                  tr.className = 'tr-trip';
-                  tr.innerHTML = `
-                    <td><button class="toggle" data-year="${year}" data-trip="${idx}" aria-label="Expand trip">▸</button></td>
-                    <td class="txt">${String(idx + 1)}</td>
-                    <td class="txt">${trip.city_of_travel}</td>
-                    <td class="txt">${trip.access_type}</td>
-                    <td class="txt">${formatCurrency(trip.total_cost || 0)}</td>
-                    <td class="txt">${String(trip.total_days)}</td>
-                    <td class="txt">${String(trip.stations.length)}</td>
-                    <td class="txt">${String(Number(trip.priority_score || 0).toFixed(2))}</td>
-                    ${yearSplitKeys.map(k => {
-                      const val = Number((trip.total_split_costs || {})[k] || 0);
-                      return `<td class="txt">${val ? formatCurrency(val) : ''}</td>`;
-                    }).join('')}
-                  `;
-                  tbody.appendChild(tr);
-                
-                  // Nested stations expansion
-                  const nestRow = document.createElement('tr');
-                  const nestCell = document.createElement('td');
-                  const topColCount = 8 + yearSplitKeys.length;
-                  nestCell.colSpan = topColCount;
-                  const stationsWrap = document.createElement('div');
-                  stationsWrap.className = 'nested-wrap';
-                  stationsWrap.style.display = 'none';
-                
-                  // Store trip data for lazy rendering
-                  nestCell.dataset.tripData = JSON.stringify({ year, tripIdx: idx, yearSplitKeys });
-                
-                  nestCell.appendChild(stationsWrap);
-                  nestRow.appendChild(nestCell);
-                  tbody.appendChild(nestRow);
-                
-                  // Trip toggle with lazy station rendering
-                  tr.querySelector('.toggle')?.addEventListener('click', () => {
-                    const open = stationsWrap.style.display !== 'none';
-                  
-                    if (open) {
-                      stationsWrap.style.display = 'none';
-                      tr.querySelector('.toggle').textContent = '▸';
-                    } else {
-                      // Lazy render stations with virtual scrolling for large datasets
-                      if (stationsWrap.children.length === 0) {
-                        const useVirtual = trip.stations.length > 20;
-                        renderStationsTable(stationsWrap, trip, yearSplitKeys, useVirtual);
-                      }
-                      stationsWrap.style.display = '';
-                      tr.querySelector('.toggle').textContent = '▾';
-                    }
-                  });
-                });
-                detailsDiv.appendChild(table);
-              }
+              const tripDetailsPanel = document.createElement('div');
+              tripDetailsPanel.className = 'trip-details-panel';
+              const vt = createVirtualTripsTable(trips, yearSplitKeys, tripDetailsPanel);
+              detailsDiv.appendChild(vt);
+              detailsDiv.appendChild(tripDetailsPanel);
               rendered = true;
             }
             detailsDiv.style.display = '';
