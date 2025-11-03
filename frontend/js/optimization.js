@@ -1853,13 +1853,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderOpt1Results(result) {
+      // ────────────────────────────────────────────────────────────────────
+      // Virtual table rendering for Optimization 1
+      // ────────────────────────────────────────────────────────────────────
       opt1Results.innerHTML = '';
 
-      // Add TEST mode banner if active
+      // TEST mode banner (unchanged)
       if (window._testMode && window._testRepairs) {
         const testBanner = document.createElement('div');
-        testBanner.style.cssText = 'padding:1em; margin-bottom:1em; background:#fff3cd; border:1px solid #ffc107; border-radius:6px; color:#856404;';
-        testBanner.innerHTML = `<strong>⚠️ TEST MODE ACTIVE</strong> - Using ${window._testRepairs.length} test repairs (station data ignored)`;
+        testBanner.style.cssText =
+          'padding:1em; margin-bottom:1em; background:#fff3cd; border:1px solid #ffc107; border-radius:6px; color:#856404;';
+        testBanner.innerHTML =
+          `<strong>⚠️ TEST MODE ACTIVE</strong> - Using ${window._testRepairs.length} test repairs (station data ignored)`;
         opt1Results.appendChild(testBanner);
       }
 
@@ -1869,7 +1874,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return '$' + num.toLocaleString(undefined, { maximumFractionDigits: 0 });
       };
 
-      // Collect split keys
+      // Gather split columns present in the data
       const splitKeysSet = new Set();
       (result.ranking || []).forEach(item => {
         const sa = item.split_amounts || {};
@@ -1877,8 +1882,9 @@ document.addEventListener('DOMContentLoaded', () => {
           if (Number(v) > 0) splitKeysSet.add(k);
         }
       });
-      const splitKeys = Array.from(splitKeysSet).sort((a,b) => a.localeCompare(b));
+      const splitKeys = Array.from(splitKeysSet).sort((a,b)=>a.localeCompare(b));
 
+      // Header summary
       const summary = document.createElement('div');
       summary.className = 'opt-header';
       summary.innerHTML = `
@@ -1889,11 +1895,15 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
       opt1Results.appendChild(summary);
 
-      // Always render standard table (virtual table removed)
-      const items = result.ranking || [];
-      const table = document.createElement('table');
-      table.className = 'opt-table';
-      table.innerHTML = `
+      // Virtual container
+      const container = document.createElement('div');
+      container.className = 'virtual-scroll-container';
+      opt1Results.appendChild(container);
+
+      // Sticky header table (separate table to keep header visible)
+      const headerTable = document.createElement('table');
+      headerTable.className = 'opt-table';
+      headerTable.innerHTML = `
         <thead>
           <tr>
             <th>Rank</th>
@@ -1907,37 +1917,146 @@ document.addEventListener('DOMContentLoaded', () => {
             <th>Score</th>
           </tr>
         </thead>
-        <tbody></tbody>
       `;
-      const tbody = table.querySelector('tbody');
-      items.forEach(item => {
+      container.appendChild(headerTable);
+
+      // Spacer to emulate full height; viewport where visible rows are rendered
+      const viewport = document.createElement('div');
+      viewport.className = 'virtual-scroll-viewport';
+      const spacer = document.createElement('div');
+      spacer.className = 'virtual-scroll-spacer';
+      container.appendChild(viewport);
+      container.appendChild(spacer);
+
+      // Render a small table inside the viewport, absolutely positioned
+      const bodyTable = document.createElement('table');
+      bodyTable.className = 'opt-table';
+      // only a tbody (no thead) so columns align under header
+      bodyTable.innerHTML = `<tbody></tbody>`;
+      viewport.appendChild(bodyTable);
+
+      const items = result.ranking || [];
+      // Row height: keep in sync with your CSS cell padding (~36–44 px typical)
+      const ROW_HEIGHT = 40;          // px per row (tweak if your rows are taller)
+      const OVERSCAN   = 5;           // render a few extra rows above/below
+
+      // Precompute total height
+      const totalRows = items.length;
+      const totalHeight = totalRows * ROW_HEIGHT;
+      spacer.style.height = totalHeight + 'px';
+
+      const tbody = bodyTable.querySelector('tbody');
+
+      // escape + wrap helper so we can detect overflow and set titles
+      function esc(s) {
+        return String(s ?? '').replace(/[&<>"']/g, m => (
+          ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])
+        ));
+      }
+      function cell(v) {
+        const t = esc(v);
+        return `<span class="cell-clip" data-full="${t}">${t}</span>`;
+      }
+      function maybeApplyOverflowTitles(root) {
+        root.querySelectorAll('.cell-clip').forEach(el => {
+          // If content overflows (clipped), add a title; else remove it.
+          if (el.scrollWidth > el.clientWidth) {
+            el.title = el.dataset.full || el.textContent;
+            el.classList.add('truncated');
+          } else {
+            el.removeAttribute('title');
+            el.classList.remove('truncated');
+          }
+        });
+      }
+
+      function rowHtml(item) {
         const cost = Number(item.cost || 0);
         const repair = item.original_repair || {};
-        const station = window._stationDataMap?.[repair.station_id] || {};
-        // Try "Funding Type" first (TEST mode), then "Category" (normal mode)
-        const fundingType = findFieldAnywhere(repair, station, 'Funding Type') || 
-                           findFieldAnywhere(repair, station, 'Category') || 
-                           '';
-        const tr = document.createElement('tr');
-        let html = `
-            <td class="txt">${item.rank}</td>
-            <td class="txt">${item.station_id || ''}</td>
-            <td class="txt">${item.location || ''}</td>
-            <td class="txt">${item.asset_type || ''}</td>
-            <td class="txt">${item.repair_name || ''}</td>
-            <td class="txt">${formatCurrency(cost)}</td>
-            <td class="txt">${fundingType}</td>
-          `;
+        // For Opt1 we normally don't have station map; fall back to repair only
+        const fundingType =
+          findFieldAnywhere(repair, /*station*/ {}, 'Funding Type') ||
+          findFieldAnywhere(repair, /*station*/ {}, 'Category') ||
+          '';
+
+        let cells = `
+          <td class="txt">${cell(item.rank)}</td>
+          <td class="txt">${cell(item.station_id || '')}</td>
+          <td class="txt">${cell(item.location || '')}</td>
+          <td class="txt">${cell(item.asset_type || '')}</td>
+          <td class="txt">${cell(item.repair_name || '')}</td>
+          <td class="txt">${cell(formatCurrency(cost))}</td>
+          <td class="txt">${cell(fundingType)}</td>
+        `;
         const sa = item.split_amounts || {};
-        splitKeys.forEach(k => {
+        for (const k of splitKeys) {
           const v = Number(sa[k] || 0);
-          html += `<td class="txt">${v > 0 ? formatCurrency(v) : ''}</td>`;
-        });
-        html += `<td class="txt">${Number(item.score).toFixed(2)}%</td>`;
-        tr.innerHTML = html;
-        tbody.appendChild(tr);
+          cells += `<td class="txt">${cell(v > 0 ? formatCurrency(v) : '')}</td>`;
+        }
+        cells += `<td class="txt">${cell(Number(item.score).toFixed(2) + '%')}</td>`;
+        return `<tr>${cells}</tr>`;
+      }
+
+      // Align body table under header table by giving it a top offset
+      function setViewportOffset(px) {
+        viewport.style.transform = `translateY(${px}px)`;
+      }
+
+      // Compute & render visible window
+      let lastKnownScrollTop = 0;
+      let ticking = false;
+
+      function renderWindow() {
+        const rect = container.getBoundingClientRect();
+        const containerHeight = container.clientHeight || (rect.height || 600);
+        const scrollTop = container.scrollTop || 0;
+
+        // determine visible indices
+        const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+        const end   = Math.min(
+          totalRows,
+          Math.ceil((scrollTop + containerHeight) / ROW_HEIGHT) + OVERSCAN
+        );
+
+        // position viewport to the first rendered row
+        const offsetY = start * ROW_HEIGHT + (headerTable.offsetHeight || 0);
+        setViewportOffset(offsetY);
+
+        // build visible rows html
+        let html = '';
+        for (let i = start; i < end; i++) {
+          html += rowHtml(items[i]);
+        }
+        tbody.innerHTML = html;
+        // Wait for layout so measurements are accurate
+        requestAnimationFrame(() => maybeApplyOverflowTitles(tbody));
+      }
+
+      function onScroll() {
+        lastKnownScrollTop = container.scrollTop;
+        if (!ticking) {
+          ticking = true;
+          requestAnimationFrame(() => {
+            renderWindow();
+            ticking = false;
+          });
+        }
+      }
+
+      // Keep column widths aligned: enforce table-layout fixed on both tables
+      headerTable.style.tableLayout = 'fixed';
+      bodyTable.style.tableLayout   = 'fixed';
+
+      // Initial sizing/alignment pass
+      renderWindow();
+
+      // Events
+      container.addEventListener('scroll', onScroll, { passive: true });
+      window.addEventListener('resize', () => {
+        renderWindow();
+        // re-check overflow after resize (columns may change width)
+        requestAnimationFrame(() => maybeApplyOverflowTitles(tbody));
       });
-      opt1Results.appendChild(table);
     }
 
 
@@ -2009,6 +2128,133 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderOpt2Results(result) {
+      // ────────────────────────────────────────────────────────────────────
+      // Helper: virtualized stations table (used per trip)
+      // ────────────────────────────────────────────────────────────────────
+      function createVirtualStationsTable(trip) {
+        const wrap = document.createElement('div');
+        wrap.className = 'virtual-scroll-container stations';
+
+        // header
+        const headerTable = document.createElement('table');
+        headerTable.className = 'opt-table';
+        headerTable.style.tableLayout = 'fixed';
+        headerTable.innerHTML = `
+          <thead>
+            <tr>
+              <th>Station ID</th>
+              <th>Site Name</th>
+              <th>City of Travel</th>
+              <th>Time to Site (hr)</th>
+              <th>Repairs</th>
+              <th>Days</th>
+              <th>TripMean</th>
+              <th>TripMax</th>
+            </tr>
+          </thead>
+        `;
+        wrap.appendChild(headerTable);
+
+        // viewport & spacer
+        const viewport = document.createElement('div');
+        viewport.className = 'virtual-scroll-viewport';
+        const spacer = document.createElement('div');
+        spacer.className = 'virtual-scroll-spacer';
+        wrap.appendChild(viewport);
+        wrap.appendChild(spacer);
+
+        // body table inside viewport
+        const bodyTable = document.createElement('table');
+        bodyTable.className = 'opt-table';
+        bodyTable.style.tableLayout = 'fixed';
+        bodyTable.innerHTML = `<tbody></tbody>`;
+        viewport.appendChild(bodyTable);
+        const tbody = bodyTable.querySelector('tbody');
+
+        const items = trip.stations || [];
+        const ROW_HEIGHT = 40;   // keep in sync with CSS
+        const MAX_HEIGHT = 360;  // matches CSS default
+        const OVERSCAN   = 6;
+        const totalRows = items.length;
+        spacer.style.height = (totalRows * ROW_HEIGHT) + 'px';
+
+        // tooltips only when clipped
+        const esc = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+        const cell = (v) => {
+          const t = esc(v);
+          return `<span class="cell-clip" data-full="${t}">${t}</span>`;
+        };
+        const maybeApplyOverflowTitles = (root) => {
+          root.querySelectorAll('.cell-clip').forEach(el => {
+            if (el.scrollWidth > el.clientWidth) {
+              el.title = el.dataset.full || el.textContent;
+              el.classList.add('truncated');
+            } else {
+              el.removeAttribute('title');
+              el.classList.remove('truncated');
+            }
+          });
+        };
+
+        const mean = Number(trip.priority_metrics?.mean || 0).toFixed(2);
+        const max  = Number(trip.priority_metrics?.max  || 0).toFixed(2);
+        function rowHtml(st) {
+          return `
+            <tr>
+              <td class="txt">${cell(st.station_id)}</td>
+              <td class="txt">${cell(st.site_name || '')}</td>
+              <td class="txt">${cell(st.city_of_travel || '')}</td>
+              <td class="txt">${cell(st.time_to_site || '')}</td>
+              <td class="txt">${cell(String(st.repair_count))}</td>
+              <td class="txt">${cell(String(st.total_days))}</td>
+              <td class="txt">${cell(mean)}</td>
+              <td class="txt">${cell(max)}</td>
+            </tr>
+          `;
+        }
+
+        function renderWindow() {
+          const container = wrap;
+          const containerH = container.clientHeight || 400;
+          const scrollTop = container.scrollTop || 0;
+          const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+          const end   = Math.min(totalRows, Math.ceil((scrollTop + containerH) / ROW_HEIGHT) + OVERSCAN);
+          viewport.style.transform = `translateY(${start * ROW_HEIGHT + (headerTable.offsetHeight || 0)}px)`;
+          let html = '';
+          for (let i = start; i < end; i++) html += rowHtml(items[i]);
+          tbody.innerHTML = html;
+          requestAnimationFrame(() => maybeApplyOverflowTitles(tbody));
+        }
+
+        // NEW: shrink container for small tables (< 8 rows)
+        function sizeContainer() {
+          const headerH = headerTable.offsetHeight || 40;
+          if (totalRows < 8) {
+            // fit header + rows, no scroll
+            const h = headerH + (totalRows * ROW_HEIGHT) + 2; // small fudge for borders
+            wrap.style.height = `${h}px`;
+            wrap.style.overflowY = 'hidden';
+          } else {
+            // default virtual viewport
+            wrap.style.height = `${MAX_HEIGHT}px`;
+            wrap.style.overflowY = 'auto';
+          }
+        }
+
+        wrap.addEventListener('scroll', () => requestAnimationFrame(renderWindow), { passive: true });
+        window.addEventListener('resize', () => {
+          // Re-measure container and re-check clipping after column width changes
+          sizeContainer();
+          requestAnimationFrame(() => {
+            renderWindow();
+            maybeApplyOverflowTitles(tbody);
+          });
+        });
+        // Make sure header is measured after it hits the DOM
+        requestAnimationFrame(() => { sizeContainer(); renderWindow(); });
+        return wrap;
+      }
+      // ────────────────────────────────────────────────────────────────────
       opt2Results.innerHTML = '';
 
       // Add TEST mode banner if active
@@ -2084,48 +2330,9 @@ document.addEventListener('DOMContentLoaded', () => {
             toggleBtn.textContent = '▸';
           } else {
             if (!rendered) {
-              // Render table on first expand
-              {
-                // Regular table
-                const table = document.createElement('table');
-                table.className = 'opt-table';
-                table.innerHTML = `
-                  <thead>
-                    <tr>
-                      <th>Station ID</th>
-                      <th>Site Name</th>
-                      <th>City of Travel</th>
-                      <th>Time to Site (hr)</th>
-                      <th>Repairs</th>
-                      <th>Days</th>
-                      <th>TripMean</th>
-                      <th>TripMax</th>
-                    </tr>
-                  </thead>
-                  <tbody></tbody>
-                `;
-
-                const tbody = table.querySelector('tbody');
-                trip.stations.forEach(station => {
-                  const tr = document.createElement('tr');
-                  tr.innerHTML = `
-                    <td>${station.station_id}</td>
-                    <td>${station.site_name || ''}</td>
-                    <td>${station.city_of_travel || ''}</td>
-                    <td>${station.time_to_site || ''}</td>
-                    <td>${station.repair_count}</td>
-                    <td>${station.total_days}</td>
-                    <td class="txt">${Number(trip.priority_metrics?.mean || 0).toFixed(2)}</td>
-                    <td class="txt">${Number(trip.priority_metrics?.max || 0).toFixed(2)}</td>
-                  `;
-                  tbody.appendChild(tr);
-
-                });
-
-                detailsDiv.appendChild(table);
-
-              }
-
+              // NEW: virtualized stations table
+              const vt = createVirtualStationsTable(trip);
+              detailsDiv.appendChild(vt);
               rendered = true;
             }
             detailsDiv.style.display = '';

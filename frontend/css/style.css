@@ -4575,12 +4575,38 @@ html.modal-open, body.modal-open { overflow: hidden; }
   margin-top: 2rem;
 }
 
+/* Ensure fixed layout so header and body column widths match */
+.nhs-dashboard #opt1Results .opt-table {
+  table-layout: fixed;
+}
+/* Single-line clip for cells; show tooltip on hover (JS adds title only if clipped) */
+.nhs-dashboard #opt1Results .cell-clip {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  /* keeps row height stable; width is defined by column width */
+}
+
+/* Optional: visual hint when something is truncated */
+.nhs-dashboard #opt1Results .cell-clip.truncated {
+  cursor: help;
+}
+
+/* Make Opt-1 rows a predictable height for virtualization math */
+.nhs-dashboard #opt1Results .opt-table tbody td {
+  line-height: 1.2;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+/* Row height ≈ 40px (10+10 padding + text). Keep ROW_HEIGHT in JS in sync if you tweak. */
+
 /* Sticky header for Opt1 table */
 .nhs-dashboard #opt1Results .opt-table {
   position: relative;
 }
 
-nhs-dashboard #opt1Results .opt-table thead {
+.nhs-dashboard #opt1Results .opt-table thead {
   position: sticky;
   top: 0;
   z-index: 10;
@@ -4788,6 +4814,36 @@ nhs-dashboard #opt1Results .opt-table thead {
 
 .nhs-dashboard .virtual-scroll-container::-webkit-scrollbar-thumb:hover {
   background: var(--muted, #6b7280);
+}
+
+/* Nested virtual tables (Opt 2 stations) */
+.nhs-dashboard .virtual-scroll-container.stations {
+  position: relative;
+  overflow: auto;
+  height: 360px;                 /* tweak as you like */
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  margin-top: .4rem;
+}
+.nhs-dashboard .virtual-scroll-container.stations .opt-table { table-layout: fixed; }
+.nhs-dashboard .virtual-scroll-container.stations .opt-table tbody td {
+  line-height: 1.2; padding-top: 10px; padding-bottom: 10px; /* ~40px rows */
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   GLOBAL fixed-size cell clipping + hover reveal (Opt-1 parity)
+   Apply to ALL optimization tables so columns stay fixed and tooltips show
+   only when content is actually truncated.
+   ───────────────────────────────────────────────────────────────────────── */
+.nhs-dashboard .cell-clip {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.nhs-dashboard .cell-clip.truncated {
+  cursor: help;
 }
 
 /* Collapse toggle buttons in nested tables */
