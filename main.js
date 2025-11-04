@@ -720,3 +720,11 @@ ipcMain.handle('deleteDocumentFolder', async (event, siteName, stationId, folder
     return { success: false, message: String(e) };
   }
 });
+
+ipcMain.handle('assignRepairsToYearsIndividually', async (event, params) => {
+  return await algorithms.assignRepairsToYearsIndividually(params);
+});
+
+ipcMain.handle('groupTripsWithinYears', async (event, params) => {
+  return await algorithms.groupTripsWithinYears(params);
+});

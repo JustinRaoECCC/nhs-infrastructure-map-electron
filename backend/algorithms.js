@@ -1279,8 +1279,327 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
   };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// REPAIR-FIRST MODE - Assign individual repairs to years, then group
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Assign individual repairs to years by priority score (greedy algorithm)
+ * Similar to assignTripsToYears but operates on individual repairs
+ */
+async function assignRepairsToYearsIndividually({ 
+  scored_repairs = [], 
+  station_data = {},
+  fixed_parameters = [], 
+  top_percent = 20 
+} = {}) {
+  console.log('[assignRepairsToYearsIndividually] repairs=', scored_repairs.length, 'fixed_parameters=', fixed_parameters.length);
+
+  // Drop legacy/unsupported types
+  fixed_parameters = (fixed_parameters || []).filter(p =>
+    p && (p.type === 'geographical' || p.type === 'temporal' || p.type === 'monetary' || p.type === 'design')
+  );
+
+  // Expand monetary params with multi-split
+  if (Array.isArray(fixed_parameters) && fixed_parameters.length) {
+    const expanded = [];
+    for (const p of fixed_parameters) {
+      if (p && p.type === 'monetary' && Array.isArray(p.split_conditions) && p.split_conditions.length) {
+        for (const src of p.split_conditions) {
+          const clone = { ...p, split_condition: { enabled: true, source: src } };
+          delete clone.split_conditions;
+          expanded.push(clone);
+        }
+      } else {
+        expanded.push(p);
+      }
+    }
+    fixed_parameters = expanded;
+  }
+
+  if (!scored_repairs.length) {
+    return {
+      success: false,
+      message: 'No repairs provided for assignment',
+      assignments: {}
+    };
+  }
+
+  // Sort repairs by score (highest first)
+  const sortedRepairs = scored_repairs.slice().sort((a, b) => {
+    const sa = Number(a?.score) || 0;
+    const sb = Number(b?.score) || 0;
+    return sb - sa;
+  });
+
+  // Get all years from fixed parameters
+  const allYears = new Set();
+  for (const param of fixed_parameters) {
+    if (param.years) {
+      Object.keys(param.years).forEach(year => allYears.add(year));
+    }
+  }
+  
+  const years = Array.from(allYears).sort();
+  
+  if (!years.length) {
+    // No yearly constraints, assign all to current year
+    const currentYear = new Date().getFullYear();
+    return {
+      success: true,
+      assignments: {
+        [currentYear]: sortedRepairs.map(sr => sr.original_repair)
+      }
+    };
+  }
+
+  // Track yearly budgets/constraints (same as trip-first)
+  const yearlyBudgets = {};
+  const yearlyTemporal = {};
+  const constraint_columns = [];
+
+  // Build constraint tracking (same logic as assignTripsToYears)
+  for (const p of (fixed_parameters || [])) {
+    if (!p) continue;
+    if (p.type === 'monetary') {
+      const splitSrc = (p.split_condition && p.split_condition.enabled) ? _canon(p.split_condition.source) : null;
+      constraint_columns.push({
+        type: 'monetary',
+        key: _monKey(p.field_name, splitSrc),
+        field_name: p.field_name,
+        label: splitSrc ? p.split_condition.source : p.field_name,
+        unit: p.unit || '$',
+        cumulative: !!p.cumulative,
+        split_source: splitSrc
+      });
+    } else if (p.type === 'temporal') {
+      constraint_columns.push({
+        type: 'temporal',
+        key: _canon(p.name),
+        name: p.name,
+        label: p.name,
+        unit: _normalizeUnit(p.unit) || 'hours',
+        cumulative: !!p.cumulative
+      });
+    }
+  }
+  
+  for (const year of years) {
+    yearlyBudgets[year] = {};
+    yearlyTemporal[year] = {};
+    
+    for (const param of fixed_parameters) {
+      if (param.type === 'monetary' && param.years && param.years[year]) {
+        const splitSrc = (param.split_condition && param.split_condition.enabled)
+          ? _canon(param.split_condition.source)
+          : null;
+        const key = _monKey(param.field_name, splitSrc);
+        yearlyBudgets[year][key] = {
+          total: _tryFloat(param.years[year].value) || 0,
+          used: 0,
+          cumulative: !!param.cumulative,
+          label: splitSrc ? String(param.split_condition.source) : param.field_name,
+          split_source: splitSrc,
+          type: 'monetary'
+        };
+      } else if (param.type === 'temporal' && param.years && param.years[year]) {
+        const key = _canon(param.name);
+        const rawTotal = _tryFloat(param.years[year].value) || 0;
+        const totalHours = _toHours(rawTotal, _normalizeUnit(param.unit) || _detectUnitFromFieldName(param.name) || 'hours');
+        yearlyTemporal[year][key] = {
+          total: totalHours,
+          used: 0,
+          cumulative: !!param.cumulative,
+          display_unit: _normalizeUnit(param.unit) || _detectUnitFromFieldName(param.name) || 'hours',
+          type: 'temporal',
+          label: param.name
+        };
+      }
+    }
+  }
+
+  const assignments = {};
+  years.forEach(year => assignments[year] = []);
+  const unassigned = [];
+
+  const firstYear = years[0];
+  const placedInYear1 = new Set();
+
+  const getRepairKey = (sr) => {
+    const oi = (sr && Number.isInteger(sr.row_index)) ? `idx:${sr.row_index}` : null;
+    if (oi) return oi;
+    const r = sr?.original_repair || {};
+    return `sid:${r.station_id ?? ''}::name:${r.name ?? r.repair_name ?? ''}`;
+  };
+
+  // Greedy assignment: for each repair (highest score first)
+  for (const scoredRepair of sortedRepairs) {
+    const repair = scoredRepair.original_repair;
+    const station = station_data[repair.station_id] || {};
+    let assigned = false;
+
+    // Try each year in order
+    for (const year of years) {
+      let canAssign = true;
+
+      // Check all non-cumulative constraints
+      for (const param of fixed_parameters) {
+        if (param.type === 'geographical') {
+          if (!checkGeographicalConstraint(repair, param, station_data, year)) {
+            canAssign = false;
+            break;
+          }
+        } else if (param.type === 'temporal' && !param.cumulative) {
+          if (!checkTemporalConstraint(repair, param, station_data, year)) {
+            canAssign = false;
+            break;
+          }
+        } else if (param.type === 'monetary' && !param.cumulative) {
+          if (!checkMonetaryConstraint(repair, param, station_data, year)) {
+            canAssign = false;
+            break;
+          }
+        } else if (param.type === 'design') {
+          const st = station_data[repair.station_id] || {};
+          if (!checkDesignConstraintStation(st, param, year)) {
+            canAssign = false;
+            break;
+          }
+        }
+      }
+
+      if (!canAssign) continue;
+
+      // Check cumulative budget/temporal availability
+      const repairUsage = { monetary: {}, temporal: {} };
+
+      for (const param of fixed_parameters) {
+        if (!param.cumulative) continue;
+        if (!checkIfCondition(repair, param, station_data)) continue;
+
+        if (param.type === 'monetary') {
+          const fieldName = param.field_name;
+          const splitSrc = (param.split_condition && param.split_condition.enabled)
+            ? _canon(param.split_condition.source)
+            : null;
+          const key = _monKey(param.field_name, splitSrc);
+          const value = findFieldAnywhere(repair, station, fieldName);
+         let amount = _tryFloat(value) || 0;
+          amount = _applyMonetarySplitIfAny(amount, param, repair, station_data);
+          repairUsage.monetary[key] = amount;
+
+          const budget = yearlyBudgets[year][key];
+          if (budget && budget.used + amount > budget.total) {
+            canAssign = false;
+            break;
+          }
+        } else if (param.type === 'temporal') {
+          const fieldName = param.name;
+          const value = findFieldAnywhere(repair, station, fieldName);
+          const amount = _tryFloat(value) || 0;
+          const repairUnit = _detectUnitFromFieldName(param.name) || _normalizeUnit(param.unit) || 'hours';
+          const hours = _toHours(amount, repairUnit);
+          repairUsage.temporal[fieldName] = hours;
+
+          const temporal = yearlyTemporal[year][fieldName];
+          if (temporal && temporal.used + hours > temporal.total) {
+            canAssign = false;
+            break;
+          }
+        }
+      }
+
+      if (canAssign) {
+        // Assign repair to this year
+        assignments[year].push(repair);
+
+        // Update cumulative trackers
+        for (const [key, amount] of Object.entries(repairUsage.monetary)) {
+          if (yearlyBudgets[year][key]) {
+            yearlyBudgets[year][key].used += amount;
+          }
+        }
+        for (const [key, hours] of Object.entries(repairUsage.temporal)) {
+          if (yearlyTemporal[year][key]) {
+            yearlyTemporal[year][key].used += hours;
+          }
+        }
+
+        if (year === firstYear) {
+          placedInYear1.add(getRepairKey(scoredRepair));
+        }
+
+        assigned = true;
+        break;
+      }
+    }
+
+    if (!assigned) {
+      unassigned.push(repair);
+    }
+  }
+
+  // Add unassigned repairs to a new year
+  if (unassigned.length > 0) {
+    const lastYear = parseInt(years[years.length - 1]);
+    const nextYear = lastYear + 1;
+    assignments[nextYear] = unassigned;
+  }
+
+  return {
+    success: true,
+    assignments,
+    mode: 'repair-first',
+    total_years: Object.keys(assignments).length
+  };
+}
+
+/**
+ * Group repairs into trips WITHIN each year (after individual assignment)
+ */
+async function groupTripsWithinYears({
+  year_assignments = {},
+  station_data = {},
+  priority_mode = 'tripmean',
+  group_by_fields = ['Access Type', 'City of Travel']
+} = {}) {
+  console.log('[groupTripsWithinYears] years=', Object.keys(year_assignments).length);
+
+  const tripsByYear = {};
+  for (const [year, repairs] of Object.entries(year_assignments)) {
+    if (!Array.isArray(repairs) || !repairs.length) {
+      tripsByYear[year] = [];
+      continue;
+    }
+
+    // Convert repairs to scored format for grouping
+    const scoredRepairs = repairs.map(r => ({
+      original_repair: r,
+      score: r.score || 0  // Preserve original score if available
+    }));
+
+    // Reuse existing grouping logic
+    const result = await groupRepairsIntoTrips({
+      scored_repairs: scoredRepairs,
+      station_data,
+      priority_mode,
+      group_by_fields
+    });
+
+    tripsByYear[year] = result.trips || [];
+  }
+
+  return {
+    success: true,
+    trips_by_year: tripsByYear,
+    mode: 'repair-first'
+  };
+}
+
 module.exports = { 
   optimizeWorkplan,
   groupRepairsIntoTrips,
-  assignTripsToYears
+  assignTripsToYears,
+  assignRepairsToYearsIndividually,
+  groupTripsWithinYears
 };

@@ -1,6 +1,11 @@
 // frontend/js/optimization.js (UPDATED)
 document.addEventListener('DOMContentLoaded', () => {
 
+  // ───────────────────────────────── Workflow mode state ─────────────────────────────────
+  // 'trip-first' (default) = Opt1 → Opt2 → Opt3
+  // 'repair-first' = Opt1 → Opt3 → Opt2
+  let workflowMode = 'trip-first';
+
   // ───────────────────────────────── helpers for autocomplete wiring ─────────────────────────────────
   const dashPlaceholder    = document.getElementById('dashboardContentContainer');
   const mapContainer       = document.getElementById('mapContainer');
@@ -421,6 +426,158 @@ document.addEventListener('DOMContentLoaded', () => {
   async function initDashboardUI() {
     const tabs     = document.querySelectorAll('.dashboard-tab');
     const contents = document.querySelectorAll('.dashboard-content');
+
+    // ───────────────────────────────── Helper functions for rendering ─────────────────────────────────
+    // These mirror backend logic but are needed for frontend rendering
+    
+    function _extractRepairCost(repair) {
+      if (!repair || typeof repair !== 'object') return 0;
+      for (const [k, v] of Object.entries(repair)) {
+        if (_canon(k) === 'cost') {
+          const num = _tryFloat(v);
+          return num == null ? 0 : num;
+        }
+      }
+      return 0;
+    }
+
+    function _parseSplitSpec(spec) {
+      if (!spec) return null;
+      const parts = String(spec).split(/\s*-\s*/);
+      const out = Object.create(null);
+      let found = false;
+      for (const seg of parts) {
+        const m = String(seg).match(/(-?\d+(?:\.\d+)?)%\s*([A-Za-z0-9()[\]\/\-\s]+)$/);
+        if (!m) continue;
+        const pct = Number(m[1]);
+        if (!Number.isFinite(pct)) continue;
+        const src = _canon(m[2] || '');
+        if (!src) continue;
+        out[src] = (pct / 100);
+        found = true;
+      }
+      return found ? out : null;
+    }
+
+function _mergeSplitMaps(...maps) {
+      const out = Object.create(null);
+      for (const m of maps || []) {
+        if (!m) continue;
+        for (const [k, v] of Object.entries(m)) out[k] = v;
+      }
+      return out;
+    }
+
+    function getSplitMapFromRepair(repair) {
+      const station = window._stationDataMap?.[repair.station_id] || {};
+      const get = (obj, key) => {
+        if (!obj) return undefined;
+        if (key in obj) return obj[key];
+        const found = Object.keys(obj).find(k => _canon(k) === _canon(key));
+        return found ? obj[found] : undefined;
+      };
+      
+      const om  = get(repair, 'O&M') ?? get(station, 'O&M');
+      const cap = get(repair, 'Capital') ?? get(station, 'Capital');
+      const dec = get(repair, 'Decommission') ?? get(station, 'Decommission');
+      
+      const mapOm  = _parseSplitSpec(om)  || {};
+      const mapCap = _parseSplitSpec(cap) || {};
+      const mapDec = _parseSplitSpec(dec) || {};
+      
+      return _mergeSplitMaps(mapOm, mapCap, mapDec);
+    }
+    // ───────────────────────────────── End helper functions ─────────────────────────────────
+
+     // ═══════════════════════════════════════════════════════════════════════
+     // WORKFLOW MODE TOGGLE
+     // ═══════════════════════════════════════════════════════════════════════
+     const workflowModeSelect = document.getElementById('workflowModeSelect');
+     const workflowModeInfoBtn = document.getElementById('workflowModeInfoBtn');
+     const workflowModeInfoModal = document.getElementById('workflowModeInfoModal');
+     const closeWorkflowModeInfoModal = document.getElementById('closeWorkflowModeInfoModal');
+     const okWorkflowModeInfoBtn = document.getElementById('okWorkflowModeInfoBtn');
+
+     const opt2Tab = Array.from(tabs).find(t => t.dataset.target === 'optimization2');
+     const opt3Tab = Array.from(tabs).find(t => t.dataset.target === 'optimization3');
+     const opt2Description = document.getElementById('opt2Description');
+     const opt3Description = document.getElementById('opt3Description');
+
+     function updateWorkflowMode(mode) {
+       workflowMode = mode;
+       
+       // Update tab order by swapping DOM positions
+       const tabsContainer = document.querySelector('.dashboard-tabs');
+       if (mode === 'repair-first') {
+         // Move Opt3 before Opt2
+         if (opt3Tab && opt2Tab && opt3Tab.nextSibling === opt2Tab) {
+           // Already in correct order
+         } else if (opt3Tab && opt2Tab) {
+           tabsContainer.insertBefore(opt3Tab, opt2Tab);
+         }
+         
+         // Update descriptions
+         if (opt2Description) {
+           opt2Description.innerHTML = `
+             Group repairs into trips <strong>within each assigned year</strong> by <strong>City of Travel</strong> and <strong>Access Type</strong>.
+             <br/>
+             <strong>⚠️ Note:</strong> You must run Optimizations 1 and 3 first.
+           `;
+         }
+         if (opt3Description) {
+           opt3Description.innerHTML = `
+             Assign individual repairs to years based on fixed parameter constraints, starting with the highest-scored repairs.
+             <br/>
+             <strong>⚠️ Note:</strong> You must run Optimization 1 first.
+           `;
+         }
+       } else {
+         // Trip-First: Move Opt2 before Opt3
+         if (opt2Tab && opt3Tab && opt2Tab.nextSibling === opt3Tab) {
+           // Already in correct order
+         } else if (opt2Tab && opt3Tab) {
+           tabsContainer.insertBefore(opt2Tab, opt3Tab);
+         }
+         
+         // Restore original descriptions
+         if (opt2Description) {
+           opt2Description.innerHTML = `
+             Group scored repairs by <strong>City of Travel</strong> and <strong>Access Type</strong>.
+             <br/>
+             <strong>⚠️ Note:</strong> You must run <em>Optimization 1</em> first
+           `;
+         }
+         if (opt3Description) {
+           opt3Description.innerHTML = `
+             Assign trips to years based on fixed parameter constraints.
+             <br/>
+             <strong>⚠️ Note:</strong> You must run Optimizations 1 and 2 first.
+           `;
+         }
+       }
+
+       // Clear results when switching modes
+       resetOptimizationViews();
+     }
+
+     if (workflowModeSelect) {
+       workflowModeSelect.addEventListener('change', () => {
+         updateWorkflowMode(workflowModeSelect.value);
+       });
+     }
+
+     // Info modal handlers
+     if (workflowModeInfoBtn && workflowModeInfoModal) {
+       const openInfo = () => (workflowModeInfoModal.style.display = 'flex');
+       const closeInfo = () => (workflowModeInfoModal.style.display = 'none');
+       workflowModeInfoBtn.addEventListener('click', openInfo);
+       if (closeWorkflowModeInfoModal) closeWorkflowModeInfoModal.addEventListener('click', closeInfo);
+       if (okWorkflowModeInfoBtn) okWorkflowModeInfoBtn.addEventListener('click', closeInfo);
+       workflowModeInfoModal.addEventListener('click', (e) => { if (e.target === workflowModeInfoModal) closeInfo(); });
+     }
+
+     // Initialize in trip-first mode
+     updateWorkflowMode('trip-first');
 
     // Check if TEST tab should be visible
     try {
@@ -2091,7 +2248,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (runOpt2Btn) {
       runOpt2Btn.addEventListener('click', async () => {
-        // Guard: require Optimization 1 to be completed first (same pattern as Opt-3)
+        // Different logic based on workflow mode
+        if (workflowMode === 'repair-first') {
+          await runOpt2RepairFirst();
+          return;
+        }
+
+        // Trip-First mode (original logic)
         if (!Array.isArray(window._scoredRepairs) || window._scoredRepairs.length === 0) {
           opt2Results.innerHTML = '<div class="opt-error">⚠️ Please run Optimization 1 first.</div>';
           return;
@@ -2125,6 +2288,153 @@ document.addEventListener('DOMContentLoaded', () => {
         window._tripsData = result.trips;
         renderOpt2Results(result);
       });
+    }
+
+    // NEW: Repair-First Opt2 - Group repairs into trips within each year
+    async function runOpt2RepairFirst() {
+      // Guard: require Opt3 (repair assignment) to be completed first
+      if (!window._opt3Result || !window._opt3Result.assignments) {
+        opt2Results.innerHTML = '<div class="opt-error">⚠️ Please run Optimization 3 first.</div>';
+        return;
+      }
+
+      const stationList = await window.electronAPI.getStationData();
+      const stationDataMap = {};
+      (stationList || []).forEach(station => {
+        const stationId = station.station_id || station['Station ID'] || station.id;
+        if (stationId) stationDataMap[stationId] = station;
+      });
+
+      opt2Results.innerHTML = '<div class="opt-note">Grouping repairs into trips within each year...</div>';
+
+      // Call backend with per-year repair lists
+      const result = await window.electronAPI.groupTripsWithinYears({
+        year_assignments: window._opt3Result.assignments,
+        station_data: stationDataMap,
+        priority_mode: (window._tripPriorityMode || 'tripmean'),
+        group_by_fields: ['Access Type', 'City of Travel']
+      });
+
+      if (!result.success) {
+        opt2Results.innerHTML = `<div class="opt-error">${result.message || 'Trip grouping failed'}</div>`;
+        return;
+      }
+
+      // Store result for Opt3 display if needed
+      window._tripsDataByYear = result.trips_by_year;
+      
+      // Render results (group by year)
+      renderOpt2RepairFirstResults(result);
+    }
+
+    function renderOpt2RepairFirstResults(result) {
+      opt2Results.innerHTML = '';
+      
+      // Add TEST mode banner if active
+      if (window._testMode && window._testRepairs) {
+        const testBanner = document.createElement('div');
+        testBanner.style.cssText = 'padding:1em; margin-bottom:1em; background:#fff3cd; border:1px solid #ffc107; border-radius:6px; color:#856404;';
+        testBanner.innerHTML = `<strong>⚠️ TEST MODE ACTIVE</strong> - Using TEST repairs' City of travel & Access Type fields`;
+        opt2Results.appendChild(testBanner);
+      }
+
+      const summary = document.createElement('div');
+      summary.className = 'opt-header';
+      summary.innerHTML = `
+        <div class="opt-title">Optimization 2: Trip Grouping Within Years</div>
+        <div class="opt-summary">
+          <span class="chip">Mode: ${(window._tripPriorityMode || 'tripmean')}</span>
+        </div>
+        <div class="opt-note" style="margin-top:.5rem;">
+          <strong>Note:</strong> Repairs have been grouped into trips <em>within each assigned year</em>.
+          Trips are ordered by repair scores using the selected mode.
+        </div>
+      `;
+      opt2Results.appendChild(summary);
+
+      const yearKeys = Object.keys(result.trips_by_year || {}).sort();
+
+      yearKeys.forEach(year => {
+        const trips = result.trips_by_year[year] || [];
+        
+        const yearSection = document.createElement('section');
+        yearSection.className = 'opt-trip';
+        yearSection.innerHTML = `
+          <div class="trip-title">
+            <button class="toggle-year" data-year="${year}" aria-label="Expand year">▸</button>
+            Year ${year} — ${trips.length} Trip(s)
+          </div>
+          <div class="year-details" style="display:none;"></div>
+        `;
+
+        const toggleBtn = yearSection.querySelector('.toggle-year');
+        const detailsDiv = yearSection.querySelector('.year-details');
+        let rendered = false;
+
+        toggleBtn.addEventListener('click', () => {
+          const isOpen = detailsDiv.style.display !== 'none';
+          if (isOpen) {
+            detailsDiv.style.display = 'none';
+            toggleBtn.textContent = '▸';
+          } else {
+            if (!rendered) {
+              // Render trips for this year
+              trips.forEach((trip, idx) => {
+                const tripDiv = document.createElement('div');
+                tripDiv.className = 'nested-wrap';
+                tripDiv.style = 'margin-bottom:1em;';
+                
+                const labels = (trip.group_labels && trip.group_labels.length)
+                  ? trip.group_labels.map(gl => `${gl.name}: ${gl.value}`).join(' • ')
+                  : `Access Type: ${trip.access_type || ''} • City of Travel: ${trip.city_of_travel || ''}`;
+                
+                const splitTotals = trip.total_split_costs || {};
+                const splitKeys = Object.keys(splitTotals).filter(k => Number(splitTotals[k]) > 0).sort();
+                const splitChips = splitKeys.map(k => `<span class="chip">${k}: ${formatCurrency(splitTotals[k])}</span>`).join('');
+                
+                tripDiv.innerHTML = `
+                  <div style="font-weight:600; margin-bottom:0.5em;">Trip ${idx + 1}: ${labels}</div>
+                  <div style="display:flex; gap:0.5em; flex-wrap:wrap; margin-bottom:0.5em;">
+                    <span class="chip">Total Days: ${trip.total_days}</span>
+                    <span class="chip">Stations: ${trip.stations.length}</span>
+                    <span class="chip">Repairs: ${trip.repairs.length}</span>
+                    <span class="chip">Total Cost: ${formatCurrency(trip.total_cost || 0)}</span>
+                    <span class="chip">Score: ${Number(trip.priority_score || 0).toFixed(2)} (${trip.priority_mode || 'tripmean'})</span>
+                    ${splitChips}
+                  </div>
+                `;
+                
+                // Add stations table
+                const keys = collectYearSplitKeys([trip]);
+                renderStationsTable(tripDiv, trip, keys);
+                
+                detailsDiv.appendChild(tripDiv);
+              });
+              rendered = true;
+            }
+            detailsDiv.style.display = '';
+            toggleBtn.textContent = '▾';
+          }
+        });
+
+        opt2Results.appendChild(yearSection);
+      });
+
+      // Helper to collect split keys (reuse from main renderOpt2Results)
+      function collectYearSplitKeys(trips) {
+        const found = new Set();
+        (trips || []).forEach(t => {
+          (t.stations || []).forEach(st => {
+            (st.repairs || []).forEach(rp => {
+              const smap = getSplitMapFromRepair(rp);
+              Object.entries(smap || {}).forEach(([k, mul]) => {
+                if (Number(mul) > 0) found.add(k);
+              });
+            });
+          });
+        });
+        return Array.from(found).sort();
+      }
     }
 
     function renderOpt2Results(result) {
@@ -2386,6 +2696,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (runOpt3Btn) {
       runOpt3Btn.addEventListener('click', async () => {
+        // Different logic based on workflow mode
+        if (workflowMode === 'repair-first') {
+          await runOpt3RepairFirst();
+          return;
+        }
+
+        // Trip-First mode (original logic)
         if (!window._tripsData) {
           opt3Results.innerHTML = '<div class="opt-error">⚠️ Please run Optimization 2 first.</div>';
           return;
@@ -2419,6 +2736,173 @@ document.addEventListener('DOMContentLoaded', () => {
           if (stationId) window._stationDataMap[stationId] = station;
         });
         renderOpt3Results(window._opt3Result);
+      });
+    }
+
+    // NEW: Repair-First Opt3 - Assign individual repairs to years
+    async function runOpt3RepairFirst() {
+      if (!Array.isArray(window._scoredRepairs) || window._scoredRepairs.length === 0) {
+        opt3Results.innerHTML = '<div class="opt-error">⚠️ Please run Optimization 1 first.</div>';
+        return;
+      }
+
+      const fixedParams = Array.from(fixedParamContainer.querySelectorAll('.fixed-param-row'))
+        .map(row => extractParamData(row));
+
+      opt3Results.innerHTML = '<div class="opt-note">Assigning repairs to years by priority...</div>';
+
+      const topPercent = Math.min(100, Math.max(0, parseFloat(opt3TopPercentInput?.value ?? '0') || 0));
+
+      // Get station data for constraint checks
+      const stationList = await window.electronAPI.getStationData();
+      const stationDataMap = {};
+      (stationList || []).forEach(station => {
+        const stationId = station.station_id || station['Station ID'] || station.id;
+        if (stationId) stationDataMap[stationId] = station;
+      });
+
+      const result = await window.electronAPI.assignRepairsToYearsIndividually({
+        scored_repairs: window._scoredRepairs,
+        station_data: stationDataMap,
+        fixed_parameters: fixedParams,
+        top_percent: topPercent
+      });
+
+      if (!result.success) {
+        opt3Results.innerHTML = `<div class="opt-error">${result.message || 'Year assignment failed'}</div>`;
+        return;
+      }
+
+      // Cache for Opt2
+      window._opt3Result = result;
+      window._stationDataMap = stationDataMap;
+     
+      renderOpt3RepairFirstResults(result);
+    }
+
+    function renderOpt3RepairFirstResults(result) {
+      opt3Results.innerHTML = '';
+      
+      // Add TEST mode banner if active
+      if (window._testMode && window._testRepairs) {
+        const testBanner = document.createElement('div');
+        testBanner.style.cssText = 'padding:1em; margin-bottom:1em; background:#fff3cd; border:1px solid #ffc107; border-radius:6px; color:#856404;';
+        testBanner.innerHTML = `<strong>⚠️ TEST MODE ACTIVE</strong> - Using TEST repairs for individual assignment`;
+        opt3Results.appendChild(testBanner);
+      }
+
+      const summary = document.createElement('div');
+      summary.className = 'opt-header';
+      summary.innerHTML = `
+        <div class="opt-title">Optimization 3: Repair Assignment by Priority</div>
+        <div class="opt-summary">
+          <span class="chip">Total Years: ${result.total_years}</span>
+        </div>
+        <div class="opt-note" style="margin-top:.5rem;">
+          <strong>Note:</strong> Repairs have been assigned individually to years by priority score,
+          starting with the highest-scored repairs.
+        </div>
+      `;
+      opt3Results.appendChild(summary);
+
+      const yearKeys = Object.keys(result.assignments).sort();
+
+      yearKeys.forEach(year => {
+        const repairs = result.assignments[year] || [];
+        
+        let totalCost = 0;
+        let totalDays = 0;
+        const splitTotals = {};
+        
+        repairs.forEach(repair => {
+          const cost = _extractRepairCost(repair);
+          const days = _tryFloat(repair.days || repair.Days) || 0;
+          totalCost += cost;
+          totalDays += days;
+          
+          const splitMap = getSplitMapFromRepair(repair);
+          for (const [k, mul] of Object.entries(splitMap)) {
+            const amt = cost * (Number.isFinite(mul) ? mul : 0);
+            if (amt > 0) splitTotals[k] = (splitTotals[k] || 0) + amt;
+          }
+        });
+        
+        const splitKeys = Object.keys(splitTotals).filter(k => Number(splitTotals[k]) > 0).sort();
+        const splitChips = splitKeys.map(k => `<span class="chip">${k}: ${formatCurrency(splitTotals[k])}</span>`).join('');
+
+        const yearSection = document.createElement('section');
+        yearSection.className = 'opt-trip';
+        yearSection.innerHTML = `
+          <div class="trip-title">
+            <button class="toggle-year" data-year="${year}" aria-label="Expand year">▸</button>
+            Year ${year}
+          </div>
+          <div class="trip-summary">
+           <span class="chip">Repairs: ${repairs.length}</span>
+            <span class="chip">Total Days: ${totalDays}</span>
+            <span class="chip">Total Cost: ${formatCurrency(totalCost)}</span>
+            ${splitChips}
+          </div>
+          <div class="year-details" style="display:none;"></div>
+        `;
+
+        const toggleBtn = yearSection.querySelector('.toggle-year');
+        const detailsDiv = yearSection.querySelector('.year-details');
+        let rendered = false;
+
+        toggleBtn.addEventListener('click', () => {
+          const isOpen = detailsDiv.style.display !== 'none';
+          if (isOpen) {
+            detailsDiv.style.display = 'none';
+            toggleBtn.textContent = '▸';
+          } else {
+            if (!rendered) {
+              // Render repair list
+              const table = document.createElement('table');
+              table.className = 'opt-table';
+              table.innerHTML = `
+                <thead>
+                  <tr>
+                    <th>Station ID</th>
+                    <th>Repair Name</th>
+                    <th>Cost</th>
+                    <th>Days</th>
+                    ${splitKeys.map(k => `<th>Split: ${k}</th>`).join('')}
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              `;
+              
+              const tbody = table.querySelector('tbody');
+              repairs.forEach(repair => {
+                const cost = _extractRepairCost(repair);
+                const days = _tryFloat(repair.days || repair.Days) || 0;
+                const splitMap = getSplitMapFromRepair(repair);
+                
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                  <td class="txt">${repair.station_id || ''}</td>
+                  <td class="txt">${repair.name || repair.repair_name || ''}</td>
+                  <td class="txt">${formatCurrency(cost)}</td>
+                  <td class="txt">${String(days)}</td>
+                  ${splitKeys.map(k => {
+                    const mul = Number(splitMap[_canon(k)] || 0);
+                    const val = mul > 0 ? cost * mul : 0;
+                    return `<td class="txt">${val ? formatCurrency(val) : ''}</td>`;
+                  }).join('')}
+                `;
+                tbody.appendChild(tr);
+              });
+              
+              detailsDiv.appendChild(table);
+              rendered = true;
+            }
+            detailsDiv.style.display = '';
+            toggleBtn.textContent = '▾';
+          }
+        });
+
+        opt3Results.appendChild(yearSection);
       });
     }
 

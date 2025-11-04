@@ -1,5 +1,24 @@
 <!-- frontend/optimization.html (UPDATED) -->
 <div id="dashboardContainer" class="nhs-dashboard">
+
+  <!-- Workflow Mode Toggle (Top Right) -->
+  <div class="workflow-toggle-container">
+    <label class="workflow-toggle-label">
+      <span>Workflow Mode:</span>
+      <select id="workflowModeSelect" class="workflow-mode-select">
+        <option value="trip-first">Trip-First (Default)</option>
+        <option value="repair-first">Repair-First</option>
+      </select>
+    </label>
+    <button id="workflowModeInfoBtn" class="btn btn-ghost info-btn" title="What is this?" style="margin-left:0.5rem;">ℹ️</button>
+  </div>
+
+  <style>
+    .workflow-toggle-container { position:absolute; top:1rem; right:1rem; display:flex; align-items:center; gap:0.5rem; z-index:100; }
+    .workflow-toggle-label { display:flex; align-items:center; gap:0.5rem; font-weight:600; font-size:0.9rem; }
+    .workflow-mode-select { padding:0.4rem 0.6rem; border:1px solid #ccc; border-radius:6px; background:#fff; }
+  </style>
+
   <div class="dashboard-tabs">
     <button id="testTab" class="dashboard-tab" data-target="testMode" style="display:none;">TEST</button>
     <button class="dashboard-tab active" data-target="softParameters">Soft Parameters</button>
@@ -104,7 +123,7 @@
   <div id="optimization2" class="dashboard-content">
     <div class="opt-container">
       <h2>Optimization 2 - Trip Grouping</h2>
-      <p class="section-description">
+      <p id="opt2Description" class="section-description">
         Group scored repairs by <strong>City of Travel</strong> and <strong>Access Type</strong>.
         <br/>
         <strong>⚠️ Note:</strong> You must run <em>Optimization 1</em> first
@@ -127,7 +146,7 @@
   <div id="optimization3" class="dashboard-content">
     <div class="opt-container">
       <h2>Optimization 3 - Yearly Assignment</h2>
-      <p class="section-description">
+      <p id="opt3Description" class="section-description">
         Assign trips to years based on fixed parameter constraints.
         <br/>
         <strong>⚠️ Note:</strong> You must run Optimizations 1 and 2 first.
@@ -491,6 +510,42 @@
     </div>
     <div style="margin-top:1em; text-align:right;">
       <button id="okOpt3TopInfoBtn" class="btn btn-primary">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- Workflow Mode Info Modal -->
+<div id="workflowModeInfoModal" class="modal" style="display:none;">
+  <div class="modal-content" style="width:600px; max-width:90%;">
+    <span class="close-modal" id="closeWorkflowModeInfoModal">&times;</span>
+    <h2 class="modal-header">Workflow Mode Comparison</h2>
+    <div style="margin-top:1em; line-height:1.6;">
+      
+      <div style="margin-bottom:1.5em; padding:1em; background:#f0f7ff; border-radius:6px;">
+        <h3 style="margin:0 0 0.5em 0; color:#3c78d8;">Trip-First (Default)</h3>
+        <p style="margin:0;"><strong>Flow:</strong> Opt 1 → Opt 2 → Opt 3</p>
+        <p style="margin:0.5em 0 0 0;">Groups repairs into trips first, then assigns whole trips to years. Keeps trips together but may defer high-priority repairs if their trip doesn't fit in Year 1.</p>
+        <ul style="margin:0.5em 0 0 1.5em; padding:0;">
+          <li>✓ Better resource utilization</li>
+          <li>✓ Fewer total trips</li>
+          <li>⚠️ High-priority repairs may be deferred with their trip</li>
+        </ul>
+      </div>
+
+      <div style="padding:1em; background:#fff9e6; border-radius:6px;">
+        <h3 style="margin:0 0 0.5em 0; color:#f0ad4e;">Repair-First</h3>
+        <p style="margin:0;"><strong>Flow:</strong> Opt 1 → Opt 3 → Opt 2</p>
+        <p style="margin:0.5em 0 0 0;">Assigns individual repairs to years by priority score first, then groups into trips within each year. Maximizes early placement of high-priority work.</p>
+        <ul style="margin:0.5em 0 0 1.5em; padding:0;">
+          <li>✓ Highest-priority tasks are finished ASAP</li>
+          <li>⚠️ May split logical trips across years</li>
+        </ul>
+      </div>
+
+      <p style="margin-top:1em; font-size:0.9em; color:#666;"><strong>Tip:</strong> Try both modes and compare results to see which fits your planning needs better.</p>
+    </div>
+    <div style="margin-top:1em; text-align:right;">
+      <button id="okWorkflowModeInfoBtn" class="btn btn-primary">OK</button>
     </div>
   </div>
 </div>
