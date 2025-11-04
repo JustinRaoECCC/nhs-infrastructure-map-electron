@@ -3985,6 +3985,78 @@ html.modal-open, body.modal-open { overflow: hidden; }
   }
 }
 
+/* ─── Accordion/Collapsible Panels for Repairs ─────────────────────────── */
+.panel-header-collapsible {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--stats-surface) 96%, transparent),
+    color-mix(in srgb, var(--stats-surface) 99%, transparent));
+  border-bottom: 1px solid var(--stats-border);
+  transition: background 0.15s ease;
+}
+
+.panel-header-collapsible:hover {
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--stats-surface) 92%, transparent),
+    color-mix(in srgb, var(--stats-surface) 96%, transparent));
+}
+
+.panel-header-collapsible .toggle-icon {
+  font-size: 14px;
+  color: var(--stats-accent-1);
+  font-weight: 700;
+  transition: transform 0.2s ease;
+  width: 20px;
+  display: inline-block;
+}
+
+.panel-header-collapsible .panel-title-inline {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--stats-text);
+  flex: 1;
+}
+
+.panel-header-collapsible .count-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--stats-accent-1) 12%, transparent);
+  color: var(--stats-text);
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid color-mix(in srgb, var(--stats-accent-1) 25%, var(--stats-border));
+}
+
+.panel-body-collapsible {
+  padding: 0;
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+}
+
+@media (prefers-color-scheme: dark) {
+  .panel-header-collapsible {
+    background: linear-gradient(180deg, #0f172a, #0b1326);
+    border-bottom-color: #1f2937;
+  }
+  
+  .panel-header-collapsible:hover {
+    background: linear-gradient(180deg, #111827, #0c1a33);
+  }
+  
+  .panel-header-collapsible .count-badge {
+    background: rgba(99,102,241,.18);
+    border-color: rgba(99,102,241,.28);
+    color: #e0e7ff;
+  }
+}
+
+
 /* ================================
    Optimization Dashboard Styles
    (scoped to .nhs-dashboard)

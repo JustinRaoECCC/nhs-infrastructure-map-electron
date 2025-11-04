@@ -436,7 +436,6 @@
   let repairsState = {
     allRepairs: [],
     selectedByType: new Map(),   // type -> Set(rows)
-    _vtByType: new Map()         // type -> virtualizer
   };
   let stationsList = [];
 
@@ -570,115 +569,157 @@
     const wrap = $('#globalTypeTables');
     if (!wrap) return;
     wrap.innerHTML = '';
-    repairsState._vtByType.clear();
 
     const groups = _groupByType(repairsState.allRepairs);
-    groups.forEach(([type, rows]) => {
+    groups.forEach(([type, rows], idx) => {
       const slug = _slug(type || 'repair') || 'repair';
+      const isOpen = idx === 0; // First type open by default
 
       const panel = document.createElement('div');
       panel.className = 'panel';
       panel.style.marginTop = '20px';
 
-      const title = document.createElement('div');
-      title.className = 'panel-title';
-      title.textContent = type;
-
-      const scroller = document.createElement('div');
-      scroller.className = 'table-scroll';
-
-      const table = document.createElement('table');
-      table.className = 'data-table';
-      table.id = `globalTable_${slug}`;
-
-      const nameHdr = (type === 'Repair') ? 'Repair Name' : 'Item';
-      table.innerHTML = `
-        <thead>
-          <tr>
-            <th style="width:40px;">
-              <input type="checkbox" id="selectAll_${slug}" title="Select all ${type}" />
-            </th>
-            <th>Date</th>
-            <th>Station ID</th>
-            <th>Location</th>
-            <th>Asset Type</th>
-            <th>${nameHdr}</th>
-            <th>Severity</th>
-            <th>Priority</th>
-            <th>Cost</th>
-            <th>Category</th>
-            <th>Days</th>
-          </tr>
-        </thead>
-        <tbody id="globalBody_${slug}"></tbody>
+      // Collapsible header
+      const header = document.createElement('div');
+      header.className = 'panel-header-collapsible';
+      header.dataset.type = slug;
+      header.innerHTML = `
+        <span class="toggle-icon">${isOpen ? '▼' : '▶'}</span>
+        <strong class="panel-title-inline">${esc(type)}</strong>
+        <span class="count-badge">${rows.length} item${rows.length !== 1 ? 's' : ''}</span>
       `;
+      header.style.cursor = 'pointer';
+      header.style.userSelect = 'none';
 
-      scroller.appendChild(table);
-      panel.appendChild(title);
-      panel.appendChild(scroller);
+      // Collapsible body
+      const body = document.createElement('div');
+      body.className = 'panel-body-collapsible';
+      body.style.display = isOpen ? 'block' : 'none';
+      body.dataset.slug = slug;
+      body.dataset.type = type;
+
+      panel.appendChild(header);
+      panel.appendChild(body);
       wrap.appendChild(panel);
 
-      // Selection bucket per type
-      if (!repairsState.selectedByType.has(type)) {
-        repairsState.selectedByType.set(type, new Set());
-      }
-      const selSet = repairsState.selectedByType.get(type);
-      const tbody = table.querySelector('tbody');
-
-      const renderRowHTML = (r, i) => {
-        const checked = selSet.has(r) ? 'checked' : '';
-        return `
-          <td><input type="checkbox" class="type-checkbox" ${checked}></td>
-          <td>${esc(r.date || '')}</td>
-          <td>${esc(r.station_id || '')}</td>
-          <td>${esc(r.location || '')}</td>
-          <td>${esc(r.assetType || '')}</td>
-          <td>${esc(r.name || '')}</td>
-          <td>${esc(r.severity || '')}</td>
-          <td>${esc(r.priority || '')}</td>
-          <td>${formatCost(r.cost)}</td>
-          <td>${esc(r.category || '')}</td>
-          <td>${esc(r.days || '')}</td>
-        `;
-      };
-
-      const vt = mountVirtualizedTable({
-        rows,
-        tbody,
-        renderRowHTML,
-        rowHeight: 44,
-        overscan: 10,
-        adaptiveHeight: true,
-        maxViewport: 520,
-        minViewport: 0
-      });
-      repairsState._vtByType.set(type, vt);
-
-      // delegate per-row selection
-      tbody.addEventListener('change', (e) => {
-        const t = e.target;
-        if (!(t instanceof HTMLInputElement) || !t.classList.contains('type-checkbox')) return;
-        const tr = t.closest('tr'); if (!tr) return;
-        const idx = Number(tr.dataset.index); if (Number.isNaN(idx)) return;
-        const item = rows[idx];
-        if (!item) return;
-        if (t.checked) selSet.add(item); else selSet.delete(item);
-        _setTriState(document.getElementById(`selectAll_${slug}`), selSet.size, rows.length);
-      });
-
-      // header select-all
-      const hdr = document.getElementById(`selectAll_${slug}`);
-      hdr?.addEventListener('change', (e) => {
-        if (e.target.checked) {
-          selSet.clear(); rows.forEach(r => selSet.add(r));
-        } else {
-          selSet.clear();
+      // Toggle accordion on header click
+      header.addEventListener('click', () => {
+        const isCurrentlyOpen = body.style.display !== 'none';
+        const icon = header.querySelector('.toggle-icon');
+        
+        if (!isCurrentlyOpen && !body.dataset.rendered) {
+          // Lazy render this table
+          renderSingleTypeTable(body, type, rows, slug);
+          body.dataset.rendered = 'true';
         }
-        vt.refresh();
-        _setTriState(hdr, selSet.size, rows.length);
+        
+        // Toggle visibility
+        body.style.display = isCurrentlyOpen ? 'none' : 'block';
+        icon.textContent = isCurrentlyOpen ? '▶' : '▼';
+      });
+
+      // Render the first table immediately
+      if (isOpen) {
+        renderSingleTypeTable(body, type, rows, slug);
+        body.dataset.rendered = 'true';
+      }
+    });
+  }
+
+  function renderSingleTypeTable(bodyContainer, type, rows, slug) {
+    // Selection bucket per type
+    if (!repairsState.selectedByType.has(type)) {
+      repairsState.selectedByType.set(type, new Set());
+    }
+    const selSet = repairsState.selectedByType.get(type);
+
+    // Create table structure
+    const scroller = document.createElement('div');
+    scroller.className = 'table-scroll';
+
+    const table = document.createElement('table');
+    table.className = 'data-table';
+    table.id = `globalTable_${slug}`;
+
+    const nameHdr = (type === 'Repair') ? 'Repair Name' : 'Item';
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th style="width:40px;">
+            <input type="checkbox" id="selectAll_${slug}" title="Select all ${type}" />
+          </th>
+          <th>Date</th>
+          <th>Station ID</th>
+          <th>Location</th>
+          <th>Asset Type</th>
+          <th>${nameHdr}</th>
+          <th>Severity</th>
+          <th>Priority</th>
+          <th>Cost</th>
+          <th>Category</th>
+          <th>Days</th>
+        </tr>
+      </thead>
+      <tbody id="globalBody_${slug}"></tbody>
+    `;
+
+    scroller.appendChild(table);
+    bodyContainer.appendChild(scroller);
+
+    const tbody = table.querySelector('tbody');
+
+    // Simple direct rendering (no virtualization needed for small datasets)
+    rows.forEach((r, i) => {
+      const checked = selSet.has(r) ? 'checked' : '';
+      const tr = document.createElement('tr');
+      tr.dataset.index = i;
+      tr.innerHTML = `
+        <td><input type="checkbox" class="type-checkbox" ${checked} data-idx="${i}"></td>
+        <td>${esc(r.date || '')}</td>
+        <td>${esc(r.station_id || '')}</td>
+        <td>${esc(r.location || '')}</td>
+        <td>${esc(r.assetType || '')}</td>
+        <td>${esc(r.name || '')}</td>
+        <td>${esc(r.severity || '')}</td>
+        <td>${esc(r.priority || '')}</td>
+        <td>${formatCost(r.cost)}</td>
+        <td>${esc(r.category || '')}</td>
+        <td>${esc(r.days || '')}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    // Delegate per-row selection
+    tbody.addEventListener('change', (e) => {
+      const t = e.target;
+      if (!(t instanceof HTMLInputElement) || !t.classList.contains('type-checkbox')) return;
+      const idx = Number(t.dataset.idx);
+      if (Number.isNaN(idx)) return;
+      const item = rows[idx];
+      if (!item) return;
+      if (t.checked) selSet.add(item); else selSet.delete(item);
+      _setTriState(document.getElementById(`selectAll_${slug}`), selSet.size, rows.length);
+      updateAllCheckboxes(); // Update global count
+    });
+
+    // Header select-all
+    const hdr = document.getElementById(`selectAll_${slug}`);
+    hdr?.addEventListener('change', (e) => {
+      if (e.target.checked) {
+        selSet.clear();
+        rows.forEach(r => selSet.add(r));
+      } else {
+        selSet.clear();
+      }
+      vt.refresh();
+      // Re-render checkboxes
+      tbody.querySelectorAll('.type-checkbox').forEach((cb, i) => {
+        cb.checked = selSet.has(rows[i]);
       });
       _setTriState(hdr, selSet.size, rows.length);
+      updateAllCheckboxes(); // Update global count
     });
+    _setTriState(hdr, selSet.size, rows.length);
   }
 
   function formatCost(cost) {
@@ -1026,7 +1067,65 @@
     
     await loadRepairsData();
     if (window.populateWorkplanFromRepairs) window.populateWorkplanFromRepairs();
-  }  
+  }
+
+  function selectAllRepairs() {
+    // Group repairs by type
+    const groups = _groupByType(repairsState.allRepairs);
+    
+    // Select all repairs in each type
+    groups.forEach(([type, rows]) => {
+      if (!repairsState.selectedByType.has(type)) {
+        repairsState.selectedByType.set(type, new Set());
+      }
+      const selSet = repairsState.selectedByType.get(type);
+      selSet.clear();
+      rows.forEach(r => selSet.add(r));
+    });
+    
+    // Update all visible checkboxes
+    updateAllCheckboxes();
+  }
+
+  function deselectAllRepairs() {
+    // Clear all selections
+    repairsState.selectedByType.forEach((selSet) => {
+      selSet.clear();
+    });
+    
+    // Update all visible checkboxes
+    updateAllCheckboxes();
+  }
+
+  function updateAllCheckboxes() {
+    const groups = _groupByType(repairsState.allRepairs);
+    let totalSelected = 0;
+    
+    groups.forEach(([type, rows]) => {
+      const slug = _slug(type || 'repair') || 'repair';
+      const selSet = repairsState.selectedByType.get(type);
+      totalSelected += selSet ? selSet.size : 0;
+      const tbody = document.getElementById(`globalBody_${slug}`);
+      
+      // Only update if the section is rendered
+      if (tbody) {
+        // Update row checkboxes
+        tbody.querySelectorAll('.type-checkbox').forEach((cb, i) => {
+          cb.checked = selSet ? selSet.has(rows[i]) : false;
+        });
+        
+        // Update header checkbox tri-state
+        const hdr = document.getElementById(`selectAll_${slug}`);
+        _setTriState(hdr, selSet ? selSet.size : 0, rows.length);
+      }
+    });
+
+    // Update selection count display
+    const countEl = document.getElementById('repairsSelectionCount');
+    if (countEl) {
+      countEl.textContent = `${totalSelected} selected`;
+    }
+  }
 
   // No-op now; select-all is wired per dynamic table in renderTypeTables()
   function wireSelectAllCheckboxes() {}
@@ -1730,6 +1829,16 @@
       btnResolve.addEventListener('click', resolveSelectedRepairs);
     }
 
+    const btnSelectAll = $('#btnSelectAllRepairs');
+    if (btnSelectAll) {
+      btnSelectAll.addEventListener('click', selectAllRepairs);
+    }
+
+    const btnDeselectAll = $('#btnDeselectAllRepairs');
+    if (btnDeselectAll) {
+      btnDeselectAll.addEventListener('click', deselectAllRepairs);
+    }
+
     // Wire + Add Statistic
     const addBtn = $('#btnAddStat');
     if (addBtn) {
@@ -1757,7 +1866,3 @@
   // Expose init for index loader
   window.initStatisticsView = initStatisticsView;
 })();
-
-
-
-
