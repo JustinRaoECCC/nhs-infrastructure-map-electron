@@ -527,8 +527,8 @@ document.addEventListener('DOMContentLoaded', () => {
         `<th style="padding:0.5em; background:#f5f5f5; border:1px solid #ddd; text-align:left;">${col}</th>`
       ).join('') + '</tr>';
 
-      // Build table body (limit to first 50 rows for performance)
-      const rowsToShow = repairs.slice(0, 50);
+      // Build table body (limit to first 1000 rows for performance)
+      const rowsToShow = repairs.slice(0, 1000);
       testDataTableBody.innerHTML = rowsToShow.map(repair =>
         '<tr>' + columns.map(col =>
           `<td style="padding:0.5em; border:1px solid #ddd;">${repair[col] || ''}</td>`
