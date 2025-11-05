@@ -166,6 +166,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   assignTripsToYears: (payload) => ipcRenderer.invoke('algo:assignTripsToYears', payload),
 
   assignRepairsToYearsIndividually: (params) => ipcRenderer.invoke('assignRepairsToYearsIndividually', params),
+  assignRepairsToYearsWithDeadlines: (params) => ipcRenderer.invoke('assign-repairs-to-years-with-deadlines', params),
   groupTripsWithinYears: (params) => ipcRenderer.invoke('groupTripsWithinYears', params),
 
   // ─── Database Config ─────────────────────────────────────────────────────

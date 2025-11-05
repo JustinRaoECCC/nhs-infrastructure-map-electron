@@ -728,3 +728,12 @@ ipcMain.handle('assignRepairsToYearsIndividually', async (event, params) => {
 ipcMain.handle('groupTripsWithinYears', async (event, params) => {
   return await algorithms.groupTripsWithinYears(params);
 });
+
+ipcMain.handle('assign-repairs-to-years-with-deadlines', async (event, params) => {
+  try {
+    return await algorithms.assignRepairsToYearsWithDeadlines(params);
+  } catch (err) {
+    console.error('[assign-repairs-to-years-with-deadlines] Error:', err);
+    return { success: false, message: err.message };
+  }
+});

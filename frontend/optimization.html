@@ -6,8 +6,9 @@
     <label class="workflow-toggle-label">
       <span>Workflow Mode:</span>
       <select id="workflowModeSelect" class="workflow-mode-select">
-        <option value="trip-first">Trip-First (Default)</option>
+        <option value="trip-first">Trip-First</option>
         <option value="repair-first">Repair-First</option>
+        <option value="repair-first-dynamic">Repair-First (Dynamic)</option>
       </select>
     </label>
     <button id="workflowModeInfoBtn" class="btn btn-ghost info-btn" title="What is this?" style="margin-left:0.5rem;">ℹ️</button>
@@ -522,7 +523,7 @@
     <div style="margin-top:1em; line-height:1.6;">
       
       <div style="margin-bottom:1.5em; padding:1em; background:#f0f7ff; border-radius:6px;">
-        <h3 style="margin:0 0 0.5em 0; color:#3c78d8;">Trip-First (Default)</h3>
+        <h3 style="margin:0 0 0.5em 0; color:#3c78d8;">Trip-First</h3>
         <p style="margin:0;"><strong>Flow:</strong> Opt 1 → Opt 2 → Opt 3</p>
         <p style="margin:0.5em 0 0 0;">Groups repairs into trips first, then assigns whole trips to years. Keeps trips together but may defer high-priority repairs if their trip doesn't fit in Year 1.</p>
         <ul style="margin:0.5em 0 0 1.5em; padding:0;">
@@ -532,7 +533,7 @@
         </ul>
       </div>
 
-      <div style="padding:1em; background:#fff9e6; border-radius:6px;">
+      <div style="margin-bottom:1.5em; padding:1em; background:#fff9e6; border-radius:6px;">
         <h3 style="margin:0 0 0.5em 0; color:#f0ad4e;">Repair-First</h3>
         <p style="margin:0;"><strong>Flow:</strong> Opt 1 → Opt 3 → Opt 2</p>
         <p style="margin:0.5em 0 0 0;">Assigns individual repairs to years by priority score first, then groups into trips within each year. Maximizes early placement of high-priority work.</p>
@@ -542,7 +543,19 @@
         </ul>
       </div>
 
-      <p style="margin-top:1em; font-size:0.9em; color:#666;"><strong>Tip:</strong> Try both modes and compare results to see which fits your planning needs better.</p>
+      <div style="margin-bottom:1.5em; padding:1em; background:#e8f5e9; border-radius:6px;">
+        <h3 style="margin:0 0 0.5em 0; color:#4caf50;">Repair-First (Dynamic)</h3>
+        <p style="margin:0;"><strong>Flow:</strong> Opt 1 (with deadlines) → Opt 3 (smart) → Opt 2</p>
+        <p style="margin:0.5em 0 0 0;">Intelligently assigns repairs considering user-defined deadlines, location consolidation opportunities, and priority scores. Set "Must Finish By" deadlines in Optimization 1 table.</p>
+        <ul style="margin:0.5em 0 0 1.5em; padding:0;">
+          <li>✓ Respects hard deadlines (errors if can't fit)</li>
+          <li>✓ Consolidates trips when possible to save money</li>
+          <li>✓ Prioritizes sooner deadlines over later ones</li>
+          <li>⚠️ May defer no-deadline repairs for better location matches</li>
+        </ul>
+      </div>
+
+      <p style="margin-top:1em; font-size:0.9em; color:#666;"><strong>Tip:</strong> Try all three modes and compare results to see which fits your planning needs better.</p>
     </div>
     <div style="margin-top:1em; text-align:right;">
       <button id="okWorkflowModeInfoBtn" class="btn btn-primary">OK</button>

@@ -3,7 +3,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ───────────────────────────────── Workflow mode state ─────────────────────────────────
   // 'trip-first' (default) = Opt1 → Opt2 → Opt3
-  // 'repair-first' = Opt1 → Opt3 → Opt2
+  // 'repair-first' = Opt1 → Opt3 → Opt2, 'repair-first-dynamic' = Opt1 (with deadlines) → Opt3 (smart) → Opt2
   let workflowMode = 'trip-first';
 
   // ───────────────────────────────── helpers for autocomplete wiring ─────────────────────────────────
@@ -489,95 +489,121 @@ function _mergeSplitMaps(...maps) {
     }
     // ───────────────────────────────── End helper functions ─────────────────────────────────
 
-     // ═══════════════════════════════════════════════════════════════════════
-     // WORKFLOW MODE TOGGLE
-     // ═══════════════════════════════════════════════════════════════════════
-     const workflowModeSelect = document.getElementById('workflowModeSelect');
-     const workflowModeInfoBtn = document.getElementById('workflowModeInfoBtn');
-     const workflowModeInfoModal = document.getElementById('workflowModeInfoModal');
-     const closeWorkflowModeInfoModal = document.getElementById('closeWorkflowModeInfoModal');
-     const okWorkflowModeInfoBtn = document.getElementById('okWorkflowModeInfoBtn');
+    // ═══════════════════════════════════════════════════════════════════════
+    // WORKFLOW MODE TOGGLE
+    // ═══════════════════════════════════════════════════════════════════════
+    const workflowModeSelect = document.getElementById('workflowModeSelect');
+    const workflowModeInfoBtn = document.getElementById('workflowModeInfoBtn');
+    const workflowModeInfoModal = document.getElementById('workflowModeInfoModal');
+    const closeWorkflowModeInfoModal = document.getElementById('closeWorkflowModeInfoModal');
+    const okWorkflowModeInfoBtn = document.getElementById('okWorkflowModeInfoBtn');
 
-     const opt2Tab = Array.from(tabs).find(t => t.dataset.target === 'optimization2');
-     const opt3Tab = Array.from(tabs).find(t => t.dataset.target === 'optimization3');
-     const opt2Description = document.getElementById('opt2Description');
-     const opt3Description = document.getElementById('opt3Description');
+    const opt2Tab = Array.from(tabs).find(t => t.dataset.target === 'optimization2');
+    const opt3Tab = Array.from(tabs).find(t => t.dataset.target === 'optimization3');
+    const opt2Description = document.getElementById('opt2Description');
+    const opt3Description = document.getElementById('opt3Description');
 
-     function updateWorkflowMode(mode) {
-       workflowMode = mode;
-       
-       // Update tab order by swapping DOM positions
-       const tabsContainer = document.querySelector('.dashboard-tabs');
-       if (mode === 'repair-first') {
-         // Move Opt3 before Opt2
-         if (opt3Tab && opt2Tab && opt3Tab.nextSibling === opt2Tab) {
-           // Already in correct order
-         } else if (opt3Tab && opt2Tab) {
-           tabsContainer.insertBefore(opt3Tab, opt2Tab);
-         }
-         
-         // Update descriptions
-         if (opt2Description) {
-           opt2Description.innerHTML = `
-             Group repairs into trips <strong>within each assigned year</strong> by <strong>City of Travel</strong> and <strong>Access Type</strong>.
-             <br/>
-             <strong>⚠️ Note:</strong> You must run Optimizations 1 and 3 first.
-           `;
-         }
-         if (opt3Description) {
-           opt3Description.innerHTML = `
-             Assign individual repairs to years based on fixed parameter constraints, starting with the highest-scored repairs.
-             <br/>
-             <strong>⚠️ Note:</strong> You must run Optimization 1 first.
-           `;
-         }
-       } else {
-         // Trip-First: Move Opt2 before Opt3
-         if (opt2Tab && opt3Tab && opt2Tab.nextSibling === opt3Tab) {
-           // Already in correct order
-         } else if (opt2Tab && opt3Tab) {
-           tabsContainer.insertBefore(opt2Tab, opt3Tab);
-         }
-         
-         // Restore original descriptions
-         if (opt2Description) {
-           opt2Description.innerHTML = `
-             Group scored repairs by <strong>City of Travel</strong> and <strong>Access Type</strong>.
-             <br/>
-             <strong>⚠️ Note:</strong> You must run <em>Optimization 1</em> first
-           `;
-         }
-         if (opt3Description) {
-           opt3Description.innerHTML = `
-             Assign trips to years based on fixed parameter constraints.
-             <br/>
-             <strong>⚠️ Note:</strong> You must run Optimizations 1 and 2 first.
-           `;
-         }
-       }
+    function updateWorkflowMode(mode) {
+      workflowMode = mode;
+      
+      // Update tab order and descriptions by swapping DOM positions
+      const tabsContainer = document.querySelector('.dashboard-tabs');
+      if (mode === 'repair-first') {
+        // Move Opt3 before Opt2
+        if (opt3Tab && opt2Tab && opt3Tab.nextSibling === opt2Tab) {
+          // Already in correct order
+        } else if (opt3Tab && opt2Tab) {
+          tabsContainer.insertBefore(opt3Tab, opt2Tab);
+        }
+        
+        // Update descriptions
+        if (opt2Description) {
+          opt2Description.innerHTML = `
+            Group repairs into trips <strong>within each assigned year</strong> by <strong>City of Travel</strong> and <strong>Access Type</strong>.
+            <br/>
+            <strong>⚠️ Note:</strong> You must run Optimizations 1 and 3 first.
+          `;
+        }
+        if (opt3Description) {
+          opt3Description.innerHTML = `
+            Assign individual repairs to years based on fixed parameter constraints, starting with the highest-scored repairs.
+            <br/>
+            <strong>⚠️ Note:</strong> You must run Optimization 1 first.
+          `;
+        }
 
-       // Clear results when switching modes
-       resetOptimizationViews();
-     }
+      } else if (mode === 'repair-first-dynamic') {
+        // Same tab order as repair-first
+        if (opt3Tab && opt2Tab && opt3Tab.nextSibling === opt2Tab) {
+          // Already in correct order
+        } else if (opt3Tab && opt2Tab) {
+          tabsContainer.insertBefore(opt3Tab, opt2Tab);
+        }
+        
+        // Dynamic mode descriptions
+        if (opt2Description) {
+          opt2Description.innerHTML = `
+            Group repairs into trips <strong>within each assigned year</strong> by <strong>City of Travel</strong> and <strong>Access Type</strong>.
+            <br/>
+            <strong>⚠️ Note:</strong> You must run Optimizations 1 and 3 first.
+          `;
+        }
+        if (opt3Description) {
+          opt3Description.innerHTML = `
+            Intelligently assign repairs to years based on deadlines, location consolidation, and priority scores.
+            Set deadlines in Optimization 1 table before running.
+            <br/>
+            <strong>⚠️ Note:</strong> You must run Optimization 1 first.
+          `;
+        }
 
-     if (workflowModeSelect) {
-       workflowModeSelect.addEventListener('change', () => {
-         updateWorkflowMode(workflowModeSelect.value);
-       });
-     }
+      } else {
+        // Trip-First: Move Opt2 before Opt3
+        if (opt2Tab && opt3Tab && opt2Tab.nextSibling === opt3Tab) {
+          // Already in correct order
+        } else if (opt2Tab && opt3Tab) {
+          tabsContainer.insertBefore(opt2Tab, opt3Tab);
+        }
+        
+        // Restore original descriptions
+        if (opt2Description) {
+          opt2Description.innerHTML = `
+            Group scored repairs by <strong>City of Travel</strong> and <strong>Access Type</strong>.
+            <br/>
+            <strong>⚠️ Note:</strong> You must run <em>Optimization 1</em> first
+          `;
+        }
+        if (opt3Description) {
+          opt3Description.innerHTML = `
+            Assign trips to years based on fixed parameter constraints.
+            <br/>
+            <strong>⚠️ Note:</strong> You must run Optimizations 1 and 2 first.
+          `;
+        }
+      }
 
-     // Info modal handlers
-     if (workflowModeInfoBtn && workflowModeInfoModal) {
-       const openInfo = () => (workflowModeInfoModal.style.display = 'flex');
-       const closeInfo = () => (workflowModeInfoModal.style.display = 'none');
-       workflowModeInfoBtn.addEventListener('click', openInfo);
-       if (closeWorkflowModeInfoModal) closeWorkflowModeInfoModal.addEventListener('click', closeInfo);
-       if (okWorkflowModeInfoBtn) okWorkflowModeInfoBtn.addEventListener('click', closeInfo);
-       workflowModeInfoModal.addEventListener('click', (e) => { if (e.target === workflowModeInfoModal) closeInfo(); });
-     }
+      // Clear results when switching modes
+      resetOptimizationViews();
+    }
 
-     // Initialize in trip-first mode
-     updateWorkflowMode('trip-first');
+    if (workflowModeSelect) {
+      workflowModeSelect.addEventListener('change', () => {
+        updateWorkflowMode(workflowModeSelect.value);
+      });
+    }
+
+    // Info modal handlers
+    if (workflowModeInfoBtn && workflowModeInfoModal) {
+      const openInfo = () => (workflowModeInfoModal.style.display = 'flex');
+      const closeInfo = () => (workflowModeInfoModal.style.display = 'none');
+      workflowModeInfoBtn.addEventListener('click', openInfo);
+      if (closeWorkflowModeInfoModal) closeWorkflowModeInfoModal.addEventListener('click', closeInfo);
+      if (okWorkflowModeInfoBtn) okWorkflowModeInfoBtn.addEventListener('click', closeInfo);
+      workflowModeInfoModal.addEventListener('click', (e) => { if (e.target === workflowModeInfoModal) closeInfo(); });
+    }
+
+    // Initialize in trip-first mode
+    updateWorkflowMode('trip-first');
 
     // Check if TEST tab should be visible
     try {
@@ -1954,6 +1980,7 @@ function _mergeSplitMaps(...maps) {
     const runOpt1Btn = document.getElementById('runOpt1Btn');
     const opt1Results = document.getElementById('opt1Results');
 
+    // Store deadline inputs per repair
     if (runOpt1Btn) {
       runOpt1Btn.addEventListener('click', async () => {
         // Use TEST repairs if TEST mode is active, otherwise use normal repairs
@@ -2007,6 +2034,25 @@ function _mergeSplitMaps(...maps) {
         window._scoredRepairs = result.ranking;
         renderOpt1Results(result);
       });
+    }
+
+    // Helper to collect deadline data from Opt 1 table
+    function collectDeadlinesFromOpt1Table() {
+      const deadlines = {};
+      const inputs = opt1Results.querySelectorAll('.deadline-input');
+      inputs.forEach(input => {
+        const key = input.dataset.repairKey;
+        const value = input.value.trim();
+        if (key && value) {
+          deadlines[key] = value;
+        }
+      });
+      return deadlines;
+    }
+
+    // Helper to get repair key
+    function getRepairKey(repair) {
+      return repair.row_index != null ? `idx:${repair.row_index}` : `sid:${repair.station_id}::name:${repair.repair_name}`;
     }
 
     function renderOpt1Results(result) {
@@ -2072,6 +2118,7 @@ function _mergeSplitMaps(...maps) {
             <th>Funding Type</th>
             ${splitKeys.map(k => `<th>Split: ${k}</th>`).join('')}
             <th>Score</th>
+            <th>Must Finish By</th>
           </tr>
         </thead>
       `;
@@ -2148,9 +2195,12 @@ function _mergeSplitMaps(...maps) {
         const sa = item.split_amounts || {};
         for (const k of splitKeys) {
           const v = Number(sa[k] || 0);
-          cells += `<td class="txt">${cell(v > 0 ? formatCurrency(v) : '')}</td>`;
+          cells += `<td class="txt">${v > 0 ? cell(formatCurrency(v)) : ''}</td>`;
         }
         cells += `<td class="txt">${cell(Number(item.score).toFixed(2) + '%')}</td>`;
+        // Add deadline input
+        const key = item.row_index != null ? `idx:${item.row_index}` : `sid:${item.station_id}::name:${item.repair_name}`;
+        cells += `<td><input type="text" class="deadline-input" data-repair-key="${key}" placeholder="Year" style="width:60px; padding:0.3em;"></td>`;
         return `<tr>${cells}</tr>`;
       }
 
@@ -2249,8 +2299,14 @@ function _mergeSplitMaps(...maps) {
     if (runOpt2Btn) {
       runOpt2Btn.addEventListener('click', async () => {
         // Different logic based on workflow mode
-        if (workflowMode === 'repair-first') {
+        if (workflowMode === 'repair-first' || workflowMode === 'repair-first-dynamic') {
           await runOpt2RepairFirst();
+          return;
+        }
+
+        // Trip-First mode (original logic)
+        if (!Array.isArray(window._scoredRepairs) || window._scoredRepairs.length === 0) {
+          opt2Results.innerHTML = '<div class="opt-error">⚠️ Please run Optimization 1 first.</div>';
           return;
         }
 
@@ -2696,8 +2752,11 @@ function _mergeSplitMaps(...maps) {
 
     if (runOpt3Btn) {
       runOpt3Btn.addEventListener('click', async () => {
-        // Different logic based on workflow mode
-        if (workflowMode === 'repair-first') {
+        // Route to appropriate handler based on workflow mode
+        if (workflowMode === 'repair-first-dynamic') {
+          await runOpt3RepairFirstDynamic();
+          return;
+        } else if (workflowMode === 'repair-first') {
           await runOpt3RepairFirst();
           return;
         }
@@ -2762,6 +2821,56 @@ function _mergeSplitMaps(...maps) {
       });
 
       const result = await window.electronAPI.assignRepairsToYearsIndividually({
+        scored_repairs: window._scoredRepairs,
+        station_data: stationDataMap,
+        fixed_parameters: fixedParams,
+        top_percent: topPercent
+      });
+
+      if (!result.success) {
+        opt3Results.innerHTML = `<div class="opt-error">${result.message || 'Year assignment failed'}</div>`;
+        return;
+      }
+
+      // Cache for Opt2
+      window._opt3Result = result;
+      window._stationDataMap = stationDataMap;
+     
+      renderOpt3RepairFirstResults(result);
+    }
+
+    // NEW: Repair-First Dynamic Opt3 - Smart assignment with deadlines
+    async function runOpt3RepairFirstDynamic() {
+      if (!Array.isArray(window._scoredRepairs) || window._scoredRepairs.length === 0) {
+        opt3Results.innerHTML = '<div class="opt-error">⚠️ Please run Optimization 1 first.</div>';
+        return;
+      }
+
+      // Collect deadline inputs from Opt 1 table
+      const deadlines = collectDeadlinesFromOpt1Table();
+      
+      // Attach deadlines to scored repairs
+      window._scoredRepairs.forEach(sr => {
+        const key = getRepairKey(sr);
+        sr.must_finish_by = deadlines[key] || null;
+      });
+
+      const fixedParams = Array.from(fixedParamContainer.querySelectorAll('.fixed-param-row'))
+        .map(row => extractParamData(row));
+
+      opt3Results.innerHTML = '<div class="opt-note">Intelligently assigning repairs to years...</div>';
+
+      const topPercent = Math.min(100, Math.max(0, parseFloat(opt3TopPercentInput?.value ?? '0') || 0));
+
+      // Get station data for constraint checks
+      const stationList = await window.electronAPI.getStationData();
+      const stationDataMap = {};
+      (stationList || []).forEach(station => {
+        const stationId = station.station_id || station['Station ID'] || station.id;
+        if (stationId) stationDataMap[stationId] = station;
+      });
+
+      const result = await window.electronAPI.assignRepairsToYearsWithDeadlines({
         scored_repairs: window._scoredRepairs,
         station_data: stationDataMap,
         fixed_parameters: fixedParams,

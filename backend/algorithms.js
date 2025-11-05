@@ -1596,10 +1596,322 @@ async function groupTripsWithinYears({
   };
 }
 
+/**
+ * REPAIR-FIRST DYNAMIC MODE: Smart assignment with user-defined deadlines
+ * Phase 1: Assign all "must finish by current year" repairs (error if can't fit)
+ * Phase 2: Smart opportunistic assignment considering location consolidation and deadline urgency
+ */
+async function assignRepairsToYearsWithDeadlines({
+  scored_repairs = [],
+  station_data = {},
+  fixed_parameters = [],
+  top_percent = 20
+} = {}) {
+  console.log('[assignRepairsToYearsWithDeadlines] repairs=', scored_repairs.length, 'fixed_parameters=', fixed_parameters.length);
+
+  // Drop legacy/unsupported types and expand multi-split
+  fixed_parameters = (fixed_parameters || []).filter(p =>
+    p && (p.type === 'geographical' || p.type === 'temporal' || p.type === 'monetary' || p.type === 'design')
+  );
+
+  if (Array.isArray(fixed_parameters) && fixed_parameters.length) {
+    const expanded = [];
+    for (const p of fixed_parameters) {
+      if (p && p.type === 'monetary' && Array.isArray(p.split_conditions) && p.split_conditions.length) {
+        for (const src of p.split_conditions) {
+          const clone = { ...p, split_condition: { enabled: true, source: src } };
+          delete clone.split_conditions;
+          expanded.push(clone);
+        }
+      } else {
+        expanded.push(p);
+      }
+    }
+    fixed_parameters = expanded;
+  }
+
+  if (!scored_repairs.length) {
+    return {
+      success: false,
+      message: 'No repairs provided for assignment',
+      assignments: {}
+    };
+  }
+
+  // Get all years from fixed parameters
+  const allYears = new Set();
+  for (const param of fixed_parameters) {
+    if (param.years) {
+      Object.keys(param.years).forEach(year => allYears.add(year));
+    }
+  }
+  
+  const years = Array.from(allYears).sort();
+  
+  if (!years.length) {
+    const currentYear = new Date().getFullYear();
+    return {
+      success: true,
+      assignments: {
+        [currentYear]: scored_repairs.map(sr => sr.original_repair)
+      },
+      mode: 'repair-first-dynamic'
+    };
+  }
+
+  // Initialize constraint tracking
+  const yearlyBudgets = {};
+  const yearlyTemporal = {};
+  
+  for (const year of years) {
+    yearlyBudgets[year] = {};
+    yearlyTemporal[year] = {};
+    
+    for (const param of fixed_parameters) {
+      if (param.type === 'monetary' && param.years && param.years[year]) {
+        const splitSrc = (param.split_condition && param.split_condition.enabled)
+          ? _canon(param.split_condition.source)
+          : null;
+        const key = _monKey(param.field_name, splitSrc);
+        yearlyBudgets[year][key] = {
+          total: _tryFloat(param.years[year].value) || 0,
+          used: 0,
+          cumulative: !!param.cumulative,
+          label: splitSrc ? String(param.split_condition.source) : param.field_name,
+          split_source: splitSrc,
+          type: 'monetary'
+        };
+      } else if (param.type === 'temporal' && param.years && param.years[year]) {
+        const key = _canon(param.name);
+        const rawTotal = _tryFloat(param.years[year].value) || 0;
+        const totalHours = _toHours(rawTotal, _normalizeUnit(param.unit) || _detectUnitFromFieldName(param.name) || 'hours');
+        yearlyTemporal[year][key] = {
+          total: totalHours,
+          used: 0,
+          cumulative: !!param.cumulative,
+          display_unit: _normalizeUnit(param.unit) || _detectUnitFromFieldName(param.name) || 'hours',
+          type: 'temporal',
+          label: param.name
+        };
+      }
+    }
+  }
+
+  const assignments = {};
+  years.forEach(year => assignments[year] = []);
+  
+  // Helper: check if repair passes all constraints for a year
+  function canFitInYear(repair, year) {
+    const station = station_data[repair.station_id] || {};
+    
+    for (const param of fixed_parameters) {
+      if (param.type === 'geographical') {
+        if (!checkGeographicalConstraint(repair, param, station_data, year)) return false;
+      } else if (param.type === 'temporal' && !param.cumulative) {
+        if (!checkTemporalConstraint(repair, param, station_data, year)) return false;
+      } else if (param.type === 'monetary' && !param.cumulative) {
+        if (!checkMonetaryConstraint(repair, param, station_data, year)) return false;
+      } else if (param.type === 'design') {
+        if (!checkDesignConstraintStation(station, param, year)) return false;
+      }
+    }
+    return true;
+  }
+
+  // Helper: calculate repair's cumulative usage
+  function calculateRepairUsage(repair) {
+    const usage = { monetary: {}, temporal: {} };
+    const station = station_data[repair.station_id] || {};
+    
+    for (const param of fixed_parameters) {
+      if (!param.cumulative) continue;
+      if (!checkIfCondition(repair, param, station_data)) continue;
+      
+      if (param.type === 'monetary') {
+        const splitSrc = (param.split_condition && param.split_condition.enabled)
+          ? _canon(param.split_condition.source)
+          : null;
+       const key = _monKey(param.field_name, splitSrc);
+        const value = findFieldAnywhere(repair, station, param.field_name);
+        let amount = _tryFloat(value) || 0;
+        amount = _applyMonetarySplitIfAny(amount, param, repair, station_data);
+        usage.monetary[key] = amount;
+     } else if (param.type === 'temporal') {
+        const value = findFieldAnywhere(repair, station, param.name);
+        const amount = _tryFloat(value) || 0;
+        const repairUnit = _detectUnitFromFieldName(param.name) || _normalizeUnit(param.unit) || 'hours';
+        usage.temporal[param.name] = _toHours(amount, repairUnit);
+      }
+    }
+    return usage;
+  }
+
+  // Helper: check if repair with usage can fit in year's remaining capacity
+  function hasCapacity(year, usage) {
+    for (const [key, amount] of Object.entries(usage.monetary)) {
+      const budget = yearlyBudgets[year][key];
+      if (budget && budget.cumulative && budget.used + amount > budget.total) {
+        return false;
+      }
+    }
+    for (const [key, hours] of Object.entries(usage.temporal)) {
+      const temporal = yearlyTemporal[year][key];
+      if (temporal && temporal.cumulative && temporal.used + hours > temporal.total) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // Helper: apply usage to year's capacity
+  function applyUsage(year, usage) {
+    for (const [key, amount] of Object.entries(usage.monetary)) {
+      if (yearlyBudgets[year][key]) {
+        yearlyBudgets[year][key].used += amount;
+      }
+    }
+    for (const [key, hours] of Object.entries(usage.temporal)) {
+      if (yearlyTemporal[year][key]) {
+        yearlyTemporal[year][key].used += hours;
+      }
+    }
+  }
+
+  // Helper: get location identifier for a repair
+  function getLocation(repair) {
+    const station = station_data[repair.station_id] || {};
+    return findFieldAnywhere(repair, station, 'City of Travel') || '';
+  }
+
+  // PHASE 1: Assign all "must finish by current year" repairs
+  for (const year of years) {
+    const mustFinishThisYear = scored_repairs.filter(sr => {
+      const deadline = sr.must_finish_by;
+      return deadline && String(deadline).trim() === String(year);
+    });
+    
+    // Sort by priority
+    mustFinishThisYear.sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
+    
+    for (const sr of mustFinishThisYear) {
+      const repair = sr.original_repair;
+      
+      if (!canFitInYear(repair, year)) {
+        return {
+          success: false,
+          message: `ERROR: Year ${year} is overscheduled. Repair "${repair.name || repair.repair_name}" (Station: ${repair.station_id}, Score: ${Number(sr.score).toFixed(2)}) must finish by ${year} but cannot fit due to constraints.`
+        };
+      }
+      
+      const usage = calculateRepairUsage(repair);
+      if (!hasCapacity(year, usage)) {
+        return {
+          success: false,
+          message: `ERROR: Year ${year} is overscheduled. Repair "${repair.name || repair.repair_name}" (Station: ${repair.station_id}, Score: ${Number(sr.score).toFixed(2)}) must finish by ${year} but would exceed cumulative budget/temporal limits.`
+        };
+      }
+      
+      assignments[year].push(repair);
+      applyUsage(year, usage);
+      sr._assigned = true;
+    }
+  }
+
+  // PHASE 2: Smart opportunistic assignment
+  const unassigned = scored_repairs.filter(sr => !sr._assigned);
+  
+  for (const year of years) {
+    // Build location set for current year
+    const yearLocations = new Set(assignments[year].map(r => getLocation(r)));
+    
+    const remaining = unassigned.filter(sr => !sr._assigned);
+    
+    for (const sr of remaining) {
+      const repair = sr.original_repair;
+      const location = getLocation(repair);
+      const deadline = sr.must_finish_by;
+      const deadlineYear = deadline ? String(deadline).trim() : null;
+      
+      // A. Location match → assign immediately
+      if (yearLocations.has(location) && canFitInYear(repair, year)) {
+        const usage = calculateRepairUsage(repair);
+        if (hasCapacity(year, usage)) {
+          assignments[year].push(repair);
+          applyUsage(year, usage);
+          sr._assigned = true;
+          yearLocations.add(location);
+          continue;
+        }
+      }
+      
+      // B. No deadline → look for better location match
+      if (!deadlineYear) {
+        // Scan all remaining repairs for location matches with deadlines
+        const candidates = unassigned
+          .filter(candidate => {
+            if (candidate._assigned) return false;
+            const candRepair = candidate.original_repair;
+            const candLocation = getLocation(candRepair);
+            const candDeadline = candidate.must_finish_by;
+            return candDeadline && yearLocations.has(candLocation) && canFitInYear(candRepair, year);
+          })
+          .sort((a, b) => {
+            // Sort by deadline urgency (sooner first), then score
+            const aYear = parseInt(a.must_finish_by) || 9999;
+            const bYear = parseInt(b.must_finish_by) || 9999;
+            if (aYear !== bYear) return aYear - bYear;
+            return (Number(b.score) || 0) - (Number(a.score) || 0);
+          });
+        
+        if (candidates.length > 0) {
+          const best = candidates[0];
+          const bestRepair = best.original_repair;
+          const usage = calculateRepairUsage(bestRepair);
+          if (hasCapacity(year, usage)) {
+            assignments[year].push(bestRepair);
+            applyUsage(year, usage);
+            best._assigned = true;
+            yearLocations.add(getLocation(bestRepair));
+            // Current repair (sr) remains unassigned, will try next year
+            continue;
+          }
+        }
+      }
+      
+      // C. Has future deadline or no better match found → assign if possible
+      if (canFitInYear(repair, year)) {
+        const usage = calculateRepairUsage(repair);
+        if (hasCapacity(year, usage)) {
+          assignments[year].push(repair);
+          applyUsage(year, usage);
+          sr._assigned = true;
+          yearLocations.add(location);
+        }
+      }
+    }
+  }
+
+  // Any still unassigned go to a new year
+  const stillUnassigned = unassigned.filter(sr => !sr._assigned);
+  if (stillUnassigned.length > 0) {
+    const lastYear = parseInt(years[years.length - 1]);
+    const nextYear = lastYear + 1;
+    assignments[nextYear] = stillUnassigned.map(sr => sr.original_repair);
+  }
+
+  return {
+    success: true,
+    assignments,
+    mode: 'repair-first-dynamic',
+    total_years: Object.keys(assignments).length
+  };
+}
+
 module.exports = { 
   optimizeWorkplan,
   groupRepairsIntoTrips,
   assignTripsToYears,
   assignRepairsToYearsIndividually,
-  groupTripsWithinYears
+  groupTripsWithinYears,
+  assignRepairsToYearsWithDeadlines
 };
