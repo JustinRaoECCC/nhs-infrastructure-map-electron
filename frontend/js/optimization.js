@@ -1025,7 +1025,7 @@ function _mergeSplitMaps(...maps) {
         const oldPct = _editingSoftRow.querySelector('.param-percentage')?.value || '0';
         const newRow = makeDisplayRow({
           parameter,
-          condition,
+          condition: 'IF',
           max_weight: maxWeight,
           options
         });
@@ -1037,7 +1037,7 @@ function _mergeSplitMaps(...maps) {
       } else {
         await window.electronAPI.saveAlgorithmParameters(rows, { append: true });
         paramContainer.appendChild(makeDisplayRow({
-          parameter, condition, max_weight: maxWeight, options
+          parameter, condition: 'IF', max_weight: maxWeight, options
         }));
       }
       closeAddParamModal();
