@@ -236,9 +236,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   deleteDocumentFolder: (siteName, stationId, folderPath) => 
     ipcRenderer.invoke('deleteDocumentFolder', siteName, stationId, folderPath),
+
+  chatbotQuery: (message) => ipcRenderer.invoke('chatbot:query', message),
+  getAvailableData: () => ipcRenderer.invoke('chatbot:get-available-data'),
 });
 
-// --- BEGIN: appAlert (custom modal replacement for window.alert) ---
 // Non-blocking modal to avoid Windows focus issues caused by alert().
 const ALERT_CSS = `
 .app-alert-overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45);z-index:2147483646}

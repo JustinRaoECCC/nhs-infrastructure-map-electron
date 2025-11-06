@@ -23,6 +23,8 @@ const photoTab = require('./backend/photo_tab');
 const documentsTab = require('./backend/documents_tab');
 const { shell } = require('electron');
 
+const { initializeChatbot } = require('./backend/chatbot');
+
 // Lazy-load excel_worker_client to avoid starting the worker thread on import
 let excelClient = null;
 function getExcelClient() {
@@ -162,6 +164,9 @@ app.whenReady().then(async () => {
     console.error('[Main] Persistence initialization error:', error);
     console.log('[Main] Note: The app will attempt to use Excel by default');
   }
+
+  initializeChatbot();
+  console.log('[Main] Chatbot service initialized');
 
   // Create folders immediately (sync, no ExcelJS)
   if (typeof lookups.ensureDataFoldersSync === 'function') {

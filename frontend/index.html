@@ -216,5 +216,137 @@
     }
   </script>
 
+
+<!-- ==================== CHATBOT INTEGRATION ==================== -->
+
+<!-- Chatbot Toggle Button -->
+<button id="chatbot-toggle-btn" 
+        style="position: fixed; 
+               bottom: 20px; 
+               right: 20px; 
+               padding: 15px 20px; 
+               background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+               color: white; 
+               border: none; 
+               border-radius: 50px; 
+               cursor: pointer; 
+               box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4); 
+               font-weight: 600;
+               font-size: 14px;
+               z-index: 9998;
+               display: flex;
+               align-items: center;
+               gap: 8px;
+               transition: all 0.3s ease;
+               font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+    <span style="font-size: 18px;">🤖</span>
+    AI Assistant
+</button>
+
+<!-- Chatbot Iframe Container -->
+<div id="chatbot-iframe-container" 
+     style="display: none; 
+            position: fixed; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100%; 
+            z-index: 9999; 
+            pointer-events: auto;">
+    <iframe id="chatbot-iframe" 
+            src="chatbot.html" 
+            style="width: 100%; 
+                   height: 100%; 
+                   border: none; 
+                   background: transparent;
+                   pointer-events: auto;">
+    </iframe>
+</div>
+
+<script>
+(function() {
+    const toggleBtn = document.getElementById('chatbot-toggle-btn');
+    const iframeContainer = document.getElementById('chatbot-iframe-container');
+    const chatbotIframe = document.getElementById('chatbot-iframe');
+
+    // Toggle chatbot visibility
+    toggleBtn.addEventListener('click', () => {
+        const isVisible = iframeContainer.style.display !== 'none';
+        
+        if (isVisible) {
+            // Hide chatbot
+            iframeContainer.style.display = 'none';
+            // be explicit on close
+            iframeContainer.style.pointerEvents = 'none';
+            chatbotIframe.style.pointerEvents = 'none';
+        } else {
+            // Show chatbot
+            iframeContainer.style.display = 'block';
+            // enable interactions while visible
+            iframeContainer.style.pointerEvents = 'auto';
+            chatbotIframe.style.pointerEvents = 'auto';
+            
+            // Tell the iframe to show the chatbot
+            setTimeout(() => {
+                chatbotIframe.contentWindow.postMessage({ action: 'open-chatbot' }, '*');
+            }, 100);
+        }
+    });
+
+    // Listen for messages from the chatbot iframe
+    window.addEventListener('message', async (event) => {
+        // Close chatbot
+        if (event.data && event.data.action === 'close-chatbot') {
+            iframeContainer.style.display = 'none';
+            return;
+        }
+
+        // Handle chatbot queries
+        if (event.data && event.data.type === 'chatbot-query') {
+            const { queryId, message } = event.data;
+            
+            try {
+                // Call the backend via electronAPI
+                const response = await window.electronAPI.chatbotQuery(message);
+                
+                // Send response back to iframe
+                chatbotIframe.contentWindow.postMessage({
+                    type: 'chatbot-response',
+                    queryId: queryId,
+                    response: response
+                }, '*');
+            } catch (error) {
+                console.error('Error calling chatbot backend:', error);
+                
+                // Send error response back to iframe
+                chatbotIframe.contentWindow.postMessage({
+                    type: 'chatbot-response',
+                    queryId: queryId,
+                    response: {
+                        success: false,
+                        message: 'Failed to connect to chatbot service. Please make sure the backend is running.',
+                        type: 'error',
+                        error: error.message
+                    }
+                }, '*');
+            }
+        }
+    });
+
+    // Optional: Add hover effects
+    toggleBtn.addEventListener('mouseenter', () => {
+        toggleBtn.style.transform = 'scale(1.05)';
+        toggleBtn.style.boxShadow = '0 6px 20px rgba(102, 126, 234, 0.5)';
+    });
+
+    toggleBtn.addEventListener('mouseleave', () => {
+        toggleBtn.style.transform = 'scale(1)';
+        toggleBtn.style.boxShadow = '0 4px 15px rgba(102, 126, 234, 0.4)';
+    });
+})();
+</script>
+
+<!-- ==================== END CHATBOT INTEGRATION ==================== -->
+
 </body>
 </html>
