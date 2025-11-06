@@ -1605,7 +1605,7 @@ async function assignRepairsToYearsWithDeadlines({
   scored_repairs = [],
   station_data = {},
   fixed_parameters = [],
-  top_percent = 20
+  look_ahead_limit = null
 } = {}) {
   console.log('[assignRepairsToYearsWithDeadlines] repairs=', scored_repairs.length, 'fixed_parameters=', fixed_parameters.length);
 
@@ -1637,6 +1637,13 @@ async function assignRepairsToYearsWithDeadlines({
       assignments: {}
     };
   }
+
+  // Calculate look-ahead limit (default to all repairs if not specified)
+  const maxLookAhead = look_ahead_limit != null && look_ahead_limit > 0
+    ? Math.min(look_ahead_limit, scored_repairs.length)
+    : scored_repairs.length;
+  
+  console.log('[assignRepairsToYearsWithDeadlines] look_ahead_limit=', maxLookAhead);
 
   // Get all years from fixed parameters
   const allYears = new Set();
@@ -1820,13 +1827,17 @@ async function assignRepairsToYearsWithDeadlines({
   // PHASE 2: Smart opportunistic assignment
   const unassigned = scored_repairs.filter(sr => !sr._assigned);
   
+  // Loop through all remaining unassigned repairs, highest priority first
+  const remaining = unassigned.filter(sr => !sr._assigned);
+
   for (const year of years) {
     // Build location set for current year
     const yearLocations = new Set(assignments[year].map(r => getLocation(r)));
     
-    const remaining = unassigned.filter(sr => !sr._assigned);
-    
-    for (const sr of remaining) {
+    // Use an indexed loop so we can slice *relative* to the current repair
+    for (let i = 0; i < remaining.length; i++) {
+      const sr = remaining[i];
+      if (sr._assigned) continue; // Already assigned by an opportunistic match
       const repair = sr.original_repair;
       const location = getLocation(repair);
       const deadline = sr.must_finish_by;
@@ -1846,13 +1857,15 @@ async function assignRepairsToYearsWithDeadlines({
       
       // B. No deadline → look for better location match
       if (!deadlineYear) {
-        // Scan all remaining repairs for location matches with deadlines
+        // Scan 'm' (maxLookAhead) items *down* from the current position 'i'
         const candidates = unassigned
+          .slice(i + 1, i + 1 + maxLookAhead) // <-- This is the relative window
           .filter(candidate => {
             if (candidate._assigned) return false;
             const candRepair = candidate.original_repair;
             const candLocation = getLocation(candRepair);
             const candDeadline = candidate.must_finish_by;
+            // Check if candidate matches an *existing* location in this year
             return candDeadline && yearLocations.has(candLocation) && canFitInYear(candRepair, year);
           })
           .sort((a, b) => {

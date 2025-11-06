@@ -584,6 +584,29 @@ function _mergeSplitMaps(...maps) {
 
       // Clear results when switching modes
       resetOptimizationViews();
+
+      // --- [BUG FIX #2] ---
+      // Update Opt-3 controls immediately when workflow changes
+      const opt3Controls = document.querySelector('.opt3-controls');
+      const topPercentLabel = document.querySelector('.opt3-label');
+      const topPercentInfoBtn = document.getElementById('opt3TopInfoBtn');
+
+      if (mode === 'repair-first-dynamic') {
+        if (topPercentLabel) topPercentLabel.textContent = 'Look-Ahead Window (%):';
+        if (topPercentInfoBtn) topPercentInfoBtn.style.display = '';
+        if (opt3Controls) opt3Controls.style.display = 'flex';
+
+      } else if (mode === 'repair-first') {
+        // Hide all controls for repair-first
+        if (opt3Controls) opt3Controls.style.display = 'none';
+
+      } else {
+        // Trip-first
+        if (topPercentLabel) topPercentLabel.textContent = 'Top-X% warning threshold:';
+        if (topPercentInfoBtn) topPercentInfoBtn.style.display = '';
+        if (opt3Controls) opt3Controls.style.display = 'flex';
+      }
+      // --- [END BUG FIX #2] ---
     }
 
     if (workflowModeSelect) {
@@ -1404,7 +1427,7 @@ function _mergeSplitMaps(...maps) {
         infoHTML += `<div><strong>Match Using:</strong> ${matchLabel}</div>
                      <div><strong>Field:</strong> ${param.field_name}</div>
                      <div><strong>Conditional:</strong> ${param.conditional}</div>
-                     <div><strong>Unit:</strong> ${param.unit}</div>
+                     <div><strong>Unit:</strong> ${param.unit || '$'}</div>
                      <div><strong>Mode:</strong> ${param.cumulative ? 'Cumulative Budget' : 'Per Repair'}</div>`;
         const splits = splitArr || [];
         infoHTML += (splits.length
@@ -1676,7 +1699,7 @@ function _mergeSplitMaps(...maps) {
         param.match_using = row.dataset.matchUsing || (getTextAfter('Match Using:').includes('Field Name') ? 'field_name' : 'parameter_name');
         param.field_name  = row.dataset.fieldName  || getTextAfter('Field:');
         param.conditional = row.dataset.conditional || getTextAfter('Conditional:') || '<=';
-        param.unit        = row.dataset.unit        || getTextAfter('Unit:') || '$';
+        param.unit        = '$'; // Always $ for monetary
       } else if (type === 'design') {
         param.operator = row.dataset.operator || getTextAfter('Operator:') || '=';
       } else if (type === 'geographical') {
@@ -1894,6 +1917,7 @@ function _mergeSplitMaps(...maps) {
         param.match_using = matchUsing;
         param.field_name = modal.querySelector('#monetaryFieldName').value.trim();
         param.conditional = modal.querySelector('#monetaryConditional').value;
+        param.unit = '$';
         const value = modal.querySelector('#monetaryValue').value;
         param.cumulative = cumulativeCheckbox.checked;
         if (!param.field_name || !value) {
@@ -2762,6 +2786,7 @@ function _mergeSplitMaps(...maps) {
 
     if (runOpt3Btn) {
       runOpt3Btn.addEventListener('click', async () => {
+
         // Route to appropriate handler based on workflow mode
         if (workflowMode === 'repair-first-dynamic') {
           await runOpt3RepairFirstDynamic();
@@ -2820,7 +2845,9 @@ function _mergeSplitMaps(...maps) {
 
       opt3Results.innerHTML = '<div class="opt-note">Assigning repairs to years by priority...</div>';
 
-      const topPercent = Math.min(100, Math.max(0, parseFloat(opt3TopPercentInput?.value ?? '0') || 0));
+      // top_percent is not used in repair-first mode (no warnings)
+      // We can pass 0 or just omit it since the backend doesn't use it for this mode
+      const topPercent = 0;
 
       // Get station data for constraint checks
       const stationList = await window.electronAPI.getStationData();
@@ -2870,7 +2897,12 @@ function _mergeSplitMaps(...maps) {
 
       opt3Results.innerHTML = '<div class="opt-note">Intelligently assigning repairs to years...</div>';
 
-      const topPercent = Math.min(100, Math.max(0, parseFloat(opt3TopPercentInput?.value ?? '0') || 0));
+      // Calculate look-ahead limit from percentage
+      const lookAheadPercent = Math.min(100, Math.max(0, parseFloat(opt3TopPercentInput?.value ?? '100') || 100));
+      const totalRepairs = window._scoredRepairs.length;
+      const lookAheadLimit = Math.ceil((lookAheadPercent / 100) * totalRepairs);
+      
+      console.log(`[Opt3 Dynamic] Look-ahead: ${lookAheadPercent}% of ${totalRepairs} = ${lookAheadLimit} repairs`);
 
       // Get station data for constraint checks
       const stationList = await window.electronAPI.getStationData();
@@ -2884,7 +2916,7 @@ function _mergeSplitMaps(...maps) {
         scored_repairs: window._scoredRepairs,
         station_data: stationDataMap,
         fixed_parameters: fixedParams,
-        top_percent: topPercent
+        look_ahead_limit: lookAheadLimit
       });
 
       if (!result.success) {
