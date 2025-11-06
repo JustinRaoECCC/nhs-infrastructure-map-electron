@@ -2086,6 +2086,8 @@ function _mergeSplitMaps(...maps) {
         }
       });
       const splitKeys = Array.from(splitKeysSet).sort((a,b)=>a.localeCompare(b));
+      // Only show "Must Finish By" in Repair-First (Dynamic) workflow
+      const showDeadlineCol = (workflowMode === 'repair-first-dynamic');
 
       // Header summary
       const summary = document.createElement('div');
@@ -2118,7 +2120,7 @@ function _mergeSplitMaps(...maps) {
             <th>Funding Type</th>
             ${splitKeys.map(k => `<th>Split: ${k}</th>`).join('')}
             <th>Score</th>
-            <th>Must Finish By</th>
+            ${showDeadlineCol ? '<th>Must Finish By</th>' : ''}
           </tr>
         </thead>
       `;
@@ -2181,14 +2183,20 @@ function _mergeSplitMaps(...maps) {
         const fundingType =
           findFieldAnywhere(repair, /*station*/ {}, 'Funding Type') ||
           findFieldAnywhere(repair, /*station*/ {}, 'Category') ||
-          '';
+         '';
+        // Determine Repair column text.
+        // When TEST mode is active, prefer the exact "Repair Name" from TEST data.
+        const repairName =
+          (window._testMode && window._testRepairs)
+            ? (findFieldAnywhere(repair, /*station*/ {}, 'Repair Name') || repair.name || repair.repair_name || item.repair_name || '')
+            : (item.repair_name || repair.name || repair.repair_name || '');
 
         let cells = `
           <td class="txt">${cell(item.rank)}</td>
           <td class="txt">${cell(item.station_id || '')}</td>
           <td class="txt">${cell(item.location || '')}</td>
           <td class="txt">${cell(item.asset_type || '')}</td>
-          <td class="txt">${cell(item.repair_name || '')}</td>
+          <td class="txt">${cell(repairName)}</td>
           <td class="txt">${cell(formatCurrency(cost))}</td>
           <td class="txt">${cell(fundingType)}</td>
         `;
@@ -2198,9 +2206,11 @@ function _mergeSplitMaps(...maps) {
           cells += `<td class="txt">${v > 0 ? cell(formatCurrency(v)) : ''}</td>`;
         }
         cells += `<td class="txt">${cell(Number(item.score).toFixed(2) + '%')}</td>`;
-        // Add deadline input
-        const key = item.row_index != null ? `idx:${item.row_index}` : `sid:${item.station_id}::name:${item.repair_name}`;
-        cells += `<td><input type="text" class="deadline-input" data-repair-key="${key}" placeholder="Year" style="width:60px; padding:0.3em;"></td>`;
+        // Add deadline input ONLY when Repair-First (Dynamic) is active
+        if (showDeadlineCol) {
+          const key = item.row_index != null ? `idx:${item.row_index}` : `sid:${item.station_id}::name:${item.repair_name}`;
+          cells += `<td><input type="text" class="deadline-input" data-repair-key="${key}" placeholder="Year" style="width:60px; padding:0.3em;"></td>`;
+        }
         return `<tr>${cells}</tr>`;
       }
 
