@@ -125,12 +125,11 @@
       return;
     }
     const rightPanel = document.getElementById('rightPanel');
-    const stationContentContainer = document.getElementById('stationContentContainer');
-    
-    // If station view is hidden/not active and RHS panel exists
-    if (rightPanel && stationContentContainer && 
-        (stationContentContainer.style.display === 'none' || !stationContentContainer.style.display)) {
-      
+    // const stationContentContainer = document.getElementById('stationContentContainer');    
+
+    // Always restore the panel if it exists and we're not in a suppressed view
+    if (rightPanel) {
+
       // Show the RHS panel
       rightPanel.style.display = '';
       

@@ -2446,8 +2446,12 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
       // CRITICAL: Use ONLY composite key for lookup to avoid collisions
       const compositeKey = `${section} – ${field}`.toLowerCase();
       
-      // Get value: first from updatedData (try various forms), then from currentValues (composite key ONLY)
-      let value = updatedData[`${section} – ${field}`] || updatedData[field];
+      // Get value: first from updatedData (try various forms), then from currentValues
+      // CRITICAL: Use explicit undefined checks to preserve intentional blank values ('')
+      let value = updatedData[`${section} – ${field}`];
+      if (value === undefined) {
+        value = updatedData[field];
+      }
       if (value === undefined) {
         // ONLY use composite key to avoid getting wrong field's value
         value = currentValues.get(compositeKey) || '';

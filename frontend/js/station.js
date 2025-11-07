@@ -779,6 +779,35 @@ async function saveStationChanges(assetType) {
       saveBtn.disabled = true;
     }
 
+    // Validate: no blank field names allowed (except funding section which is locked)
+    const sectionsWithBlankFields = new Set();
+    const sections = container.querySelectorAll('.editable-section');
+    
+    sections.forEach(sectionDiv => {
+      const isFunding = sectionDiv?.dataset.locked === 'funding' || 
+                        String(sectionDiv?.dataset.sectionName || '').trim() === FUNDING_SECTION_NAME;
+      if (isFunding) return; // Funding fields are locked, can't be blank
+      
+      const titleEl = sectionDiv.querySelector('.section-title-input');
+      const sectionTitle = (titleEl?.value || '').trim();
+      const fieldRows = sectionDiv.querySelectorAll('.field-row');
+      
+      fieldRows.forEach(fieldRow => {
+        const labelEl = fieldRow.querySelector('.field-label-input');
+        const fieldName = (labelEl?.value || '').trim();
+        
+        if (!fieldName) {
+          sectionsWithBlankFields.add(sectionTitle || 'Unnamed Section');
+        }
+      });
+    });
+    
+    if (sectionsWithBlankFields.size > 0) {
+      appAlert('Please provide names for all fields or delete them.\n\nSections with blank field names:\n• ' + 
+               Array.from(sectionsWithBlankFields).join('\n• '));
+      return;
+    }
+
     // Collect all changes
     const updatedData = { ...currentStationData };
 
@@ -880,7 +909,6 @@ async function saveStationChanges(assetType) {
     }
 
     // Collect new section data
-    const sections = container.querySelectorAll('.editable-section');
     const uiSections = new Map(); // Map of section name -> array of field names in UI order
 
     sections.forEach(sectionDiv => {
@@ -1093,27 +1121,20 @@ function setupBackButton(container) {
       // Clean up before leaving
       cleanupStationPage();
 
-      container.style.display = 'none';
       const from = container.dataset.origin || 'map';
-      const mainMap = document.getElementById('mapContainer');
-      const listCont = document.getElementById('listContainer');
-      const rightPanel = document.getElementById('rightPanel');
 
       if (from === 'list') {
-        if (listCont) listCont.style.display = '';
-        if (mainMap) mainMap.style.display = 'none';
+        // Use the global function which already handles restoring the RHS
+        if (typeof window.showListView === 'function') {
+          window.showListView();
+        }
       } else {
-        if (mainMap) mainMap.style.display = 'block';
-        if (listCont) listCont.style.display = 'none';
+        // Use the global function which already handles restoring the RHS
+        if (typeof window.showMapView === 'function') {
+          window.showMapView();
+        }
       }
       
-      if (rightPanel) rightPanel.style.display = '';
-      disableFullWidthMode();
-
-      // Ensure RHS panel is properly restored
-      if (typeof window.restoreRHSPanel === 'function') {
-        window.restoreRHSPanel();
-      }
     });
   }
 }

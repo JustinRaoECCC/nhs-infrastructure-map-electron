@@ -113,6 +113,7 @@
   // NEW: Search state - separated pending input from active search
   let activeSearchQuery = '';    // Currently applied search (used in filtering)
   let pendingSearchQuery = '';   // What's typed in the input box but not yet searched
+  let tempColumnKey = '';
 
   // ────────────────────────────────────────────────────────────────────────────
   // Data → filtered rows (mirrors map_view filter semantics)
@@ -173,6 +174,16 @@
         stn.province, stn.location, stn.location_file,
         stn.status, stn.lat, stn.lon
       ].some(v => String(v ?? '').toLowerCase().includes(q));
+    
+      // NEW: Also search the temporary column if it exists
+      if (tempColumnKey && stn[tempColumnKey]) {
+        if (String(stn[tempColumnKey] ?? '').toLowerCase().includes(q)) {
+          return true;
+        }
+      }
+      
+      // Re-check primary fields
+      return primaryMatch;
     });
   }
 
@@ -264,6 +275,7 @@
         case 4: return 'lat';
         case 5: return 'lon';
         case 6: return 'status';
+        case 7: return tempColumnKey || 'station_id';
         default: return 'station_id';
       }
     };
@@ -349,6 +361,27 @@
     const table = document.getElementById('stationTable');
     if (!table) return;
 
+    // NEW: Update table header to include temporary column if set
+    const theadTr = table.querySelector('thead tr');
+    if (theadTr) {
+      // Reset to default headers
+      theadTr.innerHTML = `
+        <th>Station ID</th>
+        <th>Category</th>
+        <th>Site Name</th>
+        <th>Province</th>
+        <th>Latitude</th>
+        <th>Longitude</th>
+        <th>Status</th>
+      `;
+      if (tempColumnKey) {
+        const th = document.createElement('th');
+        th.textContent = tempColumnKey;
+        th.style.fontStyle = 'italic'; // Mark as temporary
+        theadTr.appendChild(th);
+      }
+    }
+
     attachSorting(table);
 
     const tbody = table.querySelector('tbody');
@@ -368,6 +401,14 @@
       for (const text of cols) {
         const td = document.createElement('td');
         td.textContent = String(text ?? '');
+        tr.appendChild(td);
+      }
+
+      // NEW: Add temporary column's data if set
+      if (tempColumnKey) {
+        const tempValue = stn[tempColumnKey];
+        const td = document.createElement('td');
+        td.textContent = (tempValue !== null && tempValue !== undefined) ? String(tempValue) : '';
         tr.appendChild(td);
       }
 
@@ -488,6 +529,32 @@
           clearSearch();
         });
         clearButton.dataset.bound = '1';
+      }
+
+      // NEW: Bind temporary column controls
+      const tempColInput = document.getElementById('tempColumnInput');
+      const addTempColBtn = document.getElementById('addTempColumnButton');
+      const clearTempColBtn = document.getElementById('clearTempColumnButton');
+
+      if (addTempColBtn && !addTempColBtn.dataset.bound) {
+        addTempColBtn.addEventListener('click', () => {
+          tempColumnKey = tempColInput.value.trim();
+          if (tempColumnKey) {
+            clearTempColBtn.style.display = 'inline-block';
+          }
+          renderList(false); // Full re-render
+        });
+        addTempColBtn.dataset.bound = '1';
+      }
+
+      if (clearTempColBtn && !clearTempColBtn.dataset.bound) {
+        clearTempColBtn.addEventListener('click', () => {
+          tempColumnKey = '';
+          tempColInput.value = '';
+          clearTempColBtn.style.display = 'none';
+          renderList(false); // Full re-render
+        });
+        clearTempColBtn.dataset.bound = '1';
       }
 
       page.dataset.bound = '1';
