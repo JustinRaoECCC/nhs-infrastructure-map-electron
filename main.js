@@ -238,7 +238,9 @@ ipcMain.handle('lookups:getAssetTypesForLocation', async (_evt, company, locatio
 ipcMain.handle('lookups:getTree', async () => backend.getLookupTree());
 
 // ─── IPC: Lookups (writes) ─────────────────────────────────────────────────
-ipcMain.handle('lookups:upsertCompany', async (_evt, name, active) => backend.upsertCompany(name, !!active));
+ipcMain.handle('lookups:upsertCompany', async (_evt, name, active, description, email) =>
+  backend.upsertCompany(name, !!active, description, email)
+);
 ipcMain.handle('lookups:upsertLocation', async (_evt, location, company) => backend.upsertLocation(location, company));
 ipcMain.handle('lookups:upsertAssetType', async (_evt, assetType, company, location) => backend.upsertAssetType(assetType, company, location));
 

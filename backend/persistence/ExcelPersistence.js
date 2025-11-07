@@ -54,9 +54,9 @@ class ExcelPersistence extends IPersistence {
     return snapshot.companies || [];
   }
 
-  async upsertCompany(name, active = true) {
+  async upsertCompany(name, active = true, description = '', email = '') {
     const excel = getExcel();
-    return await excel.upsertCompany(name, active);
+    return await excel.upsertCompany(name, active, description, email);
   }
 
   // ════════════════════════════════════════════════════════════════════════════

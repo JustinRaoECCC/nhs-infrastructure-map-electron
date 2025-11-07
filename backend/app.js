@@ -139,7 +139,8 @@ async function getActiveCompanies() {
   } catch (e) {
     console.error('[lookups] getActiveCompanies failed:', e);
   }
-  return ['NHS'];
+  // Fallback must match the new object structure
+  return [{ name: 'NHS', description: '', email: '' }];
 }
 
 async function getLocationsForCompany(_company) {

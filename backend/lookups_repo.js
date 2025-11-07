@@ -192,7 +192,7 @@ async function _primeAllCaches() {
   );
 
   // Companies
-  const companies = snap.companies || [];
+  const companies = snap.companies || []; // This is now an array of objects
 
   // Locations + assets relations
   const locsByCompany = snap.locsByCompany || {};
@@ -229,7 +229,7 @@ async function _primeAllCaches() {
     colorsGlobal: global,
     colorsByLoc: byLoc,
     colorsByCompanyLoc: byCoLoc,
-    companies: uniqSorted(companies),
+    companies: companies, // Store the array of objects directly
     locsByCompany,
     assetsByCompanyLocation,
     // NEW
@@ -368,9 +368,9 @@ async function setAssetTypeColorForCompanyLocation(assetType, company, location,
 }
 
 // ─── Writes / Upserts ─────────────────────────────────────────────────────
-async function upsertCompany(name, active = true) {
+async function upsertCompany(name, active = true, description = '', email = '') {
   const persistence = await getPersistence();
-  const res = await persistence.upsertCompany(name, active);
+  const res = await persistence.upsertCompany(name, active, description, email);
   _invalidateAllCaches();
   return res;
 }

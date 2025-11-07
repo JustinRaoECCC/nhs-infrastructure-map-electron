@@ -421,8 +421,12 @@
     $('#btnSave')?.addEventListener('click', async () => {
       const name = ($('#coName')?.value || '').trim();
       if (!name) return appAlert('Please enter a company name.');
+
+      const desc = ($('#coDesc')?.value || '').trim();
+      const email = ($('#coEmail')?.value || '').trim();
+
       try {
-        const res = await window.electronAPI.upsertCompany(name, true);
+        const res = await window.electronAPI.upsertCompany(name, true, desc, email);
         if (!res || res.success === false) return appAlert('Failed to create company.');
         await window.refreshFilters?.();
         closePanel();

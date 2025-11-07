@@ -117,7 +117,8 @@
     const locsByCompany = tree.locationsByCompany || {};
     const assetsByCoLoc = tree.assetsByCompanyLocation || {};
 
-    companies.forEach(company => {
+    companies.forEach(companyObj => {
+      const company = companyObj.name; // Get the name string
       const co = el('details', { class: 'ft-company', open: '' });
 
       const coCb = el('input', {
@@ -127,8 +128,18 @@
         checked: ''
       });
 
+      // Build the tooltip title
+      const tooltipLines = [];
+      if (companyObj.description) tooltipLines.push(`Description: ${companyObj.description}`);
+      if (companyObj.email) tooltipLines.push(`Email: ${companyObj.email}`);
+      const titleAttr = tooltipLines.length ? tooltipLines.join('\n') : null;
+
       const head = el('div', { class: 'ft-row', style: 'display:flex;align-items:center;gap:.5rem;' },
-        el('label', { class: 'ft-label', style: 'display:inline-flex;gap:.5rem;align-items:center;' },
+        el('label', {
+          class: 'ft-label',
+          style: 'display:inline-flex;gap:.5rem;align-items:center;',
+          title: titleAttr // <-- ADD THE TOOLTIP HERE
+        },
           coCb,
           el('span', { class: 'ft-text' }, company)
         ),

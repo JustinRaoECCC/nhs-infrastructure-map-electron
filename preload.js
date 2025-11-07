@@ -25,7 +25,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getLookupTree:      () => ipcRenderer.invoke('lookups:getTree'),
 
   // ─── Lookups (writes only — used by Add Infrastructure wizard) ──────────
-  upsertCompany:   (name, active = true) => ipcRenderer.invoke('lookups:upsertCompany', name, !!active),
+  upsertCompany:   (name, active = true, description, email) =>
+    ipcRenderer.invoke('lookups:upsertCompany', name, !!active, description, email),
   upsertLocation:  (location, company)   => ipcRenderer.invoke('lookups:upsertLocation', location, company),
   upsertAssetType: (assetType, company, location) => ipcRenderer.invoke('lookups:upsertAssetType', assetType, company, location),
 

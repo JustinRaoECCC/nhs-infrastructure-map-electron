@@ -317,7 +317,7 @@ async function ensureLookupsReady() {
     const need = (n) => !wb.worksheets.some(ws => ws.name === n);
     let changed = false;
 
-    if (need('Companies'))          { wb.addWorksheet('Companies').addRow(['company','active']); changed = true; }
+    if (need('Companies'))          { wb.addWorksheet('Companies').addRow(['company','active','description','email']); changed = true; }
     if (need('Locations'))          { wb.addWorksheet('Locations').addRow(['location','company','link']); changed = true; }
     if (need('AssetTypes'))         { wb.addWorksheet('AssetTypes').addRow(['asset_type','location','company','color','link']); changed = true; }
 
@@ -362,7 +362,7 @@ async function ensureLookupsReady() {
     return true;
   } else {
     progress('ensure', 55, 'Creating workbook…');
-    wb.addWorksheet('Companies').addRow(['company','active']);
+    wb.addWorksheet('Companies').addRow(['company','active','description','email']);
     wb.addWorksheet('Locations').addRow(['location','company','link']);
     wb.addWorksheet('AssetTypes').addRow(['asset_type','location','company','color','link']);
     wb.addWorksheet('Custom Weights').addRow(['weight','active']);
@@ -456,7 +456,13 @@ async function readLookupsSnapshot() {
       if (i === 1) return;
       const name = normStr(row.getCell(1)?.text);
       const active = toBool(row.getCell(2)?.text);
-      if (name && active) companies.push(name);
+      if (name && active) {
+        companies.push({
+          name: name,
+          description: normStr(row.getCell(3)?.text),
+          email: normStr(row.getCell(4)?.text),
+        });
+      }
     });
   }
 
@@ -524,7 +530,7 @@ async function readLookupsSnapshot() {
 
   const payload = {
     mtimeMs, colorsGlobal, colorsByLoc, colorsByCompanyLoc,
-    companies: uniqSorted(companies), 
+    companies: companies, // Now an array of objects
     locsByCompany, 
     assetsByCompanyLocation,
     statusColors,
@@ -1208,7 +1214,7 @@ async function setAssetTypeColorForLocation(assetType, location, color) {
   return await setAssetTypeColorForCompanyLocation(assetType, companyForLoc, location, color);
 }
 
-async function upsertCompany(name, active = true) {
+async function upsertCompany(name, active = true, description = '', email = '') {
   await ensureLookupsReady();
   const _ExcelJS = getExcel();
   const wb = new _ExcelJS.Workbook();
@@ -1218,9 +1224,14 @@ async function upsertCompany(name, active = true) {
   let found = false;
   ws.eachRow({ includeEmpty:false }, (row, idx) => {
     if (idx === 1) return;
-    if (lc(row.getCell(1)?.text) === tgt) { row.getCell(2).value = active ? 'TRUE' : ''; found = true; }
+    if (lc(row.getCell(1)?.text) === tgt) {
+      row.getCell(2).value = active ? 'TRUE' : '';
+      row.getCell(3).value = normStr(description);
+      row.getCell(4).value = normStr(email);
+      found = true;
+    }
   });
-  if (!found) ws.addRow([normStr(name), active ? 'TRUE' : '']);
+  if (!found) ws.addRow([normStr(name), active ? 'TRUE' : '', normStr(description), normStr(email)]);
   await wb.xlsx.writeFile(LOOKUPS_PATH);
   return { success: true };
 }
