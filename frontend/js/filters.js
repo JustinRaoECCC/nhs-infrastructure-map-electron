@@ -130,8 +130,9 @@
 
       // Build the tooltip title
       const tooltipLines = [];
-      if (companyObj.description) tooltipLines.push(`Description: ${companyObj.description}`);
-      if (companyObj.email) tooltipLines.push(`Email: ${companyObj.email}`);
+      if (companyObj.description) tooltipLines.push(`${companyObj.description}`);
+      if (companyObj.description) tooltipLines.push(` `)
+      if (companyObj.email) tooltipLines.push(`${companyObj.email}`);
       const titleAttr = tooltipLines.length ? tooltipLines.join('\n') : null;
 
       const head = el('div', { class: 'ft-row', style: 'display:flex;align-items:center;gap:.5rem;' },

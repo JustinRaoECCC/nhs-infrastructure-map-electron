@@ -120,16 +120,17 @@
     container.innerHTML = '';
     const frag = document.createDocumentFragment();
 
-    companies.forEach(company => {
+    companies.forEach(companyObj => {
+      const company = companyObj.name || companyObj;
       const locations = locationsByCompany[company] || [];
-      
+
       if (locations.length === 0) return;
 
       // Company container
       const companyDiv = document.createElement('div');
       companyDiv.className = 'link-company';
       companyDiv.style.cssText = 'margin-bottom: 16px; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;';
-      
+
       // Company header
       const companyHeader = document.createElement('div');
       companyHeader.className = 'link-company-header';

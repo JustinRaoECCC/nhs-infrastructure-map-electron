@@ -38,8 +38,9 @@
     async loadExistingSettings() {
       // Load existing settings from all company files
       this.existingSettings = new Map();
-      
-      for (const company of this.tree.companies) {
+
+      for (const companyObj of this.tree.companies) {
+        const company = companyObj.name || companyObj;
         try {
           const settings = await window.electronAPI.getAllFundingSettings(company);
           // settings is a Map with keys like "company|location|assetType"
@@ -127,9 +128,10 @@
       
       container.innerHTML = '';
       const tree = this.tree;
-      
+
       // Create hierarchical structure similar to Photo Links
-      tree.companies.forEach(company => {
+      tree.companies.forEach(companyObj => {
+        const company = companyObj.name || companyObj;
         const companyDiv = document.createElement('div');
         companyDiv.className = 'tree-company';
         companyDiv.innerHTML = `

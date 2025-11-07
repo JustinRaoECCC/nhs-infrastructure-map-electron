@@ -79,11 +79,12 @@ class ChatbotService {
 
             // Get all companies and their locations from your existing infrastructure
             const companies = await lookups.getActiveCompanies();
-            
-            for (const company of companies) {
+
+            for (const companyObj of companies) {
+                const company = companyObj.name || companyObj;
                 const locations = await lookups.getLocationsForCompany(company);
                 sources.companies[company] = {};
-                
+
                 for (const location of locations) {
                     // Get asset types for this company+location
                     const assetTypes = await lookups.getAssetTypesForCompanyLocation(company, location);

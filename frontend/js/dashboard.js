@@ -201,7 +201,8 @@
     // Derive company counts from lookup tree: sum counts of their locations
     const companies = (state.lookupTree?.companies || []);
     const locsByCompany = state.lookupTree?.locationsByCompany || {};
-    companies.forEach(co => {
+    companies.forEach(companyObj => {
+      const co = companyObj.name || companyObj;
       let sum = 0;
       (locsByCompany[co] || []).forEach(loc => { sum += (byLoc.get(loc) || 0); });
       // Even if a company has 0 (no stations yet), we still show it.
@@ -747,7 +748,10 @@
             <label>Company</label>
             <select id="grCompany">
               <option value="">Select Company...</option>
-              ${filterOptions.companies.map(c => `<option value="${c}">${c}</option>`).join('')}
+              ${filterOptions.companies.map(c => {
+                const name = c.name || c;
+                return `<option value="${name}">${name}</option>`;
+              }).join('')}
             </select>
           </div>
           <div class="form-row" style="grid-column: 1 / 4;">
@@ -1019,9 +1023,9 @@
     Object.keys(assetTypesByLocation).forEach(loc => {
       assetTypesByLocation[loc] = Array.from(assetTypesByLocation[loc]);
     });
-    
+
     return {
-      companies: tree.companies || [],
+      companies: (tree.companies || []).map(c => c.name || c),
       locationsByCompany: tree.locationsByCompany || {},
       assetTypesByLocation
     };
