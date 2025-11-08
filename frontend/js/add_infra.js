@@ -1094,6 +1094,9 @@
         if (typeof window.electronAPI.invalidateStationCache === 'function') {
           await window.electronAPI.invalidateStationCache();
         }
+        if (typeof window.electronAPI.normalizeFundingOverrides === 'function') {
+          await window.electronAPI.normalizeFundingOverrides();
+        }
         await window.refreshFilters?.();
         await window.refreshMarkers?.();
         await window.renderList?.();
@@ -1474,6 +1477,9 @@
         if (typeof window.invalidateStationData === 'function') window.invalidateStationData();
         if (typeof window.electronAPI.invalidateStationCache === 'function') {
           await window.electronAPI.invalidateStationCache();
+        }
+        if (typeof window.electronAPI.normalizeFundingOverrides === 'function') {
+          await window.electronAPI.normalizeFundingOverrides();
         }
         await window.refreshFilters?.();
         await window.refreshMarkers?.();

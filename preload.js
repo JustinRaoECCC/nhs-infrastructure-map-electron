@@ -193,6 +193,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('excel:saveFundingSettingsForAssetType', company, location, assetType, settings),
   getAllFundingSettings: (company) =>
     ipcRenderer.invoke('excel:getAllFundingSettings', company),
+  normalizeFundingOverrides: () =>
+    ipcRenderer.invoke('excel:normalizeFundingOverrides'),
   // Field catalog from the active workbook (sheet-qualified headers)
   getWorkbookFieldCatalog: (company, location) =>
     ipcRenderer.invoke('excel:getWorkbookFieldCatalog', company, location),

@@ -514,36 +514,6 @@
       <button id="okOpt3TopInfoBtn" class="btn btn-primary">OK</button>
     </div>
   </div>
-  <script>
-    // Dynamically update modal content based on workflow mode
-    document.getElementById('opt3TopInfoBtn')?.addEventListener('click', () => {
-      const mode = document.getElementById('workflowModeSelect')?.value;
-      const title = document.getElementById('opt3TopInfoTitle');
-      const content = document.getElementById('opt3TopInfoContent');
-      
-      if (mode === 'repair-first-dynamic') {
-        title.textContent = 'Look-Ahead Window';
-        content.innerHTML = `
-          <p>When deciding whether to swap a high-priority repair (with no deadline) for a lower-priority repair (with a deadline and matching location), the algorithm looks ahead through a portion of the remaining unassigned repairs.</p>
-          <p><strong>Look-Ahead Window = X% × Total Repairs</strong></p>
-          <p>For example, if you have 100 repairs and set this to 50%, the algorithm will scan the next 50 repairs when looking for better consolidation opportunities.</p>
-          <ul style="margin:0.5em 0 0 1.5em;">
-            <li><strong>100%:</strong> Maximum consolidation (scans all remaining repairs)</li>
-            <li><strong>50%:</strong> Balanced approach</li>
-            <li><strong>10-25%:</strong> More conservative (faster but may miss opportunities)</li>
-          </ul>
-          <p style="margin-top:0.5em; font-size:0.9em; color:#666;"><strong>Tip:</strong> Start with 100% for best results, then reduce if performance becomes an issue with very large datasets.</p>
-        `;
-      } else {
-        title.textContent = 'Top-X% Warning';
-        content.innerHTML = `
-      <p>If any of those repairs are <em>not</em> included in Year&nbsp;1’s assigned trips, we display a warning list so you can review potential deferrals of high-priority work.</p>
-      <p>You can change the X% here to widen or narrow that “watch list.”</p>
-        `;
-      }
-    });
-  </script>
-  </div>
 </div>
 
 <!-- Workflow Mode Info Modal -->

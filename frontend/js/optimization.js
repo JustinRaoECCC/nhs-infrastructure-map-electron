@@ -2776,7 +2776,50 @@ function _mergeSplitMaps(...maps) {
 
     // Wire info modal
     if (opt3TopInfoBtn && opt3TopInfoModal) {
-      const openInfo = () => (opt3TopInfoModal.style.display = 'flex');
+      const opt3TopInfoTitle = document.getElementById('opt3TopInfoTitle');
+      const opt3TopInfoContent = document.getElementById('opt3TopInfoContent');
+
+      const openInfo = () => {
+        // Populate content based on current workflow mode
+        const mode = workflowModeSelect?.value || 'trip-first';
+
+        if (mode === 'repair-first-dynamic') {
+          if (opt3TopInfoTitle) opt3TopInfoTitle.textContent = 'Look-Ahead Window';
+          if (opt3TopInfoContent) {
+            opt3TopInfoContent.innerHTML = `
+              <p>When deciding whether to swap a high-priority repair (with no deadline) for a lower-priority repair (with a deadline and matching location), the algorithm looks ahead through a portion of the remaining unassigned repairs.</p>
+              <p><strong>Look-Ahead Window = X% × Total Repairs</strong></p>
+              <p>For example, if you have 100 repairs and set this to 50%, the algorithm will scan the next 50 repairs when looking for better consolidation opportunities.</p>
+              <ul style="margin:0.5em 0 0 1.5em;">
+                <li><strong>100%:</strong> Maximum consolidation (scans all remaining repairs)</li>
+                <li><strong>50%:</strong> Balanced approach</li>
+                <li><strong>10-25%:</strong> More conservative (faster but may miss opportunities)</li>
+              </ul>
+              <p style="margin-top:0.5em; font-size:0.9em; color:#666;"><strong>Tip:</strong> Start with 100% for best results, then reduce if performance becomes an issue with very large datasets.</p>
+            `;
+          }
+        } else {
+          if (opt3TopInfoTitle) opt3TopInfoTitle.textContent = 'Top-X% Warning';
+          if (opt3TopInfoContent) {
+            opt3TopInfoContent.innerHTML = `
+              <p>After assigning trips to years, the system identifies the <strong>Top X%</strong> of highest-priority repairs (based on scores from Optimization 1) and checks which ones were scheduled in Year 1.</p>
+              <p><strong>Warning Threshold = X% × Total Repairs</strong></p>
+              <p>For example, if you have 100 repairs and set this to 10%, the system will monitor the top 10 highest-scored repairs.</p>
+              <p>If any of those top repairs are <em>not</em> included in Year 1's assigned trips, we display a warning list so you can review potential deferrals of high-priority work.</p>
+              <ul style="margin:0.5em 0 0 1.5em;">
+                <li><strong>10%:</strong> Monitor only the highest-priority repairs</li>
+                <li><strong>25%:</strong> Balanced approach for moderate oversight</li>
+                <li><strong>50%+:</strong> Broader monitoring (may generate many warnings)</li>
+              </ul>
+              <p style="margin-top:0.5em; font-size:0.9em; color:#666;"><strong>Tip:</strong> Start with 10-20% to focus on truly critical repairs, then adjust based on your planning needs.</p>
+            `;
+          }
+        }
+
+        // Then show modal
+        opt3TopInfoModal.style.display = 'flex';
+      };
+
       const closeInfo = () => (opt3TopInfoModal.style.display = 'none');
       opt3TopInfoBtn.addEventListener('click', openInfo);
       if (closeOpt3TopInfoModal) closeOpt3TopInfoModal.addEventListener('click', closeInfo);
