@@ -272,16 +272,19 @@ async function addStationsFromSelection(payload) {
   try {
     const schemaSync = require('./schema_sync');
     
-    // Check if there are existing stations of this asset type
-    const existingSchema = await schemaSync.getExistingSchemaForAssetType(assetType);
+    // Get all station IDs we just imported (to exclude them from find)
+    const importedStationIds = rows.map(r => 
+      String(r['Station ID'] || r['station_id'] || r['StationID'] || r['ID'] || '')
+    ).filter(Boolean);
+
+    // Check if there are existing stations of this asset type, EXCLUDING the ones we just added
+    const existingSchema = await schemaSync.getExistingSchemaForAssetType(
+      assetType,
+      importedStationIds // <-- PASS THE EXCLUSION LIST
+    );
     
     if (existingSchema && existingSchema.sections && existingSchema.sections.length > 0) {
       console.log(`[importSelection] Found existing schema for ${assetType} in other locations, syncing...`);
-      
-      // Get all station IDs we just imported (to exclude them from getting their data overwritten)
-      const importedStationIds = rows.map(r => 
-        r['Station ID'] || r['station_id'] || r['StationID'] || r['ID'] || ''
-      ).filter(Boolean);
       
       // Apply the existing schema to the newly imported stations
       const syncResult = await schemaSync.syncNewlyImportedStations(

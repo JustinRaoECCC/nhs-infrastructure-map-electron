@@ -254,11 +254,15 @@ function applySchemaToStation(stationData, schema) {
 /**
  * Get the schema from existing stations of the given asset type
  * Searches across ALL locations
+ * @param {string} assetType - The asset type to search for
+ * @param {string[]} [stationIdsToExclude] - Optional array of station IDs to skip (e.g., those being imported)
  */
-async function getExistingSchemaForAssetType(assetType) {
+async function getExistingSchemaForAssetType(assetType, stationIdsToExclude = []) {
   const excel = require('./excel_worker_client');
+  const excludeSet = new Set(stationIdsToExclude.map(String));
   
   console.log(`[getExistingSchemaForAssetType] Looking for existing schema for: ${assetType}`);
+  console.log(`[getExistingSchemaForAssetType] Excluding ${excludeSet.size} IDs`);
   
   try {
     const locationFiles = getLocationFiles();
@@ -279,12 +283,23 @@ async function getExistingSchemaForAssetType(assetType) {
         
         // Read the first station from this sheet
         const sheetData = await excel.readSheetData(locFile.company, locFile.locationName, sheetName);
-        if (sheetData.success && sheetData.rows && sheetData.rows.length > 0) {
-          // Extract and return the schema from the first station
-          const schema = extractSchema(sheetData.rows[0]);
-          console.log(`[getExistingSchemaForAssetType] Extracted schema:`, schema);
-          return schema;
+        if (!sheetData.success || !sheetData.rows || sheetData.rows.length === 0) {
+          continue;
+        }
+        
+        // Find the first station on this sheet that is NOT in our exclude list
+        for (const station of sheetData.rows) {
+          const stationId = station['Station ID'] || station['station_id'] || station['StationID'] || station['ID'];
+          
+          if (stationId && !excludeSet.has(String(stationId))) {
+            // Found a valid, existing station. This is our master schema.
+            const schema = extractSchema(station);
+            console.log(`[getExistingSchemaForAssetType] Extracted schema from: ${stationId}`, schema);
+            return schema;
+          }
         }
+        // If all stations on this sheet were in the exclude list, keep searching
+        console.log(`[getExistingSchemaForAssetType] All stations on sheet ${sheetName} were in exclude list`);
       }
     }
     
