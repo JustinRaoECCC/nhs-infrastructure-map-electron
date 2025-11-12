@@ -206,7 +206,9 @@
     const statsEl    = document.getElementById('statisticsContainer');
     const rightToggleBtn = document.getElementById('toggleRight');
     const rightPanel = document.getElementById('rightPanel');
-    const usersEl    = document.getElementById('usersContainer');
+    const usersEl    = document.getElementById('usersContainer');
+
+    const isFullWidthView = docs || wizard || settings || arguments[0]?.stats || arguments[0]?.users;
 
     if (mapEl)      mapEl.style.display      = map    ? 'block' : 'none';
     if (listEl)     listEl.style.display     = list   ? 'block' : 'none';
@@ -216,14 +218,14 @@
     if (statsEl)    statsEl.style.display    = arguments[0]?.stats ? 'block' : 'none';
     if (usersEl)    usersEl.style.display    = arguments[0]?.users ? 'block' : 'none';
 
-    if (stationEl && (map || list || docs || wizard || settings || arguments[0]?.stats || arguments[0]?.users))
+    if (stationEl && (map || list || isFullWidthView))
       stationEl.style.display = 'none';
 
-    // Hide the right toggle while on Optimization (docs), show it otherwise
-    if (rightToggleBtn) rightToggleBtn.style.display = docs ? 'none' : '';
+    // Hide the right toggle on all full-width views
+    if (rightToggleBtn) rightToggleBtn.style.display = isFullWidthView ? 'none' : '';
 
-    // Suppress RHS while in docs; allow restore in other views
-    if (docs) {
+    // Suppress RHS while in full-width views; allow restore in other views
+    if (isFullWidthView) {
       document.body.dataset.suppressRhs = '1';
       hideRightPanel();
     } else {
@@ -305,7 +307,7 @@
   async function showSettingsView() {
     setActiveNav('navSettings');
     showViews({ map: false, list: false, docs: false, wizard: false, settings: true });
-    safeDisableFullWidthMode();
+    safeEnableFullWidthMode();
 
     const container = document.getElementById('settingsContainer');
     if (!container) return;
