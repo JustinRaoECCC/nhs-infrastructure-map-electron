@@ -19,6 +19,7 @@ let map;                 // Leaflet map
 let markersLayer;        // Layer group for pins
 let canvasRenderer;      // Canvas renderer instance
 let mapStationData = []; // we'll reload this from disk every refresh
+let fastBootTimer;       // Timer ID for the initial full render
 let FAST_BOOT = true;           // first couple seconds: simple pins, limited count
 const MAX_INITIAL_PINS = 800;   // tune for your dataset
 let DID_FIT_BOUNDS = false;     // only fit once on first real data
@@ -36,10 +37,29 @@ function setRhsTitle(stnOrText) {
   h.removeAttribute('data-station-id');
   h.removeAttribute('title');
 
+  // Ensure title text span exists
+  let titleTextEl = h.querySelector('.rhs-title-text');
+  if (!titleTextEl) {
+    titleTextEl = document.createElement('span');
+    titleTextEl.className = 'rhs-title-text';
+    h.prepend(titleTextEl); // Prepend to keep text first
+  }
+
+  // Ensure warning icon element exists, but hide it by default on every title change
+  let warningEl = h.querySelector('.rhs-repair-warning');
+  if (!warningEl) {
+    warningEl = document.createElement('span');
+    warningEl.className = 'rhs-repair-warning';
+    warningEl.textContent = '!'; // CSS can style this
+    h.appendChild(warningEl); // Append, CSS will position it
+  }
+  warningEl.style.display = 'none';
+  warningEl.removeAttribute('title');
+
   if (stnOrText && typeof stnOrText === 'object') {
     // Station selected → make clickable link-like header
     const name = `${stnOrText.name || 'Unknown Station'} (${stnOrText.station_id || 'N/A'})`.trim();
-    h.textContent = name;
+    titleTextEl.textContent = name;
     h.classList.add('clickable');
     h.setAttribute('role', 'link');
     h.setAttribute('tabindex', '0');
@@ -47,7 +67,7 @@ function setRhsTitle(stnOrText) {
     h.title = 'Open station details';
   } else {
     // No station selected → plain header
-    h.textContent = typeof stnOrText === 'string' ? stnOrText : 'Station Details';
+    titleTextEl.textContent = typeof stnOrText === 'string' ? stnOrText : 'Station Details';
   }
 
   // Attach open handler once
@@ -379,6 +399,24 @@ async function showStationDetails(stn) {
   // Opening a pin/list row should surface the quick-view
   ensureRightPanelOpen();
 
+  // Asynchronously check for repairs and show/hide the warning icon
+  (async () => {
+    try {
+      // Assumes listRepairs is exposed on the electronAPI
+      const repairs = await window.electronAPI.listRepairs(stn.name, stn.station_id);
+      const h = document.querySelector('#rightPanel > h2');
+      const warningEl = h ? h.querySelector('.rhs-repair-warning') : null;
+      
+      if (warningEl && repairs && repairs.length > 0) {
+        // Show the warning. CSS should handle the red color and positioning.
+        warningEl.style.display = 'inline-block'; 
+        warningEl.setAttribute('title', `${repairs.length} repair(s) logged`);
+      }
+    } catch (e) {
+      console.warn(`[map_view] Failed to check repairs for ${stn.station_id}:`, e);
+    }
+  })();
+
   const container = document.getElementById('station-details');
   if (!container) return;
 
@@ -592,6 +630,14 @@ async function refreshMarkers() {
   
   RENDER_IN_PROGRESS = true;
   
+  // --- FIX for RACE CONDITION ---
+  // If this refresh is being triggered (e.g., by a user filter)
+  // and the initial fast-boot timer is still pending,
+  // cancel the timer and force a full (non-fast-boot) render.
+  clearTimeout(fastBootTimer);
+  FAST_BOOT = false;
+  // ------------------------------
+
   try {
     // Load station data
     if (typeof window.electronAPI?.getStationData === 'function') {
@@ -791,7 +837,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Switch to full render mode
-    setTimeout(async () => {
+    fastBootTimer = setTimeout(async () => {
       FAST_BOOT = false;
       
       try {

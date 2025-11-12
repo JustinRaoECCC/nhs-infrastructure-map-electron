@@ -169,12 +169,16 @@
     const q = norm(activeSearchQuery);
     if (!q) return rows;
     return rows.filter(stn => {
-      return [
+      const primaryMatch = [
         stn.station_id, stn.asset_type, stn.name,
         stn.province, stn.location, stn.location_file,
         stn.status, stn.lat, stn.lon
       ].some(v => String(v ?? '').toLowerCase().includes(q));
     
+      if (primaryMatch) {
+        return true;
+      }
+
       // NEW: Also search the temporary column if it exists
       if (tempColumnKey && stn[tempColumnKey]) {
         if (String(stn[tempColumnKey] ?? '').toLowerCase().includes(q)) {
@@ -182,8 +186,8 @@
         }
       }
       
-      // Re-check primary fields
-      return primaryMatch;
+      // No match
+      return false;
     });
   }
 

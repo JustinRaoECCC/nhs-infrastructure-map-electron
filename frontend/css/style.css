@@ -5996,3 +5996,28 @@ html.modal-open, body.modal-open { overflow: hidden; }
   background: #9ca3af;
 }
 
+/* Make the header a positioning context */
+#rightPanel > h2 {
+  position: relative;
+  /* Add padding to the right to avoid text overlapping the icon */
+  padding-right: 30px; 
+}
+
+/* Style the warning icon */
+.rhs-repair-warning {
+  display: none; /* Hidden by default */
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  background-color: #EF4444; /* Red */
+  color: white;
+  font-size: 14px;
+  font-weight: bold;
+  border-radius: 50%;
+  text-align: center;
+  line-height: 20px;
+  cursor: help;
+}
