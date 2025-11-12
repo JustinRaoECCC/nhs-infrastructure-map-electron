@@ -1,5 +1,4 @@
-// frontend/js/map_view.js - FINAL FIX
-// The issue is in the filter evaluation logic during full render
+// frontend/js/map_view.js
 
 'use strict';
 
@@ -37,7 +36,11 @@ function setRhsTitle(stnOrText) {
   h.removeAttribute('data-station-id');
   h.removeAttribute('title');
 
-  // Ensure title text span exists
+  // Ensure title text span exists
+  if (!h.dataset.titleInitialized) {
+    h.innerHTML = ''; // <-- ADD THIS LINE to clear the original "Station Details"
+    h.dataset.titleInitialized = '1';
+  }
   let titleTextEl = h.querySelector('.rhs-title-text');
   if (!titleTextEl) {
     titleTextEl = document.createElement('span');
@@ -142,6 +145,7 @@ function initMap() {
     maxBounds: [[-90, -180], [90, 180]],
     maxBoundsViscosity: 1.0,
     zoomControl: true,
+    minZoom: 1,
     // Prevent Leaflet from taking keyboard focus (arrows, +/- etc.)
     keyboard: false
   }).setView([54.5, -119], 5);
@@ -152,27 +156,34 @@ function initMap() {
     if (mapContainerEl) mapContainerEl.setAttribute('tabindex', '-1');
   } catch (_) {}
 
-  function addTiles() {
-    try {
-      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors',
-        noWrap: true
-      }).addTo(map);
-    } catch (e) {
-      console.warn('[map] tile layer add failed, retrying shortly…', e);
-      setTimeout(() => {
-        try {
-          L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap contributors',
-            noWrap: true
-          }).addTo(map);
-        } catch (e2) {
-          console.error('[map] tile layer final failure', e2);
-        }
-      }, 500);
-    }
-  }
-  addTiles();
+// 1. Define your different map layers
+  const streetLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors',
+    noWrap: true
+  });
+
+  const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
+    noWrap: true
+  });
+
+  const topoLayer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+      attribution: 'Map data: &copy; OpenStreetMap contributors, SRTM | Map style: &copy; OpenTopoMap (CC-BY-SA)',
+      noWrap: true
+  });
+
+  // 2. Create an object to hold them
+  const baseMaps = {
+    "Street": streetLayer,
+    "Satellite": satelliteLayer,
+    "Topographic": topoLayer
+  };
+
+  // 3. Add the layer control to the map (topright, as requested)
+  L.control.layers(baseMaps, null, { position: 'topright' }).addTo(map);
+
+  // 4. Add your default layer to the map
+  streetLayer.addTo(map);
 
   const maskPane = map.createPane('maskPane');
   maskPane.style.zIndex = 350;

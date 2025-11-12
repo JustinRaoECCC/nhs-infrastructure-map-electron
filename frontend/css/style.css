@@ -6021,3 +6021,64 @@ html.modal-open, body.modal-open { overflow: hidden; }
   line-height: 20px;
   cursor: help;
 }
+
+/*
+ * Modern Styles for the Leaflet Layer Control
+ * (Corrected to use Leaflet's built-in icon)
+ */
+
+/* Main container for the control (the box itself) */
+.leaflet-control-layers {
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  border: none;
+  background-color: #ffffff;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    sans-serif;
+}
+
+/* The expanded box */
+.leaflet-control-layers-expanded {
+  padding: 12px;
+  min-width: 150px;
+}
+
+/* Style for each layer option (the row) */
+.leaflet-control-layers-base label {
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  font-size: 14px;
+}
+
+/* Hover effect for each option */
+.leaflet-control-layers-base label:hover {
+  background-color: #f4f4f4;
+}
+
+/* The radio button itself */
+.leaflet-control-layers-base input[type="radio"] {
+  margin-right: 8px;
+  accent-color: #3388ff;
+}
+
+/* The text label for the layer */
+.leaflet-control-layers-base label span {
+  vertical-align: middle;
+}
+
+/* The toggle icon (when not expanded) */
+.leaflet-control-layers-toggle {
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 8px; /* Match the container's rounding */
+  background-color: #ffffff; /* Ensure white background */
+}
+
+/* Style the hover state for the icon */
+.leaflet-control-layers-toggle:hover {
+  background-color: #f4f4f4;
+}
