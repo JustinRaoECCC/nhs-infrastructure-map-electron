@@ -173,11 +173,41 @@ function _saveJsonCache() {
   } catch(_) {}
 }
 
+let isBusy = false;
+const MAX_RETRIES = 3;
+const RETRY_DELAY = 1000;
+
+async function withRetry(fn, retries = MAX_RETRIES) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      if (isBusy && i > 0) {
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+      }
+      return await fn();
+    } catch (e) {
+      if (i === retries - 1) throw e;
+      if (e.message && e.message.includes('timeout')) {
+        console.log(`[withRetry] Attempt ${i + 1} failed, retrying...`);
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+      } else {
+        throw e;
+      }
+    }
+  }
+}
+
 async function _primeAllCaches() {
+  if (isBusy) {
+    console.log('[_primeAllCaches] Already busy, skipping');
+    return;
+  }
+  
+  isBusy = true;
+  try {
   ensureDir(DATA_DIR);
   // Ask the persistence layer for a snapshot
   const persistence = await getPersistence();
-  const snap = await persistence.readLookupsSnapshot();
+  const snap = await withRetry(() => persistence.readLookupsSnapshot());
   const mtimeMs = snap?.mtimeMs || 0;
   if (_cache.mtimeMs === mtimeMs) return;
 
@@ -250,6 +280,9 @@ async function _primeAllCaches() {
       : ['project', 'construction', 'maintenance', 'repair', 'decommission'],
   };
   _saveJsonCache()
+  } finally {
+    isBusy = false;
+  }
 }
 
 // Public: fast one-pass accessors for the app to use when rendering

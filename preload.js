@@ -143,6 +143,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ─── Nuke ────────────────────────────────────────────────────────────────
   nukeProgram: () => ipcRenderer.invoke('nuke:run'),
+  deleteCompany: (companyName) => ipcRenderer.invoke('nuke:deleteCompany', companyName),
+  deleteLocation: (companyName, locationName) => 
+    ipcRenderer.invoke('nuke:deleteLocation', companyName, locationName),
+  deleteAssetType: (companyName, locationName, assetTypeName) => 
+    ipcRenderer.invoke('nuke:deleteAssetType', companyName, locationName, assetTypeName),
 
   getPhotosBase: (ctx) => ipcRenderer.invoke('getPhotosBase', ctx),
 

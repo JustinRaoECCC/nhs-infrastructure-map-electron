@@ -19,10 +19,49 @@ function normLoc(s) {
     .toLowerCase();
 }
 
+const debounceMap = new Map();
+
+function debounce(key, fn, delay = 100) {
+  return new Promise((resolve, reject) => {
+    const existing = debounceMap.get(key);
+    if (existing) {
+      clearTimeout(existing.timer);
+      // Reject the previous promise
+      existing.reject(new Error('Debounced'));
+    }
+    
+    const timer = setTimeout(async () => {
+      debounceMap.delete(key);
+      try {
+        const result = await fn();
+        resolve(result);
+      } catch (e) {
+        reject(e);
+      }
+    }, delay);
+    
+    debounceMap.set(key, { timer, reject });
+  });
+}
+
 // ─── Public API ────────────────────────────────────────────────────────────
 // ─── Public API ────────────────────────────────────────────────────────────
 // backend/app.js
 async function getStationData(opts = {}) {
+
+  // Debounce rapid calls during initial load
+  if (opts.debounce !== false) {
+    try {
+      return await debounce('getStationData', () => getStationData({ ...opts, debounce: false }), 100);
+    } catch (e) {
+      if (e.message === 'Debounced') {
+        // Return empty data for debounced calls
+        return { success: true, rows: [] };
+      }
+      throw e;
+    }
+  }
+
   const skipColors = !!opts.skipColors;
   const persistence = await getPersistence();
   const agg = await persistence.readStationsAggregate().catch(() => ({ success:false, rows: [] }));

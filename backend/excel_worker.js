@@ -3383,6 +3383,176 @@ async function getWorkbookFieldCatalog(company = null, locationName = null) {
   }
 }
 
+// Delete company from lookups.xlsx
+async function deleteCompanyFromLookups(companyName) {
+  await ensureLookupsReady();
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(LOOKUPS_PATH);
+  
+  const companyLower = lc(companyName);
+  
+  // Remove from Companies sheet
+  const wsC = getSheet(wb, 'Companies');
+  if (wsC) {
+    const rowsToDelete = [];
+    wsC.eachRow({ includeEmpty: false }, (row, idx) => {
+      if (idx === 1) return;
+      if (lc(row.getCell(1)?.text) === companyLower) {
+        rowsToDelete.push(idx);
+      }
+    });
+    for (let i = rowsToDelete.length - 1; i >= 0; i--) {
+      wsC.spliceRows(rowsToDelete[i], 1);
+    }
+  }
+  
+  // Remove from Locations sheet
+  const wsL = getSheet(wb, 'Locations');
+  if (wsL) {
+    const rowsToDelete = [];
+    wsL.eachRow({ includeEmpty: false }, (row, idx) => {
+      if (idx === 1) return;
+      if (lc(row.getCell(2)?.text) === companyLower) {
+        rowsToDelete.push(idx);
+      }
+    });
+    for (let i = rowsToDelete.length - 1; i >= 0; i--) {
+      wsL.spliceRows(rowsToDelete[i], 1);
+    }
+  }
+  
+  // Remove from AssetTypes sheet
+  const wsA = getSheet(wb, 'AssetTypes');
+  if (wsA) {
+    const rowsToDelete = [];
+    wsA.eachRow({ includeEmpty: false }, (row, idx) => {
+      if (idx === 1) return;
+      if (lc(row.getCell(3)?.text) === companyLower) {
+        rowsToDelete.push(idx);
+      }
+    });
+    for (let i = rowsToDelete.length - 1; i >= 0; i--) {
+      wsA.spliceRows(rowsToDelete[i], 1);
+    }
+  }
+  
+  await wb.xlsx.writeFile(LOOKUPS_PATH);
+  return { success: true };
+}
+
+// Delete location from lookups.xlsx
+async function deleteLocationFromLookups(companyName, locationName) {
+  await ensureLookupsReady();
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(LOOKUPS_PATH);
+  
+  const companyLower = lc(companyName);
+  const locationLower = lc(locationName);
+  
+  // Remove from Locations sheet
+  const wsL = getSheet(wb, 'Locations');
+  if (wsL) {
+    const rowsToDelete = [];
+    wsL.eachRow({ includeEmpty: false }, (row, idx) => {
+      if (idx === 1) return;
+      if (lc(row.getCell(1)?.text) === locationLower && 
+          lc(row.getCell(2)?.text) === companyLower) {
+        rowsToDelete.push(idx);
+      }
+    });
+    for (let i = rowsToDelete.length - 1; i >= 0; i--) {
+      wsL.spliceRows(rowsToDelete[i], 1);
+    }
+  }
+  
+  // Remove from AssetTypes sheet
+  const wsA = getSheet(wb, 'AssetTypes');
+  if (wsA) {
+    const rowsToDelete = [];
+    wsA.eachRow({ includeEmpty: false }, (row, idx) => {
+      if (idx === 1) return;
+      if (lc(row.getCell(2)?.text) === locationLower && 
+          lc(row.getCell(3)?.text) === companyLower) {
+        rowsToDelete.push(idx);
+      }
+    });
+    for (let i = rowsToDelete.length - 1; i >= 0; i--) {
+      wsA.spliceRows(rowsToDelete[i], 1);
+    }
+  }
+  
+  await wb.xlsx.writeFile(LOOKUPS_PATH);
+  return { success: true };
+}
+
+// Delete asset type from lookups.xlsx
+async function deleteAssetTypeFromLookups(companyName, locationName, assetTypeName) {
+  await ensureLookupsReady();
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(LOOKUPS_PATH);
+  
+  const companyLower = lc(companyName);
+  const locationLower = lc(locationName);
+  const assetTypeLower = lc(assetTypeName);
+  
+  // Remove from AssetTypes sheet
+  const wsA = getSheet(wb, 'AssetTypes');
+  if (wsA) {
+    const rowsToDelete = [];
+    wsA.eachRow({ includeEmpty: false }, (row, idx) => {
+      if (idx === 1) return;
+      if (lc(row.getCell(1)?.text) === assetTypeLower && 
+          lc(row.getCell(2)?.text) === locationLower && 
+          lc(row.getCell(3)?.text) === companyLower) {
+        rowsToDelete.push(idx);
+      }
+    });
+    for (let i = rowsToDelete.length - 1; i >= 0; i--) {
+      wsA.spliceRows(rowsToDelete[i], 1);
+    }
+  }
+  
+  await wb.xlsx.writeFile(LOOKUPS_PATH);
+  return { success: true };
+}
+
+// Delete asset type data from location file
+async function deleteAssetTypeFromLocation(companyName, locationName, assetTypeName) {
+  const filePath = getLocationFilePath(companyName, locationName);
+  if (!fs.existsSync(filePath)) {
+    return { success: true }; // Already deleted
+  }
+  
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(filePath);
+  
+  // Find and remove the sheet for this asset type
+  const assetTypeLower = lc(assetTypeName);
+  let sheetDeleted = false;
+  
+  for (const ws of wb.worksheets) {
+    if (!ws || !ws.name) continue;
+    const sheetName = ws.name.toLowerCase();
+    
+    // Check if sheet name contains the asset type
+    if (sheetName.includes(assetTypeLower)) {
+      wb.removeWorksheet(ws.id);
+      sheetDeleted = true;
+      break;
+    }
+  }
+  
+  if (sheetDeleted) {
+    await wb.xlsx.writeFile(filePath);
+  }
+  
+  return { success: true };
+}
+
 // ─── RPC shim ─────────────────────────────────────────────────────────────
 const handlers = {
   ping: async () => 'pong',
@@ -3438,6 +3608,11 @@ const handlers = {
   getAllFundingSettings,
   normalizeFundingOverrides,
   getWorkbookFieldCatalog,
+
+  deleteCompanyFromLookups,
+  deleteLocationFromLookups,
+  deleteAssetTypeFromLookups,
+  deleteAssetTypeFromLocation,
 };
 
 parentPort.on('message', async (msg) => {

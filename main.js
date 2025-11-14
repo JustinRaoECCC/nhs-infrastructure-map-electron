@@ -61,7 +61,19 @@ async function createLoginWindow() {
   });
 
   loginWindow.on('closed', () => {
+    // Clean up references immediately
+    const temp = loginWindow;
     loginWindow = null;
+
+    // Force cleanup
+    if (temp && !temp.isDestroyed()) {
+      try {
+        temp.destroy();
+      } catch (e) {
+        // Ignore - already destroyed
+      }
+    }
+
   });
 }
 
@@ -103,41 +115,113 @@ async function createWindow () {
   });
 
   mainWindow.on('closed', () => {
+    // Clean up references immediately
+    const temp = mainWindow;
     mainWindow = null;
+
+    // Force garbage collection of the window
+    if (temp && !temp.isDestroyed()) {
+      try {
+        temp.destroy();
+      } catch (e) {
+        // Ignore - already destroyed
+      }
+    }
+
     auth.logoutUser();
     app.quit();
   });
 
 }
 
+let isBootstrapping = false;
+
 // Boot-time lookups bootstrap (runs as soon as the app is ready)
 // - warms the worker thread (only if using Excel)
 // - creates lookups.xlsx if missing (non-blocking)
 // - primes caches
 function bootstrapLookupsAtBoot(useExcel = true) {
+  if (isBootstrapping) return;
+  isBootstrapping = true;
+
   if (useExcel) {
     const excel = getExcelClient();
     // Start the worker immediately (non-blocking).
-    excel.warm().catch(err => console.error('[excel warm @boot] failed:', err));
+    excel.warm().catch(err => {
+      // This is expected if app is closing
+      if (err.message && !err.message.includes('disposed')) {
+        console.error('[excel warm @boot] failed:', err);
+      }
+    });
 
     // Fire-and-forget creation of the workbook + initial cache snapshot.
-    Promise.resolve()
-      .then(() => lookups.ensureLookupsReady?.())
-      .then(() => lookups.primeAllCaches?.())
-      .catch(err => console.error('[ensure lookups @boot] failed:', err));
+    // Use sequential execution with proper error handling
+    (async () => {
+      try {
+        await lookups.ensureLookupsReady?.();
+        await lookups.primeAllCaches?.();
+      } catch (err) {
+        if (err.message && !err.message.includes('disposed')) {
+          console.error('[ensure lookups @boot] failed:', err);
+        }
+      } finally {
+        isBootstrapping = false;
+      }
+    })();
 
     // Small failsafe retry in case the first attempt raced the worker startup.
-    setTimeout(() => {
-      lookups.ensureLookupsReady?.().catch(err => console.error('[ensure lookups @boot retry] failed:', err));
+    setTimeout(async () => {
+      if (BrowserWindow.getAllWindows().length > 0) {
+        try {
+          // Only retry if not already bootstrapping
+          if (!isBootstrapping) {
+            await lookups.ensureLookupsReady?.();
+          }
+        } catch (err) {
+          if (err.message && !err.message.includes('disposed')) {
+            console.error('[ensure lookups @boot retry] failed:', err);
+          }
+        }
+      }
     }, 3000);
   } else {
     // MongoDB mode - just prime caches without Excel worker
     console.log('[Main] Using MongoDB - skipping Excel worker initialization');
     Promise.resolve()
       .then(() => lookups.primeAllCaches?.())
-      .catch(err => console.error('[prime caches @boot] failed:', err));
+      .catch(err => {
+        if (err.message && !err.message.includes('disposed')) {
+          console.error('[prime caches @boot] failed:', err);
+        }
+      })
+      .finally(() => {
+        isBootstrapping = false;
+      });
   }
 }
+
+// Clear any stale Excel lock files on startup
+function clearExcelLockFiles() {
+  try {
+    const dataDir = path.join(__dirname, 'data');
+    if (fs.existsSync(dataDir)) {
+      const files = fs.readdirSync(dataDir, { recursive: true });
+      files.forEach(file => {
+        if (typeof file === 'string' && file.startsWith('~$') && file.endsWith('.xlsx')) {
+          try {
+            fs.unlinkSync(path.join(dataDir, file));
+            console.log(`Cleared stale lock file: ${file}`);
+          } catch (e) {
+            // Ignore - file might be in use
+          }
+        }
+      });
+    }
+  } catch (e) {
+    console.error('Error clearing lock files:', e);
+  }
+}
+clearExcelLockFiles();
 
 app.whenReady().then(async () => {
   // Initialize persistence layer (MongoDB / Excel based on config)
@@ -200,11 +284,19 @@ app.whenReady().then(async () => {
     const excel = getExcelClient();
     excel.onProgress((data) => {
       try {
-        for (const w of BrowserWindow.getAllWindows()) {
-          w.webContents.send('excel:progress', data);
+        const windows = BrowserWindow.getAllWindows();
+        for (const w of windows) {
+          // Check if window and webContents are still valid
+          if (w && !w.isDestroyed() && w.webContents && !w.webContents.isDestroyed()) {
+            try {
+              w.webContents.send('excel:progress', data);
+            } catch (err) {
+              // Silently ignore - window might have been closed between check and send
+            }
+          }
         }
       } catch (e) {
-        console.error('[excel:progress forward] failed:', e);
+        // Silently ignore - this is expected when windows are closing
       }
     });
   }
@@ -746,4 +838,35 @@ ipcMain.handle('assign-repairs-to-years-with-deadlines', async (event, params) =
     console.error('[assign-repairs-to-years-with-deadlines] Error:', err);
     return { success: false, message: err.message };
   }
+});
+
+// ─── IPC: Selective Deletion ───────────────────────────────────────────────
+ipcMain.handle('nuke:deleteCompany', async (_evt, companyName) => {
+  const result = await nukeBackend.deleteCompany(companyName);
+  if (result.success) {
+    // Invalidate caches and refresh
+    await backend.invalidateStationCache();
+    lookups.primeAllCaches();
+  }
+  return result;
+});
+
+ipcMain.handle('nuke:deleteLocation', async (_evt, companyName, locationName) => {
+  const result = await nukeBackend.deleteLocation(companyName, locationName);
+  if (result.success) {
+    // Invalidate caches and refresh
+    await backend.invalidateStationCache();
+    lookups.primeAllCaches();
+  }
+  return result;
+});
+
+ipcMain.handle('nuke:deleteAssetType', async (_evt, companyName, locationName, assetTypeName) => {
+  const result = await nukeBackend.deleteAssetType(companyName, locationName, assetTypeName);
+  if (result.success) {
+    // Invalidate caches and refresh
+    await backend.invalidateStationCache();
+    lookups.primeAllCaches();
+  }
+  return result;
 });

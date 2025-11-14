@@ -6082,3 +6082,58 @@ html.modal-open, body.modal-open { overflow: hidden; }
 .leaflet-control-layers-toggle:hover {
   background-color: #f4f4f4;
 }
+
+.nuke-section .form-group {
+  margin-bottom: 1rem;
+}
+
+.nuke-section .form-control {
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: white;
+}
+
+.nuke-section .alert {
+  padding: 0.75rem;
+  border-radius: 4px;
+  background: #d1ecf1;
+  border: 1px solid #bee5eb;
+  color: #0c5460;
+}
+
+.nuke-section .border {
+  border: 1px solid #dee2e6;
+}
+
+.nuke-section .rounded {
+  border-radius: 0.25rem;
+}
+
+.nuke-section .p-3 {
+  padding: 1rem;
+}
+
+.nuke-section .mb-4 {
+  margin-bottom: 1.5rem;
+}
+
+.nuke-section .mt-4 {
+  margin-top: 1.5rem;
+}
+
+.nuke-section .btn-warning {
+  background-color: #ffc107;
+  border-color: #ffc107;
+  color: #212529;
+}
+
+.nuke-section .btn-warning:hover:not(:disabled) {
+  background-color: #e0a800;
+  border-color: #d39e00;
+}
+
+.nuke-section .btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}

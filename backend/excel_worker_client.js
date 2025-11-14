@@ -7,6 +7,8 @@ let w = null;
 let seq = 1;
 const pending = new Map();
 const emitter = new EventEmitter();
+const operationQueue = [];
+let isProcessing = false;
 
 function ensureWorker() {
   if (w && w.threadId) return;
@@ -15,31 +17,111 @@ function ensureWorker() {
   w.on('message', (msg) => {
     // Progress messages have no id
     if (msg && msg.type === 'progress') {
-      emitter.emit('progress', msg);
+      try {
+        emitter.emit('progress', msg);
+      } catch (e) {
+        // Silently ignore - listeners might have been removed
+      }
       return;
     }
     const { id, ok, result, error } = msg || {};
     const p = pending.get(id);
     if (!p) return;
     pending.delete(id);
-    ok ? p.resolve(result) : p.reject(new Error(error || 'Worker error'));
+    try {
+      ok ? p.resolve(result) : p.reject(new Error(error || 'Worker error'));
+    } catch (e) {
+      // Promise might have been cancelled
+    }
+    // Process next queued operation
+    processQueue();
   });
   w.on('error', (err) => {
-    for (const [, p] of pending) p.reject(err);
+    for (const [, p] of pending) {
+      try {
+        p.reject(err);
+      } catch (e) {
+        // Ignore - promise might be already resolved
+      }
+    }
     pending.clear();
+    isProcessing = false;
+    // Clear the queue on error
+    while (operationQueue.length > 0) {
+      const op = operationQueue.shift();
+      op.reject(err);
+    }
   });
   w.on('exit', (code) => {
+    // Clear all pending operations
+    for (const [, p] of pending) {
+      try {
+        p.reject(new Error('Worker exited'));
+      } catch (e) {
+        // Ignore
+      }
+    }
+    pending.clear();
     w = null;
-    // Optional: auto-restart on crash; lazy restart happens on next call()
+    isProcessing = false;
+    // Clear the queue on exit
+    while (operationQueue.length > 0) {
+      const op = operationQueue.shift();
+      op.reject(new Error('Worker exited'));
+    }
   });
+}
+
+async function processQueue() {
+  if (isProcessing || operationQueue.length === 0) return;
+  
+  isProcessing = true;
+  const { cmd, args, resolve, reject } = operationQueue.shift();
+  
+  try {
+    ensureWorker();
+    const id = seq++;
+    
+    // No timeout for critical operations
+    const criticalOps = ['ensureLookupsReady', 'readLookupsSnapshot', 'warm', 'ping'];
+    const shouldTimeout = !criticalOps.includes(cmd);
+    
+    let timeout = null;
+    if (shouldTimeout) {
+      const timeoutMs = cmd === 'readStationsAggregate' ? 60000 : 45000;
+      timeout = setTimeout(() => {
+        pending.delete(id);
+        isProcessing = false;
+        reject(new Error(`Operation '${cmd}' timed out after ${timeoutMs}ms`));
+        processQueue();
+      }, timeoutMs);
+    }
+    
+    const clearAndResolve = (result) => {
+      if (timeout) clearTimeout(timeout);
+      isProcessing = false;
+      resolve(result);
+    };
+    
+    const clearAndReject = (error) => {
+      if (timeout) clearTimeout(timeout);
+      isProcessing = false;
+      reject(error);
+    };
+    
+    pending.set(id, { resolve: clearAndResolve, reject: clearAndReject });
+    w.postMessage({ id, cmd, args });
+  } catch (e) {
+    isProcessing = false;
+    reject(e);
+    processQueue();
+  }
 }
 
 function call(cmd, ...args) {
   return new Promise((resolve, reject) => {
-    ensureWorker();
-    const id = seq++;
-    pending.set(id, { resolve, reject });
-    w.postMessage({ id, cmd, args });
+    operationQueue.push({ cmd, args, resolve, reject });
+    processQueue();
   });
 }
 
@@ -120,4 +202,12 @@ module.exports = {
   normalizeFundingOverrides: () => call('normalizeFundingOverrides'),
   getWorkbookFieldCatalog: (company, locationName) =>
     call('getWorkbookFieldCatalog', company, locationName),
+  deleteCompanyFromLookups: (companyName) =>
+    call('deleteCompanyFromLookups', companyName),
+  deleteLocationFromLookups: (companyName, locationName) =>
+    call('deleteLocationFromLookups', companyName, locationName),
+  deleteAssetTypeFromLookups: (companyName, locationName, assetTypeName) =>
+    call('deleteAssetTypeFromLookups', companyName, locationName, assetTypeName),
+  deleteAssetTypeFromLocation: (companyName, locationName, assetTypeName) =>
+    call('deleteAssetTypeFromLocation', companyName, locationName, assetTypeName),
 };
