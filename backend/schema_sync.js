@@ -80,7 +80,7 @@ function getLocationFiles() {
  * This is called after a station edit is saved (Functionality A)
  */
 async function syncAssetTypeSchema(assetType, updatedSchema, sourceStationId) {
-  const excel = require('./excel_worker_client');
+  const { getPersistence } = require('./persistence');
   const results = {
     success: true,
     locationsUpdated: [],
@@ -88,75 +88,77 @@ async function syncAssetTypeSchema(assetType, updatedSchema, sourceStationId) {
     stationsUpdated: 0,
     sheetsProcessed: []
   };
-  
+
   console.log(`[syncAssetTypeSchema] Starting sync for asset type: ${assetType}`);
   console.log(`[syncAssetTypeSchema] Schema to apply:`, updatedSchema);
-  
+
   try {
+    const persistence = await getPersistence();
+
     // Get ALL location files
     const locationFiles = getLocationFiles();
     console.log(`[syncAssetTypeSchema] Found ${locationFiles.length} location files across all companies`);
-    
+
     for (const locFile of locationFiles) {
       try {
         console.log(`[syncAssetTypeSchema] Processing: ${locFile.company}/${locFile.locationName}`);
-        
+
         // Read the entire workbook to get all sheets
-        const wb = await excel.readLocationWorkbook(locFile.company, locFile.locationName);
+        const wb = await persistence.readLocationWorkbook(locFile.company, locFile.locationName);
         if (!wb.success || !wb.sheets) {
           console.log(`[syncAssetTypeSchema] Could not read workbook for ${locFile.company}/${locFile.locationName}`);
           continue;
         }
-        
+
         console.log(`[syncAssetTypeSchema] Sheets in ${locFile.company}/${locFile.fileName}:`, wb.sheets);
-        
+
         // Process each sheet that might contain our asset type
         for (const sheetName of wb.sheets) {
           // Check if this sheet is for our asset type
           // Sheet names are like "Cableway BC" - case insensitive check
           const sheetLower = sheetName.toLowerCase();
           const assetLower = assetType.toLowerCase();
-          
+
           // Check if sheet starts with the asset type (case insensitive)
           if (!sheetLower.startsWith(assetLower)) {
             console.log(`[syncAssetTypeSchema] Skipping sheet ${sheetName} - doesn't match ${assetType}`);
             continue;
           }
-          
+
           console.log(`[syncAssetTypeSchema] Processing sheet: ${sheetName}`);
-          
+
           // Read all stations from this sheet
-          const sheetData = await excel.readSheetData(locFile.company, locFile.locationName, sheetName);
-          if (!sheetData.success || !sheetData.rows || sheetData.rows.length === 0) {
+          const sheetData = await persistence.readSheetData(locFile.company, locFile.locationName, sheetName);
+          if (!sheetData.success || !sheetData.data || sheetData.data.length === 0) {
             console.log(`[syncAssetTypeSchema] No data in sheet ${sheetName}`);
             continue;
           }
-          
-          console.log(`[syncAssetTypeSchema] Found ${sheetData.rows.length} stations in ${sheetName}`);
-          
+
+          console.log(`[syncAssetTypeSchema] Found ${sheetData.data.length} stations in ${sheetName}`);
+
           // Update each station's schema (except the source station)
-          for (const station of sheetData.rows) {
+          for (const station of sheetData.data) {
             const stationId = station['Station ID'] || station['station_id'] || station['StationID'] || station['ID'];
-            
+
             // Skip the station that triggered this update
             if (String(stationId) === String(sourceStationId)) {
               console.log(`[syncAssetTypeSchema] Skipping source station: ${stationId}`);
               continue;
             }
-            
+
             console.log(`[syncAssetTypeSchema] Updating station: ${stationId}`);
-            
+
             // Apply schema changes
             const updatedStation = applySchemaToStation(station, updatedSchema);
-            
-            // Save the updated station back to Excel
-            const updateResult = await excel.updateStationInLocationFile(
+
+            // Save the updated station back via persistence layer
+            const updateResult = await persistence.updateStationInLocationFile(
               locFile.company, locFile.locationName,
               stationId,
               updatedStation,
               updatedSchema
             );
-            
+
             if (updateResult.success) {
               results.stationsUpdated++;
               console.log(`[syncAssetTypeSchema] Successfully updated station: ${stationId}`);
@@ -164,14 +166,14 @@ async function syncAssetTypeSchema(assetType, updatedSchema, sourceStationId) {
               console.error(`[syncAssetTypeSchema] Failed to update station ${stationId}:`, updateResult.message);
             }
           }
-          
+
           results.sheetsProcessed.push(`${locFile.company}/${locFile.locationName}/${sheetName}`);
         }
-        
+
         if (results.sheetsProcessed.length > 0) {
           results.locationsUpdated.push(locFile.locationName);
         }
-        
+
       } catch (locError) {
         console.error(`[syncAssetTypeSchema] Error processing ${locFile.company}/${locFile.fileName}:`, locError);
         results.errors.push({
@@ -180,10 +182,10 @@ async function syncAssetTypeSchema(assetType, updatedSchema, sourceStationId) {
         });
       }
     }
-    
+
     results.message = `Updated ${results.stationsUpdated} stations across ${results.locationsUpdated.length} locations`;
     console.log(`[syncAssetTypeSchema] Completed:`, results.message);
-    
+
   } catch (error) {
     console.error('[syncAssetTypeSchema] Fatal error:', error);
     results.success = false;
@@ -192,7 +194,7 @@ async function syncAssetTypeSchema(assetType, updatedSchema, sourceStationId) {
       error: String(error)
     });
   }
-  
+
   return results;
 }
 
@@ -258,18 +260,19 @@ function applySchemaToStation(stationData, schema) {
  * @param {string[]} [stationIdsToExclude] - Optional array of station IDs to skip (e.g., those being imported)
  */
 async function getExistingSchemaForAssetType(assetType, stationIdsToExclude = []) {
-  const excel = require('./excel_worker_client');
+  const { getPersistence } = require('./persistence');
   const excludeSet = new Set(stationIdsToExclude.map(String));
-  
+
   console.log(`[getExistingSchemaForAssetType] Looking for existing schema for: ${assetType}`);
   console.log(`[getExistingSchemaForAssetType] Excluding ${excludeSet.size} IDs`);
-  
+
   try {
+    const persistence = await getPersistence();
     const locationFiles = getLocationFiles();
     console.log(`[getExistingSchemaForAssetType] Searching in ${locationFiles.length} location files`);
-    
+
     for (const locFile of locationFiles) {
-      const wb = await excel.readLocationWorkbook(locFile.company, locFile.locationName);
+      const wb = await persistence.readLocationWorkbook(locFile.company, locFile.locationName);
       if (!wb.success || !wb.sheets) continue;
       
       for (const sheetName of wb.sheets) {
@@ -280,15 +283,16 @@ async function getExistingSchemaForAssetType(assetType, stationIdsToExclude = []
         if (!sheetLower.startsWith(assetLower)) continue;
         
         console.log(`[getExistingSchemaForAssetType] Found matching sheet: ${sheetName} in ${locFile.locationName}`);
-        
+
         // Read the first station from this sheet
-        const sheetData = await excel.readSheetData(locFile.company, locFile.locationName, sheetName);
-        if (!sheetData.success || !sheetData.rows || sheetData.rows.length === 0) {
+        const sheetData = await persistence.readSheetData(locFile.company, locFile.locationName, sheetName);
+        const dataArray = sheetData.data || sheetData.rows || [];
+        if (!sheetData.success || dataArray.length === 0) {
           continue;
         }
         
         // Find the first station on this sheet that is NOT in our exclude list
-        for (const station of sheetData.rows) {
+        for (const station of dataArray) {
           const stationId = station['Station ID'] || station['station_id'] || station['StationID'] || station['ID'];
           
           if (stationId && !excludeSet.has(String(stationId))) {
@@ -317,35 +321,37 @@ async function getExistingSchemaForAssetType(assetType, stationIdsToExclude = []
  * This is for Functionality B - when importing new data
  */
 async function syncNewlyImportedStations(assetType, company, locationName, existingSchema, importedStationIds) {
-  const excel = require('./excel_worker_client');
+  const { getPersistence } = require('./persistence');
   const results = {
     success: true,
     message: '',
     stationsUpdated: 0
   };
-  
+
   console.log(`[syncNewlyImportedStations] Syncing ${importedStationIds.length} imported stations to existing schema`);
-  
+
   try {
+    const persistence = await getPersistence();
     // Build the sheet name where the new stations were imported
     // Use the standard naming convention: "AssetType Location"
     const sheetName = `${assetType} ${locationName}`;
-    
+
     console.log(`[syncNewlyImportedStations] Reading from sheet: ${sheetName}`);
-    
+
     // Read the just-imported data
-    const sheetData = await excel.readSheetData(company, locationName, sheetName);
-    if (!sheetData.success || !sheetData.rows || sheetData.rows.length === 0) {
-      return { 
-        success: false, 
-        message: `Could not read imported data from ${sheetName}` 
+    const sheetData = await persistence.readSheetData(company, locationName, sheetName);
+    const dataArray = sheetData.data || sheetData.rows || [];
+    if (!sheetData.success || dataArray.length === 0) {
+      return {
+        success: false,
+        message: `Could not read imported data from ${sheetName}`
       };
     }
-    
-    console.log(`[syncNewlyImportedStations] Found ${sheetData.rows.length} stations in sheet`);
-    
+
+    console.log(`[syncNewlyImportedStations] Found ${dataArray.length} stations in sheet`);
+
     // Update each imported station to match the existing schema
-    for (const station of sheetData.rows) {
+    for (const station of dataArray) {
       const stationId = station['Station ID'] || station['station_id'] || station['StationID'] || station['ID'];
       
       // Only update the stations we just imported
@@ -358,9 +364,9 @@ async function syncNewlyImportedStations(assetType, company, locationName, exist
       
       // Apply the existing schema while preserving values
       const updatedStation = applySchemaToStation(station, existingSchema);
-      
-      // Write back to Excel
-      const updateResult = await excel.updateStationInLocationFile(
+
+      // Write back via persistence layer
+      const updateResult = await persistence.updateStationInLocationFile(
         company,
         locationName,
         stationId,

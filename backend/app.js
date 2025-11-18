@@ -146,7 +146,25 @@ async function getStationData(opts = {}) {
         }
       }
     }
-    out[i] = { ...st, color };
+
+    // Normalise coordinates so frontend can always rely on `lat`/`lon`,
+    // regardless of whether the source was Excel or Mongo.
+    // Prefer existing `lat`/`lon` if already present; otherwise fall back
+    // to common header variants such as "Latitude"/"Longitude".
+    const latRaw = st.lat ?? st.Latitude ?? st.latitude;
+    const lonRaw = st.lon ?? st.Longitude ?? st.longitude;
+    const latNum = latRaw !== undefined && latRaw !== null && latRaw !== ''
+      ? Number(latRaw)
+      : NaN;
+    const lonNum = lonRaw !== undefined && lonRaw !== null && lonRaw !== ''
+      ? Number(lonRaw)
+      : NaN;
+
+    const base = { ...st, color };
+    if (Number.isFinite(latNum)) base.lat = latNum;
+    if (Number.isFinite(lonNum)) base.lon = lonNum;
+
+    out[i] = base;
 
     // NEW: Status overrides (only for non-Active). If enabled, override computed color.
     // Supported keys: 'inactive', 'mothballed', 'unknown'. Keys matched case-insensitively.
@@ -158,7 +176,8 @@ async function getStationData(opts = {}) {
       }
     }
 
-    out[i] = { ...st, color };
+    // re-assign in case status override changed color
+    out[i].color = color;
   }
 
   return out;

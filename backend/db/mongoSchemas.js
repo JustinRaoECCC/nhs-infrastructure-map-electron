@@ -169,6 +169,41 @@
  */
 
 /**
+ * COLLECTION: projectHistoryKeywords
+ * Source: lookups.xlsx -> Project History Keywords sheet
+ *
+ * Document Structure:
+ * {
+ *   keyword: String,        // Project keyword
+ *   _createdAt: Date,
+ *   _updatedAt: Date
+ * }
+ *
+ * Indexes:
+ * - keyword (unique)
+ */
+
+/**
+ * COLLECTION: fundingSettings
+ * Source: Location workbooks -> Funding Type Override Settings section
+ *
+ * Document Structure:
+ * {
+ *   company: String,        // Company name
+ *   location: String,       // Location name
+ *   assetType: String,      // Asset type (empty string for location-wide settings)
+ *   om: String,             // O&M funding override string (e.g., "50%Token1-50%Token2")
+ *   capital: String,        // Capital funding override string
+ *   decommission: String,   // Decommission funding override string
+ *   _createdAt: Date,
+ *   _updatedAt: Date
+ * }
+ *
+ * Indexes:
+ * - { company: 1, location: 1, assetType: 1 } (compound unique)
+ */
+
+/**
  * DYNAMIC COLLECTIONS: {company}_{location}_{assetType}_stationData
  * Source: data/companies/{company}/{location}.xlsx -> Various asset type sheets
  * Example: NHS_BC_Cableway_stationData
@@ -264,6 +299,8 @@ module.exports = {
     STATUS_COLORS: 'statusColors',
     SETTINGS: 'settings',
     INSPECTION_KEYWORDS: 'inspectionHistoryKeywords',
+    PROJECT_KEYWORDS: 'projectHistoryKeywords',
+    FUNDING_SETTINGS: 'fundingSettings',
     AUTH_USERS: 'authUsers'
   },
 

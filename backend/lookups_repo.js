@@ -197,11 +197,18 @@ async function withRetry(fn, retries = MAX_RETRIES) {
 }
 
 async function _primeAllCaches() {
+  // If another caller is already priming, wait for it to finish
   if (isBusy) {
-    console.log('[_primeAllCaches] Already busy, skipping');
+    console.log('[_primeAllCaches] Already busy, waiting...');
+    while (isBusy) {
+      // Small sleep to yield back to the event loop
+      // so the in-flight priming can complete.
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
     return;
   }
-  
+
   isBusy = true;
   try {
   ensureDir(DATA_DIR);

@@ -89,6 +89,17 @@ class MongoPersistence extends IPersistence {
         { key: { keyword: 1 }, unique: true }
       ]);
 
+      // Project Keywords
+      await mongoClient.createIndexes(COLLECTIONS.PROJECT_KEYWORDS, [
+        { key: { keyword: 1 }, unique: true }
+      ]);
+
+      // Funding Settings
+      await mongoClient.createIndexes(COLLECTIONS.FUNDING_SETTINGS, [
+        { key: { company: 1, location: 1, assetType: 1 }, unique: true },
+        { key: { company: 1, location: 1 } }
+      ]);
+
       console.log('[MongoPersistence] Indexes created successfully');
     } catch (error) {
       console.warn('[MongoPersistence] Some indexes may already exist:', error.message);
@@ -102,10 +113,16 @@ class MongoPersistence extends IPersistence {
   async getActiveCompanies() {
     const collection = mongoClient.getCollection(COLLECTIONS.COMPANIES);
     const companies = await collection.find({ active: true }).toArray();
-    return companies.map(c => c.name);
+
+    // Shape must match Excel snapshot: array of { name, description, email }
+    return companies.map(c => ({
+      name: c.name,
+      description: c.description || '',
+      email: c.email || '',
+    }));
   }
 
-  async upsertCompany(name, active = true) {
+  async upsertCompany(name, active = true, description = '', email = '') {
     try {
       const collection = mongoClient.getCollection(COLLECTIONS.COMPANIES);
       const now = new Date();
@@ -113,7 +130,7 @@ class MongoPersistence extends IPersistence {
       await collection.updateOne(
         { name },
         {
-          $set: { name, active, _updatedAt: now },
+          $set: { name, active, description: description || '', email: email || '', _updatedAt: now },
           $setOnInsert: { _createdAt: now, _source: 'manual' }
         },
         { upsert: true }
@@ -426,6 +443,11 @@ class MongoPersistence extends IPersistence {
       const keywordsDocs = await keywordsCollection.find({}).toArray();
       const inspectionKeywords = keywordsDocs.map(k => k.keyword);
 
+      // Project keywords
+      const projectKeywordsCollection = mongoClient.getCollection(COLLECTIONS.PROJECT_KEYWORDS);
+      const projectKeywordsDocs = await projectKeywordsCollection.find({}).toArray();
+      const projectKeywords = projectKeywordsDocs.map(k => k.keyword);
+
       return {
         mtimeMs: Date.now(), // Use current timestamp for MongoDB
         companies,
@@ -440,7 +462,8 @@ class MongoPersistence extends IPersistence {
         applyStatusColorsOnMap: applyStatusSetting ? applyStatusSetting.value : false,
         repairColors: {},
         applyRepairColorsOnMap: applyRepairSetting ? applyRepairSetting.value : false,
-        inspectionKeywords
+        inspectionKeywords,
+        projectKeywords
       };
     } catch (error) {
       console.error('[MongoPersistence] readLookupsSnapshot failed:', error.message);
@@ -458,7 +481,8 @@ class MongoPersistence extends IPersistence {
         applyStatusColorsOnMap: false,
         repairColors: {},
         applyRepairColorsOnMap: false,
-        inspectionKeywords: []
+        inspectionKeywords: [],
+        projectKeywords: []
       };
     }
   }
@@ -570,6 +594,195 @@ class MongoPersistence extends IPersistence {
   }
 
   // ════════════════════════════════════════════════════════════════════════════
+  // LOOKUPS - PROJECT KEYWORDS
+  // ════════════════════════════════════════════════════════════════════════════
+
+  async getProjectKeywords() {
+    const collection = mongoClient.getCollection(COLLECTIONS.PROJECT_KEYWORDS);
+    const keywords = await collection.find({}).toArray();
+    return keywords.map(k => k.keyword);
+  }
+
+  async setProjectKeywords(keywords) {
+    try {
+      const collection = mongoClient.getCollection(COLLECTIONS.PROJECT_KEYWORDS);
+
+      // Clear existing keywords
+      await collection.deleteMany({});
+
+      // Insert new keywords
+      if (keywords.length > 0) {
+        const docs = keywords.map(keyword => addMetadata({ keyword }, 'manual'));
+        await collection.insertMany(docs);
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('[MongoPersistence] setProjectKeywords failed:', error.message);
+      return { success: false, message: error.message };
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // FUNDING TYPE OVERRIDE SETTINGS
+  // ════════════════════════════════════════════════════════════════════════════
+
+  async getFundingSettings(company, location) {
+    try {
+      const collection = mongoClient.getCollection(COLLECTIONS.FUNDING_SETTINGS);
+
+      // Get location-wide funding settings (where assetType is empty string)
+      const settings = await collection.findOne({ company, location, assetType: '' });
+
+      if (!settings) {
+        // Return empty settings if none found
+        return { om: '', capital: '', decommission: '' };
+      }
+
+      return {
+        om: settings.om || '',
+        capital: settings.capital || '',
+        decommission: settings.decommission || ''
+      };
+    } catch (error) {
+      console.error('[MongoPersistence] getFundingSettings failed:', error.message);
+      return { om: '', capital: '', decommission: '' };
+    }
+  }
+
+  async saveFundingSettings(company, location, settings) {
+    try {
+      const collection = mongoClient.getCollection(COLLECTIONS.FUNDING_SETTINGS);
+      const now = new Date();
+
+      await collection.updateOne(
+        { company, location, assetType: '' },
+        {
+          $set: {
+            company,
+            location,
+            assetType: '',
+            om: settings.om || '',
+            capital: settings.capital || '',
+            decommission: settings.decommission || '',
+            _updatedAt: now
+          },
+          $setOnInsert: { _createdAt: now, _source: 'manual' }
+        },
+        { upsert: true }
+      );
+
+      return { success: true };
+    } catch (error) {
+      console.error('[MongoPersistence] saveFundingSettings failed:', error.message);
+      return { success: false, message: error.message };
+    }
+  }
+
+  async saveFundingSettingsForAssetType(company, location, assetType, settings) {
+    try {
+      const collection = mongoClient.getCollection(COLLECTIONS.FUNDING_SETTINGS);
+      const now = new Date();
+
+      await collection.updateOne(
+        { company, location, assetType },
+        {
+          $set: {
+            company,
+            location,
+            assetType,
+            om: settings.om || '',
+            capital: settings.capital || '',
+            decommission: settings.decommission || '',
+            _updatedAt: now
+          },
+          $setOnInsert: { _createdAt: now, _source: 'manual' }
+        },
+        { upsert: true }
+      );
+
+      return { success: true };
+    } catch (error) {
+      console.error('[MongoPersistence] saveFundingSettingsForAssetType failed:', error.message);
+      return { success: false, message: error.message };
+    }
+  }
+
+  async getAllFundingSettings(company) {
+    try {
+      const collection = mongoClient.getCollection(COLLECTIONS.FUNDING_SETTINGS);
+
+      // Get all funding settings for the company
+      const allSettings = await collection.find({ company }).toArray();
+
+      // Build a Map of location -> funding settings
+      const settingsMap = new Map();
+
+      for (const setting of allSettings) {
+        const { location, assetType, om, capital, decommission } = setting;
+
+        if (!settingsMap.has(location)) {
+          settingsMap.set(location, {});
+        }
+
+        const locSettings = settingsMap.get(location);
+        const key = assetType || '_default'; // Empty string means location-wide default
+
+        locSettings[key] = { om, capital, decommission };
+      }
+
+      return settingsMap;
+    } catch (error) {
+      console.error('[MongoPersistence] getAllFundingSettings failed:', error.message);
+      return new Map();
+    }
+  }
+
+  async normalizeFundingOverrides() {
+    try {
+      // This function ensures consistency across all funding settings
+      // For MongoDB, we can validate that all funding settings have proper structure
+      const collection = mongoClient.getCollection(COLLECTIONS.FUNDING_SETTINGS);
+      const allSettings = await collection.find({}).toArray();
+
+      let updateCount = 0;
+
+      for (const setting of allSettings) {
+        let needsUpdate = false;
+        const updates = {};
+
+        // Ensure all three funding fields exist (even if empty)
+        if (!setting.hasOwnProperty('om')) {
+          updates.om = '';
+          needsUpdate = true;
+        }
+        if (!setting.hasOwnProperty('capital')) {
+          updates.capital = '';
+          needsUpdate = true;
+        }
+        if (!setting.hasOwnProperty('decommission')) {
+          updates.decommission = '';
+          needsUpdate = true;
+        }
+
+        if (needsUpdate) {
+          await collection.updateOne(
+            { _id: setting._id },
+            { $set: { ...updates, _updatedAt: new Date() } }
+          );
+          updateCount++;
+        }
+      }
+
+      console.log(`[MongoPersistence] Normalized ${updateCount} funding settings`);
+      return { success: true, message: `Normalized ${updateCount} funding settings` };
+    } catch (error) {
+      console.error('[MongoPersistence] normalizeFundingOverrides failed:', error.message);
+      return { success: false, message: error.message };
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
   // STATIONS - READ
   // ════════════════════════════════════════════════════════════════════════════
 
@@ -587,6 +800,35 @@ class MongoPersistence extends IPersistence {
       for (const collName of stationCollections) {
         const collection = db.collection(collName);
         const stations = await collection.find({}).toArray();
+
+        // Enrich each station with funding information
+        for (const station of stations) {
+          const company = station.company;
+          const location = station.location_file || station.location;
+          const assetType = station.asset_type || station.assetType;
+          const stationId = station.station_id;
+
+          // Funding is already in the station document, but we ensure consistent fields
+          if (company && location && assetType && stationId) {
+            // The funding fields should already be in the station document from import
+            // But we can ensure they exist by looking them up if missing
+            const hasFunding = station.hasOwnProperty('om') || station.hasOwnProperty('O&M') ||
+                              station.hasOwnProperty('capital') || station.hasOwnProperty('Capital');
+
+            if (!hasFunding) {
+              // Funding not in document, look it up (this shouldn't normally happen)
+              const funding = await this._lookupFundingOverridesFor(company, location, assetType, stationId);
+              station.om = funding.om;
+              station.capital = funding.capital;
+              station.decommission = funding.decommission;
+            } else {
+              // Normalize field names to lowercase
+              station.om = station.om || station['O&M'] || station['Funding Type Override Settings – O&M'] || '';
+              station.capital = station.capital || station['Capital'] || station['Funding Type Override Settings – Capital'] || '';
+              station.decommission = station.decommission || station['Decommission'] || station['Funding Type Override Settings – Decommission'] || '';
+            }
+          }
+        }
 
         // Add to aggregate
         allStations.push(...stations);
@@ -645,13 +887,62 @@ class MongoPersistence extends IPersistence {
       }
 
       const collection = mongoClient.getCollection(collectionName);
-      const data = await collection.find({}).toArray();
+      const rawData = await collection.find({}).toArray();
 
-      return { success: true, data };
+      // Apply header normalization to each document
+      const normalizedData = rawData.map(doc => this._normalizeDocumentHeaders(doc));
+
+      return { success: true, data: normalizedData };
     } catch (error) {
       console.error('[MongoPersistence] readSheetData failed:', error.message);
       return { success: false, data: [] };
     }
+  }
+
+  _normalizeDocumentHeaders(doc) {
+    const normalized = {};
+    const giFields = ['station id', 'stationid', 'id', 'category', 'asset type', 'type',
+                      'site name', 'station name', 'name', 'province', 'location',
+                      'latitude', 'lat', 'longitude', 'lon', 'status'];
+
+    // Helper to normalize a header pair (section, field)
+    const normalizeHeaderPair = (sec, fld) => {
+      const s = String(sec || '').trim();
+      const f = String(fld || '').trim();
+      const fl = f.toLowerCase();
+
+      // Normalize synonyms to canonical names
+      if (fl === 'asset type' || fl === 'type' || fl === 'category') {
+        return { sec: 'General Information', fld: 'Category' };
+      }
+
+      if (['site name', 'station name', 'name'].includes(fl)) {
+        return { sec: 'General Information', fld: 'Station Name' };
+      }
+
+      // Check if it's a GI field
+      if (giFields.includes(fl)) {
+        return { sec: 'General Information', fld: f };
+      }
+
+      // Non-GI field: use provided section or "Extra Information"
+      return { sec: s || 'Extra Information', fld: f };
+    };
+
+    // Process each field in the document
+    for (const [key, value] of Object.entries(doc)) {
+      // Skip metadata fields
+      if (key.startsWith('_')) {
+        normalized[key] = value;
+        continue;
+      }
+
+      // Store field with its original name (no composite keys)
+      // The field name from Excel row 2 already has the context
+      normalized[key] = value;
+    }
+
+    return normalized;
   }
 
   // ════════════════════════════════════════════════════════════════════════════
@@ -669,19 +960,65 @@ class MongoPersistence extends IPersistence {
 
       const collection = mongoClient.getCollection(collectionName);
 
-      // Transform rows to MongoDB documents
+      // Transform rows to MongoDB documents with two-row header support
       const now = new Date();
+
+      // Build composite keys from sections and headers if both are provided
+      const hasCompositeHeaders = sections && sections.length > 0 && headers && headers.length === sections.length;
 
       // Insert or update each document
       for (const row of rows) {
         // Separate metadata from data
         const { _id, _createdAt, _updatedAt, _source, ...cleanRow } = row;
 
+        // Transform row data to use composite keys if two-row headers are provided
+        const transformedRow = {};
+
+        if (hasCompositeHeaders) {
+          // Process with two-row header structure
+          for (let i = 0; i < headers.length; i++) {
+            const section = sections[i] || '';
+            const field = headers[i];
+
+            if (!field) continue;
+
+            // Look for this field's value in the row data
+            // Try various key formats: "Section – Field", field alone, etc.
+            const compositeKey = section ? `${section} – ${field}` : field;
+            let value = cleanRow[compositeKey] || cleanRow[field];
+
+            // Try lowercase variations
+            if (value === undefined) {
+              const rowKeys = Object.keys(cleanRow);
+              for (const key of rowKeys) {
+                if (key.toLowerCase() === compositeKey.toLowerCase() || key.toLowerCase() === field.toLowerCase()) {
+                  value = cleanRow[key];
+                  break;
+                }
+              }
+            }
+
+            // Store with field name only (not composite key)
+            // The field name already contains the context (e.g., "Land Ownership - LB")
+            // We don't need to prepend the section name
+            transformedRow[field] = value !== undefined ? value : '';
+          }
+        } else {
+          // No two-row headers - just use the row as-is
+          Object.assign(transformedRow, cleanRow);
+        }
+
+        // Extract station ID (try various field names)
+        const stationId = transformedRow.station_id || transformedRow['Station ID'] ||
+                         transformedRow['General Information – Station ID'] ||
+                         row.station_id || row['Station ID'];
+
         await collection.updateOne(
-          { station_id: row.station_id || row['Station ID'] },
+          { station_id: stationId },
           {
             $set: {
-              ...cleanRow,
+              ...transformedRow,
+              station_id: stationId, // Ensure station_id is always set
               company,
               location_file: location,
               asset_type: assetType,
@@ -723,14 +1060,21 @@ class MongoPersistence extends IPersistence {
         const existing = await collection.findOne({ station_id: stationId });
 
         if (existing) {
-          // Remove metadata fields from update
-          const { _id, _createdAt, _updatedAt, _source, ...cleanData } = updatedRowData;
+          // Apply schema merging if schema is provided
+          let mergedData;
+          if (schema && schema.sections && schema.fields) {
+            mergedData = await this._mergeStationWithSchema(existing, updatedRowData, schema);
+          } else {
+            // Simple update without schema merging
+            const { _id, _createdAt, _updatedAt, _source, ...cleanData } = updatedRowData;
+            mergedData = cleanData;
+          }
 
           await collection.updateOne(
             { station_id: stationId },
             {
               $set: {
-                ...cleanData,
+                ...mergedData,
                 _updatedAt: new Date()
               }
             }
@@ -748,6 +1092,362 @@ class MongoPersistence extends IPersistence {
     } catch (error) {
       console.error('[MongoPersistence] updateStationInLocationFile failed:', error.message);
       return { success: false, message: error.message };
+    }
+  }
+
+  async _mergeStationWithSchema(existingStation, updatedData, schema) {
+    // Field synonym mappings for General Information fields
+    const fieldSynonyms = {
+      'station id': ['stationid', 'id', 'station id', 'station_id'],
+      'category': ['asset type', 'type', 'category', 'asset_type'],
+      'site name': ['station name', 'name', 'site name'],
+      'station name': ['site name', 'name', 'station name'],
+      'province': ['location', 'state', 'region', 'province'],
+      'latitude': ['lat', 'y', 'latitude'],
+      'longitude': ['long', 'lng', 'lon', 'x', 'longitude'],
+      'status': ['status']
+    };
+
+    // Helper to find value considering field synonyms
+    const findValue = (field, section, source) => {
+      const fieldLower = field.toLowerCase();
+
+      // Try exact match first
+      let value = source[field];
+      if (value !== undefined) return value;
+
+      // Try lowercase keys
+      const allKeys = Object.keys(source);
+      for (const key of allKeys) {
+        if (key.toLowerCase() === fieldLower) {
+          return source[key];
+        }
+      }
+
+      // Try synonyms for GI fields
+      for (const [canonical, synonyms] of Object.entries(fieldSynonyms)) {
+        if (synonyms.includes(fieldLower)) {
+          for (const syn of synonyms) {
+            value = source[syn];
+            if (value !== undefined) return value;
+
+            // Try with different casing
+            for (const key of allKeys) {
+              if (key.toLowerCase() === syn) {
+                return source[key];
+              }
+            }
+          }
+        }
+      }
+
+      return undefined;
+    };
+
+    // Build merged station object
+    const mergedStation = {};
+
+    // General Information fields - preserve from existing or update
+    const giFields = ['station_id', 'station id', 'category', 'asset_type', 'site name',
+                      'station name', 'name', 'province', 'location', 'latitude',
+                      'lat', 'longitude', 'lon', 'status', 'company', 'location_file'];
+
+    // First, copy all GI fields from existing station
+    for (const key of Object.keys(existingStation)) {
+      const keyLower = key.toLowerCase();
+      if (giFields.includes(keyLower) || key.startsWith('_')) {
+        mergedStation[key] = existingStation[key];
+      }
+    }
+
+    // Update GI fields from updatedData if provided
+    for (const key of Object.keys(updatedData)) {
+      const keyLower = key.toLowerCase();
+      if (giFields.includes(keyLower) && !key.startsWith('_')) {
+        mergedStation[key] = updatedData[key];
+      }
+    }
+
+    // Build current values map from existing station (excluding GI and metadata)
+    const currentValues = new Map();
+    for (const [key, value] of Object.entries(existingStation)) {
+      const keyLower = key.toLowerCase();
+      if (!giFields.includes(keyLower) && !key.startsWith('_')) {
+        currentValues.set(keyLower, value);
+        currentValues.set(key, value); // Keep original casing too
+      }
+    }
+
+    // Apply schema fields
+    if (schema.fields && schema.sections) {
+      for (let i = 0; i < schema.fields.length; i++) {
+        const section = schema.sections[i];
+        const field = schema.fields[i];
+
+        // Skip General Information fields - already handled
+        if (section && section.toLowerCase() === 'general information') continue;
+
+        // Use field name only (not composite key)
+        // The field name already contains the context from Excel
+
+        // Get value: priority is updatedData > currentValues > empty string
+        let value = findValue(field, section, updatedData);
+
+        if (value === undefined) {
+          // Look in current values
+          value = findValue(field, section, existingStation);
+        }
+
+        if (value === undefined) {
+          value = ''; // Default to empty string for missing fields
+        }
+
+        // Store with field name only
+        mergedStation[field] = value;
+      }
+    } else {
+      // No schema provided, merge updatedData into existing
+      for (const [key, value] of Object.entries(updatedData)) {
+        if (!key.startsWith('_')) {
+          mergedStation[key] = value;
+        }
+      }
+    }
+
+    // Remove metadata fields
+    const { _id, _createdAt, _updatedAt, _source, ...cleanMerged } = mergedStation;
+
+    return cleanMerged;
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // SCHEMA MANAGEMENT
+  // ════════════════════════════════════════════════════════════════════════════
+
+  async updateAssetTypeSchema(assetType, schema, excludeStationId) {
+    try {
+      // Find all station collections for this asset type across all companies/locations
+      const collections = await mongoClient.listCollections();
+      const normalize = (str) => String(str || '').trim().replace(/[^a-zA-Z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+      const assetNorm = normalize(assetType);
+
+      // Find collections matching this asset type
+      const relevantCollections = collections.filter(name =>
+        name.endsWith(`_${assetNorm}_stationData`)
+      );
+
+      console.log(`[MongoPersistence] Updating schema for ${assetType} across ${relevantCollections.length} collections`);
+
+      const db = mongoClient.getDatabase();
+      let updateCount = 0;
+
+      for (const collName of relevantCollections) {
+        const collection = db.collection(collName);
+        const stations = await collection.find({}).toArray();
+
+        for (const station of stations) {
+          // Skip excluded station if specified
+          if (excludeStationId && station.station_id === excludeStationId) {
+            continue;
+          }
+
+          // Schema synchronization: ensure all fields from schema exist
+          // This is a simplified version - full schema merging is complex
+          let needsUpdate = false;
+          const updates = {};
+
+          if (schema && schema.headers) {
+            for (const header of schema.headers) {
+              if (!station.hasOwnProperty(header) && header !== 'Station ID') {
+                updates[header] = '';
+                needsUpdate = true;
+              }
+            }
+          }
+
+          if (needsUpdate) {
+            await collection.updateOne(
+              { _id: station._id },
+              { $set: { ...updates, _updatedAt: new Date() } }
+            );
+            updateCount++;
+          }
+        }
+      }
+
+      console.log(`[MongoPersistence] Updated ${updateCount} stations with new schema`);
+      return { success: true, message: `Updated ${updateCount} stations` };
+    } catch (error) {
+      console.error('[MongoPersistence] updateAssetTypeSchema failed:', error.message);
+      return { success: false, message: error.message };
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // DELETION OPERATIONS
+  // ════════════════════════════════════════════════════════════════════════════
+
+  async deleteCompanyFromLookups(companyName) {
+    try {
+      console.log(`[MongoPersistence] Deleting company: ${companyName}`);
+
+      // Delete from companies collection
+      const companiesCollection = mongoClient.getCollection(COLLECTIONS.COMPANIES);
+      await companiesCollection.deleteOne({ name: companyName });
+
+      // Delete all locations for this company
+      const locationsCollection = mongoClient.getCollection(COLLECTIONS.LOCATIONS);
+      await locationsCollection.deleteMany({ company: companyName });
+
+      // Delete all asset types for this company
+      const assetTypesCollection = mongoClient.getCollection(COLLECTIONS.ASSET_TYPES);
+      await assetTypesCollection.deleteMany({ company: companyName });
+
+      // Delete funding settings for this company
+      const fundingCollection = mongoClient.getCollection(COLLECTIONS.FUNDING_SETTINGS);
+      await fundingCollection.deleteMany({ company: companyName });
+
+      console.log(`[MongoPersistence] Successfully deleted company: ${companyName}`);
+      return { success: true };
+    } catch (error) {
+      console.error('[MongoPersistence] deleteCompanyFromLookups failed:', error.message);
+      return { success: false, message: error.message };
+    }
+  }
+
+  async deleteLocationFromLookups(companyName, locationName) {
+    try {
+      console.log(`[MongoPersistence] Deleting location: ${companyName}/${locationName}`);
+
+      // Delete from locations collection
+      const locationsCollection = mongoClient.getCollection(COLLECTIONS.LOCATIONS);
+      await locationsCollection.deleteOne({ company: companyName, location: locationName });
+
+      // Delete all asset types for this location
+      const assetTypesCollection = mongoClient.getCollection(COLLECTIONS.ASSET_TYPES);
+      await assetTypesCollection.deleteMany({ company: companyName, location: locationName });
+
+      // Delete funding settings for this location
+      const fundingCollection = mongoClient.getCollection(COLLECTIONS.FUNDING_SETTINGS);
+      await fundingCollection.deleteMany({ company: companyName, location: locationName });
+
+      console.log(`[MongoPersistence] Successfully deleted location: ${companyName}/${locationName}`);
+      return { success: true };
+    } catch (error) {
+      console.error('[MongoPersistence] deleteLocationFromLookups failed:', error.message);
+      return { success: false, message: error.message };
+    }
+  }
+
+  async deleteAssetTypeFromLookups(companyName, locationName, assetTypeName) {
+    try {
+      console.log(`[MongoPersistence] Deleting asset type from lookups: ${companyName}/${locationName}/${assetTypeName}`);
+
+      // Delete from asset types collection
+      const assetTypesCollection = mongoClient.getCollection(COLLECTIONS.ASSET_TYPES);
+      await assetTypesCollection.deleteOne({
+        company: companyName,
+        location: locationName,
+        assetType: assetTypeName
+      });
+
+      // Delete funding settings for this asset type
+      const fundingCollection = mongoClient.getCollection(COLLECTIONS.FUNDING_SETTINGS);
+      await fundingCollection.deleteMany({
+        company: companyName,
+        location: locationName,
+        assetType: assetTypeName
+      });
+
+      console.log(`[MongoPersistence] Successfully deleted asset type from lookups: ${assetTypeName}`);
+      return { success: true };
+    } catch (error) {
+      console.error('[MongoPersistence] deleteAssetTypeFromLookups failed:', error.message);
+      return { success: false, message: error.message };
+    }
+  }
+
+  async deleteAssetTypeFromLocation(companyName, locationName, assetTypeName) {
+    try {
+      console.log(`[MongoPersistence] Deleting asset type data: ${companyName}/${locationName}/${assetTypeName}`);
+
+      // Drop the station data collection for this asset type
+      const collectionName = mongoClient.getStationDataCollectionName(companyName, locationName, assetTypeName);
+      const db = mongoClient.getDatabase();
+
+      // Check if collection exists first
+      const collections = await mongoClient.listCollections();
+      if (collections.includes(collectionName)) {
+        await db.collection(collectionName).drop();
+        console.log(`[MongoPersistence] Dropped collection: ${collectionName}`);
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('[MongoPersistence] deleteAssetTypeFromLocation failed:', error.message);
+      return { success: false, message: error.message };
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // HELPERS - FUNDING
+  // ════════════════════════════════════════════════════════════════════════════
+
+  async _lookupFundingOverridesFor(company, location, assetType, stationId) {
+    const result = { om: '', capital: '', decommission: '' };
+
+    if (!assetType || !stationId) {
+      return result;
+    }
+
+    try {
+      // Find the station data collection for this company/location/assetType
+      const collectionName = mongoClient.getStationDataCollectionName(company, location, assetType);
+      const collection = mongoClient.getCollection(collectionName);
+
+      // Query for the specific station
+      const station = await collection.findOne({ station_id: stationId });
+
+      if (!station) {
+        return result;
+      }
+
+      // Look for funding fields - they may be stored with various key formats:
+      // - "Funding Type Override Settings – O&M"
+      // - "Funding Type Override Settings - O&M"
+      // - "O&M"
+      // - etc.
+      const keys = Object.keys(station);
+
+      for (const key of keys) {
+        const lowerKey = key.toLowerCase();
+
+        // Check for O&M
+        if (lowerKey.includes('o&m') || lowerKey.includes('om')) {
+          if (lowerKey.includes('funding') || key === 'O&M') {
+            result.om = station[key] || '';
+          }
+        }
+
+        // Check for Capital
+        if (lowerKey.includes('capital')) {
+          if (lowerKey.includes('funding') || key === 'Capital') {
+            result.capital = station[key] || '';
+          }
+        }
+
+        // Check for Decommission
+        if (lowerKey.includes('decommission') || lowerKey.includes('decomm')) {
+          if (lowerKey.includes('funding') || key === 'Decommission') {
+            result.decommission = station[key] || '';
+          }
+        }
+      }
+
+      return result;
+    } catch (error) {
+      console.error('[MongoPersistence] _lookupFundingOverridesFor failed:', error.message);
+      return result;
     }
   }
 
@@ -849,12 +1549,42 @@ class MongoPersistence extends IPersistence {
       const { _id, _createdAt, _updatedAt, _source, ...cleanRepair } = repair;
       const now = new Date();
 
+      // Extract station ID and asset type
+      const stationId = cleanRepair.station_id || cleanRepair['Station ID'];
+      const at = cleanRepair.assetType || cleanRepair['Asset Type'] || assetType;
+
+      // Lookup funding overrides from station data
+      const funding = await this._lookupFundingOverridesFor(company, location, at, stationId);
+
+      // Determine which funding column to populate based on Category
+      const category = cleanRepair.category || cleanRepair.Category || 'Capital';
+      const categoryLower = category.toLowerCase();
+
+      let omValue = '';
+      let capitalValue = '';
+      let decommissionValue = '';
+
+      if (/^o&?m$/i.test(categoryLower)) {
+        // O&M category - populate O&M field
+        omValue = funding.om || '';
+      } else if (/^decomm/i.test(categoryLower)) {
+        // Decommission category - populate Decommission field
+        decommissionValue = funding.decommission || '';
+      } else {
+        // Capital category (default) - populate Capital field
+        capitalValue = funding.capital || '';
+      }
+
       const doc = {
         ...cleanRepair,
-        station_id: cleanRepair.station_id || cleanRepair['Station ID'],
-        assetType: cleanRepair.assetType || cleanRepair['Asset Type'] || assetType,
+        station_id: stationId,
+        assetType: at,
+        category: category,
         location,
         company,
+        'O&M': omValue,
+        'Capital': capitalValue,
+        'Decommission': decommissionValue,
         _createdAt: now,
         _updatedAt: now,
         _source: 'manual'
@@ -1024,9 +1754,172 @@ class MongoPersistence extends IPersistence {
     return { success: false, message: 'listSheets not supported for MongoDB - use Excel persistence' };
   }
 
+  async parseRows(b64) {
+    // This operation is Excel-specific and requires Excel parsing
+    // MongoDB doesn't handle Excel file parsing
+    // For MongoDB migration, data should already be in the database
+    console.warn('[MongoPersistence] parseRows is Excel-specific - not supported in MongoDB');
+    return [];
+  }
+
+  async parseRowsFromSheet(b64, sheetName) {
+    // This operation is Excel-specific and requires Excel parsing
+    // MongoDB doesn't handle Excel file parsing
+    // For MongoDB migration, data should already be in the database
+    console.warn('[MongoPersistence] parseRowsFromSheet is Excel-specific - not supported in MongoDB');
+    return [];
+  }
+
+  async getWorkbookFieldCatalog(company, locationName) {
+    try {
+      // Extract all field names from station collections for this location
+      const db = mongoClient.getDatabase();
+      const collections = await mongoClient.listCollections();
+
+      const normalize = (str) => String(str || '').trim().replace(/[^a-zA-Z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+      const prefix = `${normalize(company)}_${normalize(locationName)}_`;
+
+      const stationCollections = collections.filter(name =>
+        name.startsWith(prefix) && name.endsWith('_stationData')
+      );
+
+      const repairsCollectionName = mongoClient.getRepairsCollectionName(company, locationName);
+      const repairsFields = [];
+      const sheetFields = {};
+
+      // Get repairs fields
+      if (collections.includes(repairsCollectionName)) {
+        const repairsCollection = db.collection(repairsCollectionName);
+        const sample = await repairsCollection.findOne({});
+        if (sample) {
+          repairsFields.push(...Object.keys(sample).filter(k => !k.startsWith('_')));
+        }
+      }
+
+      // Get fields from each station collection
+      for (const collName of stationCollections) {
+        const collection = db.collection(collName);
+        const sample = await collection.findOne({});
+        if (sample) {
+          // Extract sheet name from collection name
+          const sheetName = collName.replace(prefix, '').replace('_stationData', '');
+          sheetFields[sheetName] = Object.keys(sample).filter(k => !k.startsWith('_'));
+        }
+      }
+
+      return { repairsFields, sheetFields };
+    } catch (error) {
+      console.error('[MongoPersistence] getWorkbookFieldCatalog failed:', error.message);
+      return { repairsFields: [], sheetFields: {} };
+    }
+  }
+
   async ensureLookupsReady() {
     // For MongoDB, ensure all collections exist (they're created automatically on first insert)
     return { success: true };
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // AUTHENTICATION (Future Use - Currently Disabled)
+  // ════════════════════════════════════════════════════════════════════════════
+
+  async createAuthWorkbook() {
+    try {
+      // For MongoDB, we just ensure the auth collection exists
+      // It will be created automatically on first insert
+      return { success: true };
+    } catch (error) {
+      console.error('[MongoPersistence] createAuthWorkbook failed:', error.message);
+      return { success: false, message: error.message };
+    }
+  }
+
+  async createAuthUser(userData) {
+    try {
+      const collection = mongoClient.getCollection(COLLECTIONS.AUTH_USERS);
+      const now = new Date();
+
+      const doc = {
+        ...userData,
+        _createdAt: now,
+        _updatedAt: now,
+        _source: 'manual'
+      };
+
+      await collection.insertOne(doc);
+      return { success: true };
+    } catch (error) {
+      console.error('[MongoPersistence] createAuthUser failed:', error.message);
+      return { success: false, message: error.message };
+    }
+  }
+
+  async loginAuthUser(name, hashedPassword) {
+    try {
+      const collection = mongoClient.getCollection(COLLECTIONS.AUTH_USERS);
+
+      const user = await collection.findOne({ name, hashedPassword });
+
+      if (user) {
+        // Update last login timestamp
+        await collection.updateOne(
+          { _id: user._id },
+          { $set: { lastLogin: new Date() } }
+        );
+
+        return { success: true, user: { name: user.name, role: user.role } };
+      }
+
+      return { success: false, message: 'Invalid credentials' };
+    } catch (error) {
+      console.error('[MongoPersistence] loginAuthUser failed:', error.message);
+      return { success: false, message: error.message };
+    }
+  }
+
+  async logoutAuthUser(name) {
+    try {
+      const collection = mongoClient.getCollection(COLLECTIONS.AUTH_USERS);
+
+      await collection.updateOne(
+        { name },
+        { $set: { lastLogout: new Date() } }
+      );
+
+      return { success: true };
+    } catch (error) {
+      console.error('[MongoPersistence] logoutAuthUser failed:', error.message);
+      return { success: false, message: error.message };
+    }
+  }
+
+  async getAllAuthUsers() {
+    try {
+      const collection = mongoClient.getCollection(COLLECTIONS.AUTH_USERS);
+      const users = await collection.find({}).toArray();
+
+      // Strip sensitive data
+      return users.map(u => ({
+        name: u.name,
+        role: u.role,
+        lastLogin: u.lastLogin,
+        lastLogout: u.lastLogout
+      }));
+    } catch (error) {
+      console.error('[MongoPersistence] getAllAuthUsers failed:', error.message);
+      return [];
+    }
+  }
+
+  async hasAuthUsers() {
+    try {
+      const collection = mongoClient.getCollection(COLLECTIONS.AUTH_USERS);
+      const count = await collection.countDocuments();
+      return count > 0;
+    } catch (error) {
+      console.error('[MongoPersistence] hasAuthUsers failed:', error.message);
+      return false;
+    }
   }
 }
 

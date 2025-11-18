@@ -331,6 +331,13 @@ class ExcelPersistence extends IPersistence {
     return await excel.saveFixedParameters(params);
   }
 
+  // Normalize blank/legacy funding override fields in station workbooks.
+  // Delegates to the Excel worker implementation.
+  async normalizeFundingOverrides() {
+    const excel = getExcel();
+    return await excel.normalizeFundingOverrides();
+  }
+
   // ════════════════════════════════════════════════════════════════════════════
   // UTILITIES
   // ════════════════════════════════════════════════════════════════════════════

@@ -2,9 +2,9 @@ const { ipcMain } = require('electron');
 const path = require('path');
 require('dotenv').config();
 
-// Use your existing Excel infrastructure
+// Use your existing infrastructure
 const lookups = require('./lookups_repo');
-const excelClient = require('./excel_worker_client');
+const { getPersistence } = require('./persistence');
 
 class ChatbotService {
     constructor() {
@@ -400,12 +400,14 @@ Please analyze this data and answer the question.`
         }
 
         try {
+            const persistence = await getPersistence();
+
             // Read the sheet data for this asset type
             let sheetName = `${assetType} ${location}`;
-            let sheetData = await excelClient.readSheetData(company, location, sheetName);
+            let sheetData = await persistence.readSheetData(company, location, sheetName);
             if (!sheetData.success) {
-              // Fallback: scan workbook for a close match (e.g., “Cableways – BC”)
-              const wb = await excelClient.readLocationWorkbook(company, location);
+              // Fallback: scan workbook for a close match (e.g., "Cableways – BC")
+              const wb = await persistence.readLocationWorkbook(company, location);
               if (wb.success && Array.isArray(wb.sheets)) {
                 const wantedAt = String(assetType).toLowerCase();
                 const wantedLoc = String(location).toLowerCase();
@@ -413,22 +415,23 @@ Please analyze this data and answer the question.`
                   const n = String(s).toLowerCase();
                   return n.includes(wantedAt) && n.includes(wantedLoc) && !/repairs$/i.test(n);
                 });
-                if (candidate) sheetData = await excelClient.readSheetData(company, location, candidate);
+                if (candidate) sheetData = await persistence.readSheetData(company, location, candidate);
               }
             }
-            
+
             if (!sheetData.success) {
                 return { error: sheetData.message };
             }
 
             // Return a summary to avoid overwhelming the AI
+            const dataArray = sheetData.data || sheetData.rows || [];
             return {
                 company: company,
                 location: location,
                 assetType: assetType,
-                recordCount: sheetData.rows?.length || 0,
+                recordCount: dataArray.length,
                 fields: sheetData.fields || [],
-                sampleData: (sheetData.rows || []).slice(0, 5) // First 5 records as sample
+                sampleData: dataArray.slice(0, 5) // First 5 records as sample
             };
         } catch (error) {
             return { error: error.message };
@@ -437,8 +440,9 @@ Please analyze this data and answer the question.`
 
     async getStationsData(company, location, assetType, searchText = '') {
         try {
+            const persistence = await getPersistence();
             // Use the existing readStationsAggregate to get all station data
-            const result = await excelClient.readStationsAggregate();
+            const result = await persistence.readStationsAggregate();
             
             if (!result.success) {
                 return { error: 'Failed to read stations data' };
@@ -496,8 +500,9 @@ Please analyze this data and answer the question.`
 
     async getRepairsData(company, location) {
         try {
+            const persistence = await getPersistence();
             // Get all repairs
-            const allRepairs = await excelClient.getAllRepairs();
+            const allRepairs = await persistence.getAllRepairs();
             
             // Filter by company and/or location if specified
             let filteredRepairs = allRepairs;

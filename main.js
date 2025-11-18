@@ -106,7 +106,7 @@ async function createWindow () {
         excel.warm().catch(err => console.error('[excel warm @show] failed:', err));
         lookups.ensureLookupsReady?.().catch(err => console.error('[ensure lookups @show] failed:', err));
         // Normalize Funding Override blanks at startup (safe, idempotent)
-        excel.normalizeFundingOverrides?.().catch(err => console.error('[normalizeFundingOverrides @show] failed:', err));
+        getPersistence().then(p => p.normalizeFundingOverrides?.()).catch(err => console.error('[normalizeFundingOverrides @show] failed:', err));
       }
 
       // Always trigger cache snapshot to finalize loading
@@ -258,9 +258,9 @@ app.whenReady().then(async () => {
   }
   bootstrapLookupsAtBoot(useExcel);
 
-  // Also normalize funding overrides in the background at boot (only if using Excel)
+  // Also normalize funding overrides in the background at boot
   if (useExcel) {
-    try { getExcelClient().normalizeFundingOverrides?.(); } catch (_) {}
+    try { getPersistence().then(p => p.normalizeFundingOverrides?.()); } catch (_) {}
   }
 
   // Initialize auth and decide which window to show
@@ -370,10 +370,14 @@ ipcMain.handle('lookups:getAssetTypeColor', async (_evt, assetType) => backend.g
 ipcMain.handle('lookups:setAssetTypeColor', async (_evt, assetType, color) => backend.setAssetTypeColor(assetType, color));
 ipcMain.handle('lookups:getAssetTypeColorForLocation', async (_evt, assetType, location) => backend.getAssetTypeColorForLocation(assetType, location));
 ipcMain.handle('lookups:setAssetTypeColorForLocation', async (_evt, assetType, location, color) => backend.setAssetTypeColorForLocation(assetType, location, color));
-ipcMain.handle('excel:listSheets', async (_evt, b64) => backend.listExcelSheets(b64));
-ipcMain.handle('excel:parseRowsFromSheet', async (_evt, b64, sheetName) =>
-  getExcelClient().parseRowsFromSheet(b64, sheetName)
-);
+ipcMain.handle('excel:listSheets', async (_evt, b64) => {
+  const excel = getExcelClient();
+  return excel.listSheets(b64);
+});
+ipcMain.handle('excel:parseRowsFromSheet', async (_evt, b64, sheetName) => {
+  const excel = getExcelClient();
+  return excel.parseRowsFromSheet(b64, sheetName);
+});
 
 ipcMain.handle('photos:getRecent', async (_evt, { siteName, stationId, limit }) =>
   backend.getRecentPhotos(siteName, stationId, limit)
@@ -393,17 +397,20 @@ ipcMain.handle('schema:getExisting', async (_evt, assetType) => {
 });
 
 // Add handler for Excel worker's new functions
-ipcMain.handle('excel:readLocationWorkbook', async (_evt, company, locationName) =>
-  getExcelClient().readLocationWorkbook(company, locationName)
-);
+ipcMain.handle('excel:readLocationWorkbook', async (_evt, company, locationName) => {
+  const persistence = await getPersistence();
+  return persistence.readLocationWorkbook(company, locationName);
+});
 
-ipcMain.handle('excel:readSheetData', async (_evt, company, locationName, sheetName) =>
-  getExcelClient().readSheetData(company, locationName, sheetName)
-);
+ipcMain.handle('excel:readSheetData', async (_evt, company, locationName, sheetName) => {
+  const persistence = await getPersistence();
+  return persistence.readSheetData(company, locationName, sheetName);
+});
 
-ipcMain.handle('excel:updateAssetTypeSchema', async (_evt, assetType, schema, excludeStationId) =>
-  getExcelClient().updateAssetTypeSchema(assetType, schema, excludeStationId)
-);
+ipcMain.handle('excel:updateAssetTypeSchema', async (_evt, assetType, schema, excludeStationId) => {
+  const persistence = await getPersistence();
+  return persistence.updateAssetTypeSchema(assetType, schema, excludeStationId);
+});
 
 // ─── IPC: Inspections ─────────────────────────────────────────────────────
 // Accept optional opts (e.g., { keywords: [...] }) and pass through to backend.
@@ -592,7 +599,8 @@ ipcMain.handle('app:getStationData', async () => backend.getStationData({}));
 
 ipcMain.handle('excel:importRepairsExcel', async (_e, b64) => {
   // first sheet rows
-  return await getExcelClient().parseRows(b64);
+  const persistence = await getPersistence();
+  return await persistence.parseRows(b64);
 });
 
 // Algorithm Parameters / Constants / Custom Weights
@@ -662,26 +670,32 @@ ipcMain.handle('append-repair', async (event, payload) => {
   return await backend.appendRepair(payload);
 });
 
-ipcMain.handle('excel:getFundingSettings', async (_evt, company, location) =>
-  getExcelClient().getFundingSettings(company, location)
-);
-ipcMain.handle('excel:saveFundingSettings', async (_evt, company, location, settings) =>
-  getExcelClient().saveFundingSettings(company, location, settings)
-);
-ipcMain.handle('excel:saveFundingSettingsForAssetType', async (_evt, company, location, assetType, settings) =>
-  getExcelClient().saveFundingSettingsForAssetType(company, location, assetType, settings)
-);
-ipcMain.handle('excel:getAllFundingSettings', async (_evt, company) =>
-  getExcelClient().getAllFundingSettings(company)
-);
-ipcMain.handle('excel:normalizeFundingOverrides', async () =>
-  getExcelClient().normalizeFundingOverrides()
-);
+ipcMain.handle('excel:getFundingSettings', async (_evt, company, location) => {
+  const persistence = await getPersistence();
+  return persistence.getFundingSettings(company, location);
+});
+ipcMain.handle('excel:saveFundingSettings', async (_evt, company, location, settings) => {
+  const persistence = await getPersistence();
+  return persistence.saveFundingSettings(company, location, settings);
+});
+ipcMain.handle('excel:saveFundingSettingsForAssetType', async (_evt, company, location, assetType, settings) => {
+  const persistence = await getPersistence();
+  return persistence.saveFundingSettingsForAssetType(company, location, assetType, settings);
+});
+ipcMain.handle('excel:getAllFundingSettings', async (_evt, company) => {
+  const persistence = await getPersistence();
+  return persistence.getAllFundingSettings(company);
+});
+ipcMain.handle('excel:normalizeFundingOverrides', async () => {
+  const persistence = await getPersistence();
+  return persistence.normalizeFundingOverrides();
+});
 
 // Field catalog for dropdowns (scans data/companies/<company>/<location>.xlsx)
-ipcMain.handle('excel:getWorkbookFieldCatalog', async (_evt, company, locationName) =>
-  getExcelClient().getWorkbookFieldCatalog(company, locationName)
-);
+ipcMain.handle('excel:getWorkbookFieldCatalog', async (_evt, company, locationName) => {
+  const persistence = await getPersistence();
+  return persistence.getWorkbookFieldCatalog(company, locationName);
+});
 
 // Get station photo structure
 ipcMain.handle('getStationPhotoStructure', async (event, siteName, stationId, subPath) => {

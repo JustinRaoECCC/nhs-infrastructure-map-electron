@@ -138,6 +138,15 @@ class MongoDBClient {
   }
 
   /**
+   * Backwards-compatible alias used by some MongoPersistence helpers.
+   * Older code expects getStationDataCollectionName; keep it mapped to
+   * the canonical getStationCollectionName implementation.
+   */
+  getStationDataCollectionName(company, location, assetType) {
+    return this.getStationCollectionName(company, location, assetType);
+  }
+
+  /**
    * Generate collection name for repairs
    * @param {string} company - Company name
    * @param {string} location - Location name

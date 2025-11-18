@@ -15,15 +15,8 @@ const AUTH_FILE = path.join(DATA_DIR, 'Login_Information.xlsx');
 let currentUser = null;
 let sessionToken = null;
 
-// Lazy-load excel_worker_client to avoid starting the worker thread on import
-let excelClient = null;
-function getExcelClient() {
-  if (!excelClient) {
-    console.log('[Auth] Lazy-loading excel_worker_client');
-    excelClient = require('./excel_worker_client');
-  }
-  return excelClient;
-}
+// Use persistence abstraction layer (supports both Excel and MongoDB)
+const { getPersistence } = require('./persistence');
 
 // Default dev user used when auth is disabled
 const DEV_USER = {
@@ -53,8 +46,9 @@ async function initAuthWorkbook() {
 
     console.log('[auth] Creating Login_Information.xlsx...');
 
-    // Create the file through the worker
-    const result = await getExcelClient().createAuthWorkbook();
+    // Create the file through persistence layer
+    const persistence = await getPersistence();
+    const result = await persistence.createAuthWorkbook();
     console.log('[auth] Auth workbook created:', result);
     
     return { exists: false };
@@ -93,7 +87,8 @@ async function createUser(userData) {
 
     const hashedPassword = hashPassword(password);
 
-    const result = await getExcelClient().createAuthUser({
+    const persistence = await getPersistence();
+    const result = await persistence.createAuthUser({
       name,
       email: email.toLowerCase(),
       password: hashedPassword,
@@ -136,8 +131,9 @@ async function loginUser(name, password) {
 
     const hashedPassword = hashPassword(password);
 
-    const result = await getExcelClient().loginAuthUser(name, hashedPassword);
-    
+    const persistence = await getPersistence();
+    const result = await persistence.loginAuthUser(name, hashedPassword);
+
     if (result.success) {
       currentUser = result.user;
       sessionToken = crypto.randomBytes(32).toString('hex');
@@ -168,8 +164,9 @@ async function logoutUser() {
       return { success: true, disabled: true };
     }
 
-    const result = await getExcelClient().logoutAuthUser(currentUser.name);
-    
+    const persistence = await getPersistence();
+    const result = await persistence.logoutAuthUser(currentUser.name);
+
     currentUser = null;
     sessionToken = null;
 
@@ -191,7 +188,8 @@ async function getAllUsers() {
       return [];
     }
 
-    const result = await getExcelClient().getAllAuthUsers();
+    const persistence = await getPersistence();
+    const result = await persistence.getAllAuthUsers();
     return result.users || [];
   } catch (error) {
     console.error('[auth] Error getting users:', error);
@@ -206,7 +204,8 @@ async function hasUsers() {
 
     if (!fs.existsSync(AUTH_FILE)) return false;
 
-    const result = await getExcelClient().hasAuthUsers();
+    const persistence = await getPersistence();
+    const result = await persistence.hasAuthUsers();
     return result.hasUsers || false;
   } catch (error) {
     console.error('[auth] Error checking users:', error);
