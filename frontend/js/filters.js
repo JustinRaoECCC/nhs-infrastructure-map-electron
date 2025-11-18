@@ -325,8 +325,19 @@
     });
   }
 
-  async function build() {
+  async function build(retryCount = 0) {
     const tree = await fetchTree();
+
+    // Check if we actually got companies. 
+    // If not, and we haven't retried too many times (limit 10 tries / 5 seconds), try again.
+    const hasData = tree && tree.companies && tree.companies.length > 0;
+
+    if (!hasData && retryCount < 10) {
+      console.log(`[filters] Data not ready yet. Retrying (${retryCount + 1}/10)...`);
+      setTimeout(() => build(retryCount + 1), 500); // Wait 500ms and try again
+      return;
+    }
+
     render(tree);
   }
 

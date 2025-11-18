@@ -1,4 +1,3 @@
-// backend/db/mongoSchemas.js
 // Documentation of MongoDB collection structures
 // These schemas mirror the Excel sheet structures
 
@@ -8,14 +7,16 @@
  *
  * Document Structure:
  * {
- *   name: String,           // Company name (e.g., "NHS")
- *   active: Boolean,        // Whether the company is active
- *   _createdAt: Date,       // Creation timestamp
- *   _updatedAt: Date        // Last update timestamp
+ * company: String,       // Company name (e.g., "NHS")
+ * active: Boolean,       // Whether the company is active
+ * description: String,   // Description
+ * email: String,         // Email
+ * _createdAt: Date,      // Creation timestamp
+ * _updatedAt: Date       // Last update timestamp
  * }
  *
  * Indexes:
- * - name (unique)
+ * - company (unique)
  */
 
 /**
@@ -24,11 +25,11 @@
  *
  * Document Structure:
  * {
- *   location: String,       // Location name (e.g., "BC", "AB")
- *   company: String,        // Company name reference
- *   link: String,           // Photos base path/link (optional)
- *   _createdAt: Date,
- *   _updatedAt: Date
+ * location: String,      // Location name (e.g., "BC", "AB")
+ * company: String,       // Company name reference
+ * link: String,          // Photos base path/link (optional)
+ * _createdAt: Date,
+ * _updatedAt: Date
  * }
  *
  * Indexes:
@@ -42,18 +43,18 @@
  *
  * Document Structure:
  * {
- *   assetType: String,      // Asset type name (e.g., "Cableway")
- *   location: String,       // Location name
- *   company: String,        // Company name
- *   color: String,          // Hex color code (e.g., "#FF5733")
- *   link: String,           // Photos base path/link (optional)
- *   _createdAt: Date,
- *   _updatedAt: Date
+ * asset_type: String,    // Asset type name (e.g., "Cableway")
+ * location: String,      // Location name
+ * company: String,       // Company name
+ * color: String,         // Hex color code (e.g., "#FF5733")
+ * link: String,          // Photos base path/link (optional)
+ * _createdAt: Date,
+ * _updatedAt: Date
  * }
  *
  * Indexes:
- * - { assetType: 1, location: 1, company: 1 } (compound unique)
- * - assetType
+ * - { asset_type: 1, location: 1, company: 1 } (compound unique)
+ * - asset_type
  * - { company: 1, location: 1 }
  */
 
@@ -63,11 +64,13 @@
  *
  * Document Structure:
  * {
- *   weight: Number,         // Weight value
- *   active: Boolean,        // Whether the weight is active
- *   _createdAt: Date,
- *   _updatedAt: Date
+ * weight: Number,        // Weight value
+ * active: Boolean,       // Whether the weight is active
+ * _createdAt: Date,
+ * _updatedAt: Date
  * }
+ * * Indexes:
+ * - None (Index on weight could be added if queried frequently)
  */
 
 /**
@@ -76,15 +79,14 @@
  *
  * Document Structure:
  * {
- *   parameter: String,      // Parameter name
- *   value: Mixed,           // Parameter value (Number or String)
- *   description: String,    // Description (optional)
- *   _createdAt: Date,
- *   _updatedAt: Date
+ * Field: String,         // Parameter name (e.g., "Max_Budget")
+ * Value: Mixed,          // Parameter value (Number or String)
+ * _createdAt: Date,
+ * _updatedAt: Date
  * }
  *
  * Indexes:
- * - parameter (unique)
+ * - Field (unique)
  */
 
 /**
@@ -93,15 +95,19 @@
  *
  * Document Structure:
  * {
- *   parameter: String,      // Parameter name
- *   value: Mixed,           // Parameter value
- *   description: String,    // Description (optional)
- *   _createdAt: Date,
- *   _updatedAt: Date
+ * Applies To: String,    // Where the parameter applies (e.g., "General")
+ * Parameter: String,     // Parameter name (e.g., "Age")
+ * Condition: String,     // Condition logic
+ * MaxWeight: Number,     // Maximum weight allowed
+ * Option: String,        // Option value
+ * Weight: Number,        // Current weight
+ * Selected: Boolean,     // If parameter is selected
+ * _createdAt: Date,
+ * _updatedAt: Date
  * }
  *
  * Indexes:
- * - parameter (unique)
+ * - Parameter (unique)
  */
 
 /**
@@ -110,15 +116,15 @@
  *
  * Document Structure:
  * {
- *   parameter: String,      // Parameter name
- *   value: Mixed,           // Parameter value
- *   description: String,    // Description (optional)
- *   _createdAt: Date,
- *   _updatedAt: Date
+ * Name: String,          // Parameter name
+ * Type: String,          // Data type
+ * Configuration: Mixed,  // JSON configuration object
+ * _createdAt: Date,
+ * _updatedAt: Date
  * }
  *
  * Indexes:
- * - parameter (unique)
+ * - Name (unique)
  */
 
 /**
@@ -127,14 +133,14 @@
  *
  * Document Structure:
  * {
- *   status: String,         // Status key (e.g., "inactive", "mothballed")
- *   color: String,          // Hex color code
- *   _createdAt: Date,
- *   _updatedAt: Date
+ * Status: String,        // Status key (e.g., "inactive", "mothballed")
+ * Color: String,         // Hex color code
+ * _createdAt: Date,
+ * _updatedAt: Date
  * }
  *
  * Indexes:
- * - status (unique)
+ * - Status (unique)
  */
 
 /**
@@ -143,14 +149,14 @@
  *
  * Document Structure:
  * {
- *   key: String,            // Setting key (e.g., "applyStatusColorsOnMap")
- *   value: Mixed,           // Setting value (Boolean, String, Number, etc.)
- *   _createdAt: Date,
- *   _updatedAt: Date
+ * Key: String,           // Setting key (e.g., "applyStatusColorsOnMap")
+ * Value: Mixed,          // Setting value (Boolean, String, Number, etc.)
+ * _createdAt: Date,
+ * _updatedAt: Date
  * }
  *
  * Indexes:
- * - key (unique)
+ * - Key (unique)
  */
 
 /**
@@ -159,13 +165,28 @@
  *
  * Document Structure:
  * {
- *   keyword: String,        // Inspection keyword
- *   _createdAt: Date,
- *   _updatedAt: Date
+ * Keyword: String,       // Inspection keyword
+ * _createdAt: Date,
+ * _updatedAt: Date
  * }
  *
  * Indexes:
- * - keyword (unique)
+ * - Keyword (unique)
+ */
+
+/**
+ * COLLECTION: projectHistoryKeywords
+ * Source: lookups.xlsx -> Project History Keywords sheet
+ *
+ * Document Structure:
+ * {
+ * Keyword: String,       // Project keyword
+ * _createdAt: Date,
+ * _updatedAt: Date
+ * }
+ *
+ * Indexes:
+ * - Keyword (unique)
  */
 
 /**
@@ -175,24 +196,24 @@
  *
  * Document Structure:
  * {
- *   station_id: String,     // Station ID (primary identifier)
- *   asset_type: String,     // Asset type/Category
- *   name: String,           // Site name
- *   province: String,       // Province/Location
- *   lat: Number,            // Latitude
- *   lon: Number,            // Longitude
- *   status: String,         // Status (e.g., "Active", "Inactive")
- *   company: String,        // Company name
- *   location_file: String,  // Location file name
+ * station_id: String,    // Station ID (primary identifier)
+ * asset_type: String,    // Asset type/Category
+ * name: String,          // Site name
+ * province: String,      // Province/Location
+ * lat: Number,           // Latitude
+ * lon: Number,           // Longitude
+ * status: String,        // Status (e.g., "Active", "Inactive")
+ * company: String,       // Company name
+ * location_file: String, // Location file name
  *
- *   // Additional fields from Excel (two-row headers preserved as "Section – Field"):
- *   "General Information – Field1": Mixed,
- *   "Custom Section – Field2": Mixed,
- *   // ... (dynamic fields based on asset type schema)
+ * // Additional fields from Excel (two-row headers preserved as "Section – Field"):
+ * "General Information – Field1": Mixed,
+ * "Custom Section – Field2": Mixed,
+ * // ... (dynamic fields based on asset type schema)
  *
- *   _createdAt: Date,
- *   _updatedAt: Date,
- *   _source: String         // "excel" | "mongodb" | "manual"
+ * _createdAt: Date,
+ * _updatedAt: Date,
+ * _source: String        // "excel" | "mongodb" | "manual"
  * }
  *
  * Indexes:
@@ -208,24 +229,24 @@
  *
  * Document Structure:
  * {
- *   date: Date,             // Repair date
- *   station_id: String,     // Station ID
- *   assetType: String,      // Asset type
- *   name: String,           // Repair name
- *   severity: String,       // Severity level
- *   priority: String,       // Priority level
- *   cost: Number,           // Cost amount
- *   category: String,       // "Capital", "O&M", or "Decommission"
- *   type: String,           // Type (e.g., "Repair", "Monitoring")
- *   days: Number,           // Number of days (optional)
+ * date: Date,            // Repair date
+ * station_id: String,    // Station ID
+ * assetType: String,     // Asset type
+ * name: String,          // Repair name
+ * severity: String,      // Severity level
+ * priority: String,      // Priority level
+ * cost: Number,          // Cost amount
+ * category: String,      // "Capital", "O&M", or "Decommission"
+ * type: String,          // Type (e.g., "Repair", "Monitoring")
+ * days: Number,          // Number of days (optional)
  *
- *   // Funding split fields (populated based on category):
- *   "O&M": String,          // Funding split string (e.g., "50%Token1-50%Token2")
- *   "Capital": String,      // Funding split string
- *   "Decommission": String, // Funding split string
+ * // Funding split fields (populated based on category):
+ * "O&M": String,         // Funding split string (e.g., "50%Token1-50%Token2")
+ * "Capital": String,     // Funding split string
+ * "Decommission": String, // Funding split string
  *
- *   _createdAt: Date,
- *   _updatedAt: Date
+ * _createdAt: Date,
+ * _updatedAt: Date
  * }
  *
  * Indexes:
@@ -240,11 +261,11 @@
  *
  * Document Structure:
  * {
- *   username: String,
- *   passwordHash: String,
- *   role: String,
- *   _createdAt: Date,
- *   _updatedAt: Date
+ * username: String,
+ * passwordHash: String,
+ * role: String,
+ * _createdAt: Date,
+ * _updatedAt: Date
  * }
  *
  * Indexes:
@@ -264,6 +285,7 @@ module.exports = {
     STATUS_COLORS: 'statusColors',
     SETTINGS: 'settings',
     INSPECTION_KEYWORDS: 'inspectionHistoryKeywords',
+    PROJECT_KEYWORDS: 'projectHistoryKeywords', // <-- ADDED
     AUTH_USERS: 'authUsers'
   },
 

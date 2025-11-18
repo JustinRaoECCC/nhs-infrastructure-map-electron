@@ -1,4 +1,5 @@
 // backend/persistence/PersistenceFactory.js
+
 // Factory to create and manage persistence layer instances
 
 const mongoClient = require('../db/mongoClient');
@@ -84,6 +85,12 @@ class DualWritePersistence {
   async getInspectionKeywords() {
     return await this.readPersistence.getInspectionKeywords();
   }
+
+  // ADDED: Project Keywords read method
+  async getProjectKeywords() {
+    return await this.readPersistence.getProjectKeywords();
+  }
+  // END ADDED
 
   async readStationsAggregate() {
     return await this.readPersistence.readStationsAggregate();
@@ -195,6 +202,12 @@ class DualWritePersistence {
     return await this._writeToAll('setInspectionKeywords', keywords);
   }
 
+  // ADDED: Project Keywords write method
+  async setProjectKeywords(keywords) {
+    return await this._writeToAll('setProjectKeywords', keywords);
+  }
+  // END ADDED
+
   async writeLocationRows(company, location, sheetName, sections, headers, rows) {
     return await this._writeToAll('writeLocationRows', company, location, sheetName, sections, headers, rows);
   }
@@ -295,11 +308,18 @@ class PersistenceFactory {
     }
 
     if (writePersistences.length === 0) {
-      throw new Error('No valid write persistence layers configured');
+      // If we failed to connect to MongoDB, but Excel was a write target, we should still allow Excel mode.
+      // However, if the config requires at least one writer and we failed all attempts, throw.
+      if (writeTargets.length > 0) {
+         // Only throw if NO valid write targets could be created.
+         if (writeTargets.includes('mongodb') && !writeTargets.includes('excel') && readSource !== 'mongodb') {
+            throw new Error('No valid write persistence layers configured');
+         }
+      }
     }
 
     // If single read/write to the same source, return single instance
-    if (writeTargets.length === 1 && readSource === writeTargets[0]) {
+    if (writeTargets.length === 1 && readSource === writeTargets[0] && writePersistences.length === 1) {
       await readPersistence.initialize();
       return readPersistence;
     }

@@ -1,4 +1,3 @@
-// backend/persistence/ExcelPersistence.js
 // Excel-based persistence implementation
 // This wraps the existing excel_worker_client functionality
 
@@ -211,7 +210,7 @@ class ExcelPersistence extends IPersistence {
   }
 
   // ════════════════════════════════════════════════════════════════════════════
-  // LOOKUPS - PROJECT KEYWORDS
+  // LOOKUPS - PROJECT KEYWORDS (NEW IMPLEMENTATION)
   // ════════════════════════════════════════════════════════════════════════════
 
   async getProjectKeywords() {

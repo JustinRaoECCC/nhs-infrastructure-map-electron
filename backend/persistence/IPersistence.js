@@ -1,4 +1,5 @@
 // backend/persistence/IPersistence.js
+
 // Interface documentation for persistence layer
 // All persistence implementations (Excel, MongoDB, etc.) must implement these methods
 
@@ -44,11 +45,13 @@ class IPersistence {
 
   /**
    * Upsert a company
-   * @param {string} name - Company name
+   * @param {string} name - Company name (maps to 'company' field in MongoDB)
    * @param {boolean} active - Active status
+   * @param {string} description - Description
+   * @param {string} email - Email
    * @returns {Promise<Object>} - { success: boolean, message?: string }
    */
-  async upsertCompany(name, active = true) {
+  async upsertCompany(name, active = true, description = '', email = '') {
     throw new Error('Method "upsertCompany()" must be implemented');
   }
 
@@ -102,7 +105,7 @@ class IPersistence {
 
   /**
    * Upsert an asset type
-   * @param {string} assetType - Asset type name
+   * @param {string} assetType - Asset type name (maps to 'asset_type' field)
    * @param {string} company - Company name
    * @param {string} location - Location name
    * @returns {Promise<Object>} - { success: boolean, message?: string }
@@ -201,7 +204,7 @@ class IPersistence {
   }
 
   /**
-   * Set status color
+   * Set status color (maps to 'Status' and 'Color' fields)
    * @param {string} statusKey - Status key (e.g., "inactive")
    * @param {string} color - Hex color code
    * @returns {Promise<Object>} - { success: boolean, message?: string }
@@ -211,7 +214,7 @@ class IPersistence {
   }
 
   /**
-   * Set a boolean setting
+   * Set a boolean setting (maps to 'Key' and 'Value' fields)
    * @param {string} key - Setting key
    * @param {boolean} value - Boolean value
    * @returns {Promise<Object>} - { success: boolean, message?: string }
@@ -248,6 +251,27 @@ class IPersistence {
    */
   async setInspectionKeywords(keywords) {
     throw new Error('Method "setInspectionKeywords()" must be implemented');
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // LOOKUPS - PROJECT KEYWORDS (NEW)
+  // ════════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Get project keywords
+   * @returns {Promise<string[]>} - Array of keywords
+   */
+  async getProjectKeywords() {
+    throw new Error('Method "getProjectKeywords()" must be implemented');
+  }
+
+  /**
+   * Set project keywords
+   * @param {string[]} keywords - Array of keywords
+   * @returns {Promise<Object>} - { success: boolean, message?: string }
+   */
+  async setProjectKeywords(keywords) {
+    throw new Error('Method "setProjectKeywords()" must be implemented');
   }
 
   // ════════════════════════════════════════════════════════════════════════════
