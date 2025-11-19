@@ -2125,9 +2125,14 @@ function _mergeSplitMaps(...maps) {
       opt1Results.appendChild(summary);
 
       // Virtual container
+
+      const scrollWrapper = document.createElement('div');
+      scrollWrapper.className = 'table-scroll';
+      opt1Results.appendChild(scrollWrapper);
+
       const container = document.createElement('div');
       container.className = 'virtual-scroll-container';
-      opt1Results.appendChild(container);
+      scrollWrapper.appendChild(container);
 
       // Sticky header table (separate table to keep header visible)
       const headerTable = document.createElement('table');
@@ -2496,7 +2501,10 @@ function _mergeSplitMaps(...maps) {
                 
                 // Add stations table
                 const keys = collectYearSplitKeys([trip]);
-                renderStationsTable(tripDiv, trip, keys);
+                const stationScroll = document.createElement('div');
+                stationScroll.className = 'table-scroll';
+                tripDiv.appendChild(stationScroll);
+                renderStationsTable(stationScroll, trip, keys);
                 
                 detailsDiv.appendChild(tripDiv);
               });
@@ -2749,8 +2757,12 @@ function _mergeSplitMaps(...maps) {
               // Render a NORMAL (non-virtual) stations table so its rows can expand.
               const wrap = document.createElement('div');
               wrap.className = 'nested-wrap';
+              const stationScroll = document.createElement('div');
+              stationScroll.className = 'table-scroll';
+              wrap.appendChild(stationScroll);
+
               const keys = _collectSplitKeysForTrip(trip);
-              renderStationsTable(wrap, trip, keys);
+              renderStationsTable(stationScroll, trip, keys);
               detailsDiv.appendChild(wrap);
               rendered = true;
             }
@@ -3052,6 +3064,8 @@ function _mergeSplitMaps(...maps) {
           } else {
             if (!rendered) {
               // Render repair list
+              const tableScroll = document.createElement('div');
+              tableScroll.className = 'table-scroll';
               const table = document.createElement('table');
               table.className = 'opt-table';
               table.innerHTML = `
@@ -3088,7 +3102,8 @@ function _mergeSplitMaps(...maps) {
                 tbody.appendChild(tr);
               });
               
-              detailsDiv.appendChild(table);
+              tableScroll.appendChild(table);
+              detailsDiv.appendChild(tableScroll);
               rendered = true;
             }
             detailsDiv.style.display = '';
@@ -3337,6 +3352,9 @@ function _mergeSplitMaps(...maps) {
     function renderStationsTable(container, trip, yearSplitKeys/*, useVirtual = false*/) {
       {
         // Regular table for smaller datasets, but still with lazy repair expansion
+        const tableScroll = document.createElement('div');
+        tableScroll.className = 'table-scroll';
+
         const stTable = document.createElement('table');
         stTable.className = 'opt-table nested-table';
         stTable.innerHTML = `
@@ -3406,6 +3424,8 @@ function _mergeSplitMaps(...maps) {
             } else {
               // Only render repairs table on first open
               if (repairsWrap.children.length === 0 && st.repairs.length <= 50) {
+                const repairScroll = document.createElement('div');
+                repairScroll.className = 'table-scroll';
                 const rTable = document.createElement('table');
                 rTable.className = 'opt-table nested-table deepest';
                 rTable.innerHTML = `
@@ -3437,7 +3457,8 @@ function _mergeSplitMaps(...maps) {
                   rBody.appendChild(rr);
                 });
               
-                repairsWrap.appendChild(rTable);
+                repairScroll.appendChild(rTable);
+                repairsWrap.appendChild(repairScroll);
               } else if (st.repairs.length > 50) {
                 repairsWrap.innerHTML = `<div style="padding: 1em; color: #666;">Too many repairs (${st.repairs.length}) to display. Consider filtering.</div>`;
               }
@@ -3458,7 +3479,8 @@ function _mergeSplitMaps(...maps) {
           stBody.appendChild(loadMore);
         }
 
-        container.appendChild(stTable);
+        tableScroll.appendChild(stTable);
+        container.appendChild(tableScroll);
       }
     }
 
@@ -3820,10 +3842,13 @@ function _mergeSplitMaps(...maps) {
             toggleBtn.textContent = '▸';
           } else {
             if (!rendered) {
+              const tripsScroll = document.createElement('div');
+              tripsScroll.className = 'table-scroll';
               const tripDetailsPanel = document.createElement('div');
               tripDetailsPanel.className = 'trip-details-panel';
               const vt = createVirtualTripsTable(trips, yearSplitKeys, tripDetailsPanel);
-              detailsDiv.appendChild(vt);
+              tripsScroll.appendChild(vt);
+              detailsDiv.appendChild(tripsScroll);
               detailsDiv.appendChild(tripDetailsPanel);
               rendered = true;
             }
@@ -3879,6 +3904,23 @@ function _mergeSplitMaps(...maps) {
     /* ensure any accidentally numeric cells align like text */
     td.num { text-align: left; white-space: nowrap; }
     .split-source-row input { min-width: 10rem; }
+
+    /* Horizontal scrolling for all tables */
+    .table-scroll {
+      overflow-x: auto;
+      overflow-y: visible;
+      width: 100%;
+      -webkit-overflow-scrolling: touch;
+    }
+    .table-scroll table {
+      min-width: 100%;
+      width: max-content;
+    }
+    .virtual-scroll-container {
+      overflow-x: auto !important;
+      -webkit-overflow-scrolling: touch;
+    }
+
   `;
   document.head.appendChild(style);
 
