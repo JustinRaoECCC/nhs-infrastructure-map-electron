@@ -100,13 +100,29 @@ function _getRepairSplitMap(repair, station_data) {
 
 // Apply split multiplier when configured on a monetary fixed parameter.
 function _applyMonetarySplitIfAny(amount, param, repair, station_data) {
-  if (!param || !param.split_condition || !param.split_condition.enabled) return amount;
-  const srcRaw = param.split_condition.source;
-  if (!srcRaw) return amount;
+
   const splitMap = _getRepairSplitMap(repair, station_data) || null;
   if (!splitMap) return amount;
-  const mul = splitMap[_canon(srcRaw)];
-  return amount * (Number.isFinite(mul) ? mul : 0); // if missing source => 0 contribution
+
+  // CASE 1: Multi-select splits (Sum them up)
+  if (Array.isArray(param.split_conditions) && param.split_conditions.length > 0) {
+    let totalMul = 0;
+    for (const src of param.split_conditions) {
+      const m = splitMap[_canon(src)];
+      if (Number.isFinite(m)) totalMul += m;
+    }
+    return amount * totalMul;
+  }
+
+  // CASE 2: Legacy single split
+  if (param && param.split_condition && param.split_condition.enabled) {
+    const srcRaw = param.split_condition.source;
+    if (!srcRaw) return amount;
+    const mul = splitMap[_canon(srcRaw)];
+    return amount * (Number.isFinite(mul) ? mul : 0);
+  }
+
+  return amount;
 }
 
 // Build a unique key for monetary constraints; distinguishes split sources.
@@ -737,26 +753,6 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
     p && (p.type === 'geographical' || p.type === 'temporal' || p.type === 'monetary' || p.type === 'design')
   );
 
-  // ── Expand monetary params with multi-split into separate params ─────────
-  // If a param has `split_conditions: [s1, s2, ...]`, treat them as N identical
-  // params that only differ by split_condition.source.
-  if (Array.isArray(fixed_parameters) && fixed_parameters.length) {
-    const expanded = [];
-    for (const p of fixed_parameters) {
-      if (p && p.type === 'monetary' && Array.isArray(p.split_conditions) && p.split_conditions.length) {
-        for (const src of p.split_conditions) {
-          const clone = { ...p, split_condition: { enabled: true, source: src } };
-          // Ensure legacy single-split field doesn't linger as array downstream
-          delete clone.split_conditions;
-          expanded.push(clone);
-        }
-      } else {
-        expanded.push(p);
-      }
-    }
-    fixed_parameters = expanded;
-  }
-
   if (!trips.length) {
     return {
       success: false,
@@ -900,13 +896,24 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
   for (const p of (fixed_parameters || [])) {
     if (!p) continue;
     if (p.type === 'monetary') {
-      const splitSrc = (p.split_condition && p.split_condition.enabled) ? _canon(p.split_condition.source) : null;
+      // Determine split source key: Single or Combined
+      let splitSrc = null;
+      let splitLabel = p.field_name;
+
+      if (Array.isArray(p.split_conditions) && p.split_conditions.length) {
+         // Combine sources into one key, e.g. "f+p" to ensure uniqueness
+         splitSrc = p.split_conditions.map(s => _canon(s)).sort().join('+');
+         splitLabel = p.split_conditions.join(' + ');
+      } else if (p.split_condition && p.split_condition.enabled) {
+         splitSrc = _canon(p.split_condition.source);
+         splitLabel = p.split_condition.source;
+      }
       constraint_columns.push({
         type: 'monetary',
         key: _monKey(p.field_name, splitSrc),                        // unique key
         field_name: p.field_name,
         // label shows source token if split to make per-source columns clear
-        label: splitSrc ? p.split_condition.source : p.field_name,
+        label: splitLabel,
         unit: p.unit || '$',
         cumulative: !!p.cumulative,
         split_source: splitSrc
@@ -929,15 +936,22 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
     
     for (const param of fixed_parameters) {
       if (param.type === 'monetary' && param.years && param.years[year]) {
-        const splitSrc = (param.split_condition && param.split_condition.enabled)
-          ? _canon(param.split_condition.source)
-          : null;
+        let splitSrc = null;
+        let splitLabel = param.field_name;
+
+        if (Array.isArray(param.split_conditions) && param.split_conditions.length) {
+           splitSrc = param.split_conditions.map(s => _canon(s)).sort().join('+');
+           splitLabel = param.split_conditions.join(' + ');
+        } else if (param.split_condition && param.split_condition.enabled) {
+           splitSrc = _canon(param.split_condition.source);
+           splitLabel = String(param.split_condition.source);
+        }
         const key = _monKey(param.field_name, splitSrc);             // unique key
         yearlyBudgets[year][key] = {
           total: _tryFloat(param.years[year].value) || 0,
           used: 0,
           cumulative: !!param.cumulative,
-          label: splitSrc ? String(param.split_condition.source) : param.field_name,
+          label: splitLabel,
           split_source: splitSrc,
           type: 'monetary'
         };
@@ -1023,9 +1037,12 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
             
             if (param.type === 'monetary') {
               const fieldName = param.field_name; // may be sheet-qualified
-              const splitSrc  = (param.split_condition && param.split_condition.enabled)
-                ? _canon(param.split_condition.source)
-                : null;
+            let splitSrc = null;
+            if (Array.isArray(param.split_conditions) && param.split_conditions.length) {
+              splitSrc = param.split_conditions.map(s => _canon(s)).sort().join('+');
+            } else if (param.split_condition && param.split_condition.enabled) {
+              splitSrc = _canon(param.split_condition.source);
+            }
               const key = _monKey(param.field_name, splitSrc);        // unique key
               const value = findFieldAnywhere(originalRepair, station, fieldName);
               let amount = _tryFloat(value) || 0;
@@ -1200,13 +1217,20 @@ async function assignTripsToYears({ trips = [], fixed_parameters = [], top_perce
       if (c.type === 'monetary') {
         const raw = findFieldAnywhere(r, station, c.field_name); // sheet-qualified ok
         const base = _tryFloat(raw) || 0;
-        let mul = 1;
+
+        // Calculate multiplier based on constraint split source (single or combined)
+        let totalMul = 1;
         if (c.split_source) {
+          totalMul = 0;
           const smap = _getRepairSplitMap(r, stationDataMap) || {};
-          const mm = smap[c.split_source];
-          mul = Number.isFinite(mm) ? mm : 0;
+          // c.split_source might be "f+p" or just "f"
+          const parts = c.split_source.split('+');
+          for (const p of parts) {
+            const m = smap[p];
+            if (Number.isFinite(m)) totalMul += m;
+          }
         }
-        const amt = base * mul;
+        const amt = base * totalMul;
         mUse[c.key] = amt;
       } else if (c.type === 'temporal') {
         const raw = findFieldAnywhere(r, station, c.name); // sheet-qualified ok
@@ -1300,23 +1324,6 @@ async function assignRepairsToYearsIndividually({
     p && (p.type === 'geographical' || p.type === 'temporal' || p.type === 'monetary' || p.type === 'design')
   );
 
-  // Expand monetary params with multi-split
-  if (Array.isArray(fixed_parameters) && fixed_parameters.length) {
-    const expanded = [];
-    for (const p of fixed_parameters) {
-      if (p && p.type === 'monetary' && Array.isArray(p.split_conditions) && p.split_conditions.length) {
-        for (const src of p.split_conditions) {
-          const clone = { ...p, split_condition: { enabled: true, source: src } };
-          delete clone.split_conditions;
-          expanded.push(clone);
-        }
-      } else {
-        expanded.push(p);
-      }
-    }
-    fixed_parameters = expanded;
-  }
-
   if (!scored_repairs.length) {
     return {
       success: false,
@@ -1362,12 +1369,17 @@ async function assignRepairsToYearsIndividually({
   for (const p of (fixed_parameters || [])) {
     if (!p) continue;
     if (p.type === 'monetary') {
-      const splitSrc = (p.split_condition && p.split_condition.enabled) ? _canon(p.split_condition.source) : null;
+      let splitSrc = null;
+      if (Array.isArray(p.split_conditions) && p.split_conditions.length) {
+         splitSrc = p.split_conditions.map(s => _canon(s)).sort().join('+');
+      } else if (p.split_condition && p.split_condition.enabled) {
+         splitSrc = _canon(p.split_condition.source);
+      }
       constraint_columns.push({
         type: 'monetary',
         key: _monKey(p.field_name, splitSrc),
         field_name: p.field_name,
-        label: splitSrc ? p.split_condition.source : p.field_name,
+        label: splitSrc ? (p.split_conditions ? p.split_conditions.join('+') : p.split_condition.source) : p.field_name,
         unit: p.unit || '$',
         cumulative: !!p.cumulative,
         split_source: splitSrc
@@ -1390,15 +1402,18 @@ async function assignRepairsToYearsIndividually({
     
     for (const param of fixed_parameters) {
       if (param.type === 'monetary' && param.years && param.years[year]) {
-        const splitSrc = (param.split_condition && param.split_condition.enabled)
-          ? _canon(param.split_condition.source)
-          : null;
+        let splitSrc = null;
+        if (Array.isArray(param.split_conditions) && param.split_conditions.length) {
+           splitSrc = param.split_conditions.map(s => _canon(s)).sort().join('+');
+        } else if (param.split_condition && param.split_condition.enabled) {
+           splitSrc = _canon(param.split_condition.source);
+        }
         const key = _monKey(param.field_name, splitSrc);
         yearlyBudgets[year][key] = {
           total: _tryFloat(param.years[year].value) || 0,
           used: 0,
           cumulative: !!param.cumulative,
-          label: splitSrc ? String(param.split_condition.source) : param.field_name,
+          label: splitSrc ? (param.split_conditions ? param.split_conditions.join('+') : String(param.split_condition.source)) : param.field_name,
           split_source: splitSrc,
           type: 'monetary'
         };
@@ -1479,9 +1494,12 @@ async function assignRepairsToYearsIndividually({
 
         if (param.type === 'monetary') {
           const fieldName = param.field_name;
-          const splitSrc = (param.split_condition && param.split_condition.enabled)
-            ? _canon(param.split_condition.source)
-            : null;
+        let splitSrc = null;
+        if (Array.isArray(param.split_conditions) && param.split_conditions.length) {
+            splitSrc = param.split_conditions.map(s => _canon(s)).sort().join('+');
+        } else if (param.split_condition && param.split_condition.enabled) {
+            splitSrc = _canon(param.split_condition.source);
+        }
           const key = _monKey(param.field_name, splitSrc);
           const value = findFieldAnywhere(repair, station, fieldName);
          let amount = _tryFloat(value) || 0;
@@ -1614,22 +1632,6 @@ async function assignRepairsToYearsWithDeadlines({
     p && (p.type === 'geographical' || p.type === 'temporal' || p.type === 'monetary' || p.type === 'design')
   );
 
-  if (Array.isArray(fixed_parameters) && fixed_parameters.length) {
-    const expanded = [];
-    for (const p of fixed_parameters) {
-      if (p && p.type === 'monetary' && Array.isArray(p.split_conditions) && p.split_conditions.length) {
-        for (const src of p.split_conditions) {
-          const clone = { ...p, split_condition: { enabled: true, source: src } };
-          delete clone.split_conditions;
-          expanded.push(clone);
-        }
-      } else {
-        expanded.push(p);
-      }
-    }
-    fixed_parameters = expanded;
-  }
-
   if (!scored_repairs.length) {
     return {
       success: false,
@@ -1676,15 +1678,18 @@ async function assignRepairsToYearsWithDeadlines({
     
     for (const param of fixed_parameters) {
       if (param.type === 'monetary' && param.years && param.years[year]) {
-        const splitSrc = (param.split_condition && param.split_condition.enabled)
-          ? _canon(param.split_condition.source)
-          : null;
+        let splitSrc = null;
+        if (Array.isArray(param.split_conditions) && param.split_conditions.length) {
+            splitSrc = param.split_conditions.map(s => _canon(s)).sort().join('+');
+        } else if (param.split_condition && param.split_condition.enabled) {
+            splitSrc = _canon(param.split_condition.source);
+        }
         const key = _monKey(param.field_name, splitSrc);
         yearlyBudgets[year][key] = {
           total: _tryFloat(param.years[year].value) || 0,
           used: 0,
           cumulative: !!param.cumulative,
-          label: splitSrc ? String(param.split_condition.source) : param.field_name,
+          label: splitSrc ? (param.split_conditions ? param.split_conditions.join('+') : String(param.split_condition.source)) : param.field_name,
           split_source: splitSrc,
           type: 'monetary'
         };
@@ -1735,9 +1740,12 @@ async function assignRepairsToYearsWithDeadlines({
       if (!checkIfCondition(repair, param, station_data)) continue;
       
       if (param.type === 'monetary') {
-        const splitSrc = (param.split_condition && param.split_condition.enabled)
-          ? _canon(param.split_condition.source)
-          : null;
+        let splitSrc = null;
+        if (Array.isArray(param.split_conditions) && param.split_conditions.length) {
+            splitSrc = param.split_conditions.map(s => _canon(s)).sort().join('+');
+        } else if (param.split_condition && param.split_condition.enabled) {
+            splitSrc = _canon(param.split_condition.source);
+        }
        const key = _monKey(param.field_name, splitSrc);
         const value = findFieldAnywhere(repair, station, param.field_name);
         let amount = _tryFloat(value) || 0;
