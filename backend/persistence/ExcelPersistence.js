@@ -331,6 +331,107 @@ class ExcelPersistence extends IPersistence {
   }
 
   // ════════════════════════════════════════════════════════════════════════════
+  // LOOKUPS - DELETE OPERATIONS (NEW)
+  // ════════════════════════════════════════════════════════════════════════════
+
+  async deleteCompanyFromLookups(companyName) {
+    const excel = getExcel();
+    return await excel.deleteCompanyFromLookups(companyName);
+  }
+
+  async deleteLocationFromLookups(companyName, locationName) {
+    const excel = getExcel();
+    return await excel.deleteLocationFromLookups(companyName, locationName);
+  }
+
+  async deleteAssetTypeFromLookups(companyName, locationName, assetTypeName) {
+    const excel = getExcel();
+    return await excel.deleteAssetTypeFromLookups(companyName, locationName, assetTypeName);
+  }
+
+  async deleteAssetTypeFromLocation(companyName, locationName, assetTypeName) {
+    const excel = getExcel();
+    return await excel.deleteAssetTypeFromLocation(companyName, locationName, assetTypeName);
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // SCHEMA MANAGEMENT (NEW)
+  // ════════════════════════════════════════════════════════════════════════════
+
+  async updateAssetTypeSchema(assetType, schema, excludeStationId) {
+    const excel = getExcel();
+    return await excel.updateAssetTypeSchema(assetType, schema, excludeStationId);
+  }
+
+  async getWorkbookFieldCatalog(company, locationName) {
+    const excel = getExcel();
+    return await excel.getWorkbookFieldCatalog(company, locationName);
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // AUTHENTICATION SYSTEM (NEW)
+  // ════════════════════════════════════════════════════════════════════════════
+
+  async createAuthWorkbook() {
+    const excel = getExcel();
+    return await excel.createAuthWorkbook();
+  }
+
+  async createAuthUser(userData) {
+    const excel = getExcel();
+    return await excel.createAuthUser(userData);
+  }
+
+  async loginAuthUser(name, hashedPassword) {
+    const excel = getExcel();
+    return await excel.loginAuthUser(name, hashedPassword);
+  }
+
+  async logoutAuthUser(name) {
+    const excel = getExcel();
+    return await excel.logoutAuthUser(name);
+  }
+
+  async getAllAuthUsers() {
+    const excel = getExcel();
+    return await excel.getAllAuthUsers();
+  }
+
+  async hasAuthUsers() {
+    const excel = getExcel();
+    return await excel.hasAuthUsers();
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // FUNDING SETTINGS (NEW)
+  // ════════════════════════════════════════════════════════════════════════════
+
+  async getFundingSettings(company, location) {
+    const excel = getExcel();
+    return await excel.getFundingSettings(company, location);
+  }
+
+  async saveFundingSettings(company, location, settings) {
+    const excel = getExcel();
+    return await excel.saveFundingSettings(company, location, settings);
+  }
+
+  async saveFundingSettingsForAssetType(company, location, assetType, settings) {
+    const excel = getExcel();
+    return await excel.saveFundingSettingsForAssetType(company, location, assetType, settings);
+  }
+
+  async getAllFundingSettings(company) {
+    const excel = getExcel();
+    return await excel.getAllFundingSettings(company);
+  }
+
+  async normalizeFundingOverrides() {
+    const excel = getExcel();
+    return await excel.normalizeFundingOverrides();
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
   // UTILITIES
   // ════════════════════════════════════════════════════════════════════════════
 
@@ -343,6 +444,8 @@ class ExcelPersistence extends IPersistence {
     const excel = getExcel();
     return await excel.ensureLookupsReady();
   }
+
+
 }
 
 module.exports = ExcelPersistence;

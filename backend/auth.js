@@ -1,29 +1,14 @@
 // backend/auth.js
-const fs = require('fs');
-const path = require('path');
 const crypto = require('crypto');
-const { ensureDir } = require('./utils/fs_utils');
+const { getPersistence } = require('./persistence');
 
 // Toggle to enable/disable authentication logic.
 // false means NO LOGIN
 // true means YES LOGIN
-const AUTH_ENABLED = false;
-
-const DATA_DIR = process.env.NHS_DATA_DIR || path.join(__dirname, '..', 'data');
-const AUTH_FILE = path.join(DATA_DIR, 'Login_Information.xlsx');
+const AUTH_ENABLED = true;
 
 let currentUser = null;
 let sessionToken = null;
-
-// Lazy-load excel_worker_client to avoid starting the worker thread on import
-let excelClient = null;
-function getExcelClient() {
-  if (!excelClient) {
-    console.log('[Auth] Lazy-loading excel_worker_client');
-    excelClient = require('./excel_worker_client');
-  }
-  return excelClient;
-}
 
 // Default dev user used when auth is disabled
 const DEV_USER = {
@@ -44,20 +29,14 @@ async function initAuthWorkbook() {
       return { exists: true, disabled: true };
     }
 
-    ensureDir(DATA_DIR);
-    
-    if (fs.existsSync(AUTH_FILE)) {
-      console.log('[auth] Login_Information.xlsx already exists');
-      return { exists: true };
-    }
-
-    console.log('[auth] Creating Login_Information.xlsx...');
+    console.log('[auth] Initializing auth persistence...');
+    const persistence = await getPersistence();
 
     // Create the file through the worker
-    const result = await getExcelClient().createAuthWorkbook();
-    console.log('[auth] Auth workbook created:', result);
+    const result = await persistence.createAuthWorkbook();
+    console.log('[auth] Auth persistence initialized:', result);
     
-    return { exists: false };
+    return { exists: result.success };
   } catch (error) {
     console.error('[auth] Error initializing auth workbook:', error);
     throw error;
@@ -92,8 +71,9 @@ async function createUser(userData) {
     }
 
     const hashedPassword = hashPassword(password);
+    const persistence = await getPersistence();
 
-    const result = await getExcelClient().createAuthUser({
+    const result = await persistence.createAuthUser({
       name,
       email: email.toLowerCase(),
       password: hashedPassword,
@@ -130,13 +110,16 @@ async function loginUser(name, password) {
       };
     }
     
-    if (!fs.existsSync(AUTH_FILE)) {
+    // Check if any users exist via persistence before trying login
+    const userCheck = await hasUsers(); // Call local function directly
+    if (!userCheck) {
       return { success: false, message: 'No users exist. Please create an account.' };
     }
 
     const hashedPassword = hashPassword(password);
+    const persistence = await getPersistence();
 
-    const result = await getExcelClient().loginAuthUser(name, hashedPassword);
+    const result = await persistence.loginAuthUser(name, hashedPassword);
     
     if (result.success) {
       currentUser = result.user;
@@ -168,7 +151,8 @@ async function logoutUser() {
       return { success: true, disabled: true };
     }
 
-    const result = await getExcelClient().logoutAuthUser(currentUser.name);
+    const persistence = await getPersistence();
+    const result = await persistence.logoutAuthUser(currentUser.name);
     
     currentUser = null;
     sessionToken = null;
@@ -187,11 +171,8 @@ async function getAllUsers() {
       return [DEV_USER];
     }
 
-    if (!fs.existsSync(AUTH_FILE)) {
-      return [];
-    }
-
-    const result = await getExcelClient().getAllAuthUsers();
+    const persistence = await getPersistence();
+    const result = await persistence.getAllAuthUsers();
     return result.users || [];
   } catch (error) {
     console.error('[auth] Error getting users:', error);
@@ -204,9 +185,8 @@ async function hasUsers() {
   try {
     if (!AUTH_ENABLED) return true;
 
-    if (!fs.existsSync(AUTH_FILE)) return false;
-
-    const result = await getExcelClient().hasAuthUsers();
+    const persistence = await getPersistence();
+    const result = await persistence.hasAuthUsers();
     return result.hasUsers || false;
   } catch (error) {
     console.error('[auth] Error checking users:', error);

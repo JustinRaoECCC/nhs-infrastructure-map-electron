@@ -3,6 +3,7 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const os   = require('os');
+const fs   = require('fs');
 
 // Import AFTER NHS_DATA_DIR is set so backends pick up the fast path.
 const backend     = require('./backend/app');
