@@ -1571,6 +1571,27 @@ class MongoPersistence extends IPersistence {
       return { success: false, message: error.message };
     }
   }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // NUKE (RESET)
+  // ════════════════════════════════════════════════════════════════════════════
+
+  async nuke() {
+    try {
+      const db = mongoClient.getDatabase();
+      await db.dropDatabase();
+      console.log('[MongoPersistence] Database dropped successfully');
+      
+      // Re-create indexes immediately so app can restart cleanly without crash
+      await this._createIndexes();
+      
+      return { success: true };
+    } catch (error) {
+      console.error('[MongoPersistence] Nuke failed:', error);
+      return { success: false, message: error.message };
+    }
+  }
+
 }
 
 module.exports = MongoPersistence;

@@ -445,6 +445,15 @@ class ExcelPersistence extends IPersistence {
     return await excel.ensureLookupsReady();
   }
 
+  // ════════════════════════════════════════════════════════════════════════════
+  // Nuke
+  // ════════════════════════════════════════════════════════════════════════════
+
+  async nuke() {
+    // Excel file deletion is handled by the FS logic in nuke.js
+    return { success: true };
+  }
+
 
 }
 

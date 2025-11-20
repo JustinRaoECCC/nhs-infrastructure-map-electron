@@ -493,6 +493,14 @@ class IPersistence {
   async ensureLookupsReady() {
     throw new Error('Method "ensureLookupsReady()" must be implemented');
   }
+
+  /**
+   * Reset the database (Drop DB or return success for FS handler)
+   * @returns {Promise<Object>}
+   */
+  async nuke() {
+    throw new Error('Method "nuke()" must be implemented');
+  }
 }
 
 module.exports = IPersistence;
