@@ -501,6 +501,69 @@ class IPersistence {
   async nuke() {
     throw new Error('Method "nuke()" must be implemented');
   }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // AUTHENTICATION SYSTEM (NEW)
+  // ════════════════════════════════════════════════════════════════════════════
+
+  async createAuthWorkbook() { throw new Error('Method not implemented'); }
+  async createAuthUser(userData) { throw new Error('Method not implemented'); }
+  async loginAuthUser(name, pass) { throw new Error('Method not implemented'); }
+  async logoutAuthUser(name) { throw new Error('Method not implemented'); }
+  async getAllAuthUsers() { throw new Error('Method not implemented'); }
+  async hasAuthUsers() { throw new Error('Method not implemented'); }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // FUNDING SETTINGS (NEW)
+  // ════════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Get funding settings for a specific location (representative sample)
+   */
+  async getFundingSettings(company, location) {
+    throw new Error('Method "getFundingSettings()" must be implemented');
+  }
+
+  /**
+   * Save funding settings (overrides) for a location
+   */
+  async saveFundingSettings(company, location, settings) {
+    throw new Error('Method "saveFundingSettings()" must be implemented');
+  }
+
+  /**
+   * Save funding settings for a specific asset type within a location
+   */
+  async saveFundingSettingsForAssetType(company, location, assetType, settings) {
+    throw new Error('Method "saveFundingSettingsForAssetType()" must be implemented');
+  }
+
+  /**
+   * Get all funding settings for a company (for the settings tree)
+   */
+  async getAllFundingSettings(company) {
+    throw new Error('Method "getAllFundingSettings()" must be implemented');
+  }
+
+  /**
+   * Auto-populate missing overrides based on Funding Split tokens
+   */
+  async normalizeFundingOverrides() {
+    throw new Error('Method "normalizeFundingOverrides()" must be implemented');
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // SCHEMA & UTILITIES
+  // ════════════════════════════════════════════════════════════════════════════
+
+  async updateAssetTypeSchema(assetType, schema, excludeStationId) { throw new Error('Method not implemented'); }
+  async getWorkbookFieldCatalog(company, locationName) { throw new Error('Method not implemented'); }
+  
+  async deleteCompanyFromLookups(companyName) { throw new Error('Method not implemented'); }
+  async deleteLocationFromLookups(companyName, loc) { throw new Error('Method not implemented'); }
+  async deleteAssetTypeFromLookups(companyName, loc, asset) { throw new Error('Method not implemented'); }
+  async deleteAssetTypeFromLocation(companyName, loc, asset) { throw new Error('Method not implemented'); }
+
 }
 
 module.exports = IPersistence;

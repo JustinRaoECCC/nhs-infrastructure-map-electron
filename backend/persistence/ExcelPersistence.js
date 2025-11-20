@@ -454,6 +454,35 @@ class ExcelPersistence extends IPersistence {
     return { success: true };
   }
 
+  
+  // ════════════════════════════════════════════════════════════════════════════
+  // FUNDING SETTINGS (NEW) - Delegating to excel_worker_client
+  // ════════════════════════════════════════════════════════════════════════════
+
+  async getFundingSettings(company, location) {
+    const excel = getExcel();
+    return await excel.getFundingSettings(company, location);
+  }
+
+  async saveFundingSettings(company, location, settings) {
+    const excel = getExcel();
+    return await excel.saveFundingSettings(company, location, settings);
+  }
+
+  async saveFundingSettingsForAssetType(company, location, assetType, settings) {
+    const excel = getExcel();
+    return await excel.saveFundingSettingsForAssetType(company, location, assetType, settings);
+  }
+
+  async getAllFundingSettings(company) {
+    const excel = getExcel();
+    return await excel.getAllFundingSettings(company);
+  }
+
+  async normalizeFundingOverrides() {
+    const excel = getExcel();
+    return await excel.normalizeFundingOverrides();
+  }
 
 }
 

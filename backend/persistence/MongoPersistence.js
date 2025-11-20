@@ -7,7 +7,6 @@ const mongoClient = require('../db/mongoClient');
 const { COLLECTIONS, addMetadata, stripMetadata } = require('../db/mongoSchemas');
 
 // Lazy-load excel worker client for import utilities (parsing Excel files)
-// We need this even in MongoDB mode to support the "Import from Excel" wizard
 let excelWorker = null;
 function getExcelWorker() {
   if (!excelWorker) {
@@ -16,6 +15,56 @@ function getExcelWorker() {
   }
   return excelWorker;
 }
+
+// ─── Funding Helpers (Ported for Parity) ──────────────────────────────────────
+function parseFundingSplitTokens(splitStr) {
+  const raw = String(splitStr || '').trim();
+  if (!raw) return [];
+  return raw
+    .split('-')
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
+function formatEqualSplitForTokens(tokens) {
+  const n = Array.isArray(tokens) ? tokens.length : 0;
+  if (!n) return '';
+  // Use one decimal place and adjust last to hit 100 exactly
+  const base = Math.round((1000 / n)) / 10;
+  const parts = new Array(n).fill(base);
+  let sum = parts.reduce((a, b) => a + b, 0);
+  parts[n - 1] = Math.round((100 - (sum - parts[n - 1])) * 10) / 10;
+  return tokens.map((t, i) => `${parts[i]}%${t}`).join('-');
+}
+
+// Simple validation for Mongo (skip global token check for performance/complexity reasons for now)
+function validateFundingOverrideString(value) {
+  const str = String(value || '').trim();
+  if (!str) return { ok: true }; // Blank is valid (trigger calculation)
+  
+  const terms = str.split('-').map(s => s.trim()).filter(Boolean);
+  if (!terms.length) return { ok: false, reason: 'No terms' };
+  
+  let sum = 0;
+  for (const term of terms) {
+    const m = term.match(/^([0-9]+(?:\.[0-9]+)?)%(.+)$/);
+    if (!m) return { ok: false, reason: `Invalid term: ${term}` };
+    const pct = parseFloat(m[1]);
+    if (isNaN(pct)) return { ok: false, reason: 'Invalid percentage' };
+    sum += pct;
+  }
+  if (sum < 99 || sum > 101) return { ok: false, reason: `Percent sum ${sum} out of range` };
+  return { ok: true };
+}
+
+const FUNDING_SECTION = 'Funding Type Override Settings';
+const FUNDING_FIELDS = ['O&M', 'Capital', 'Decommission'];
+
+function getFundingKey(field) {
+  return `${FUNDING_SECTION} – ${field}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 class MongoPersistence extends IPersistence {
   constructor() {
@@ -719,6 +768,22 @@ class MongoPersistence extends IPersistence {
         // We strip any existing metadata (_id, etc) from the incoming row first
         const { _id, _createdAt, ...dynamicData } = row;
         
+        // Ensure keys exist with the specific Section Prefix so frontend renders them correctly
+        FUNDING_FIELDS.forEach(field => {
+          const compositeKey = getFundingKey(field);
+
+          // 1. If plain key exists (e.g. from import), migrate it to composite
+          if (dynamicData[field] !== undefined && dynamicData[compositeKey] === undefined) {
+            dynamicData[compositeKey] = dynamicData[field];
+            delete dynamicData[field]; // Remove plain key
+          }
+
+          // 2. If neither exists, initialize composite to empty string
+          if (dynamicData[compositeKey] === undefined) {
+            dynamicData[compositeKey] = '';
+          }
+        });
+
         const doc = {
           ...dynamicData, // The "Excel" columns (e.g. "General Information – Depth")
           ...coreFields   // The enforced root fields
@@ -1199,7 +1264,7 @@ class MongoPersistence extends IPersistence {
       return { 
         success: true, 
         totalUpdated, 
-        results,
+        results, 
         message: `Updated schema for ${totalUpdated} stations across ${results.length} collections`
       };
     } catch (error) {
@@ -1318,7 +1383,7 @@ class MongoPersistence extends IPersistence {
         { _id: user._id },
         { 
           $set: { 
-            status: 'Active',
+            status: 'Active', 
             lastLogin: new Date().toISOString(),
             _updatedAt: new Date()
           }
@@ -1385,12 +1450,11 @@ class MongoPersistence extends IPersistence {
   }
 
   // ════════════════════════════════════════════════════════════════════════════
-  // FUNDING SETTINGS (NEW)
+  // FUNDING SETTINGS (UPDATED FOR PARITY)
   // ════════════════════════════════════════════════════════════════════════════
 
   async getFundingSettings(company, location) {
     // Logic: Try to find ONE document in any collection for this location that has funding set.
-    // Since Excel "Settings" implies consistency, we pick the first available.
     try {
       const db = mongoClient.getDatabase();
       const collections = await mongoClient.listCollections();
@@ -1403,8 +1467,8 @@ class MongoPersistence extends IPersistence {
       for (const collName of stationColls) {
         const doc = await db.collection(collName).findOne({});
         if (doc) {
-          // Extract values if they exist, using loose matching
-          const getVal = (key) => doc[key] || doc[key.toUpperCase()] || '';
+          // Extract values if they exist, preferring composite keys
+          const getVal = (key) => doc[getFundingKey(key)] || doc[key] || '';
           return {
             om: getVal('O&M'),
             capital: getVal('Capital'),
@@ -1431,27 +1495,58 @@ class MongoPersistence extends IPersistence {
 
       for (const collName of stationColls) {
         const collection = db.collection(collName);
-        
-        // Update logic:
-        // If the document has "Funding Split", we must calculate the specific value (like Excel does).
-        // However, simpler Mongo approach: We assume the frontend passes the raw "50%Token" string 
-        // OR we simply update the fields.
-        // The Excel implementation recalculates based on tokens.
-        // For strict parity, we need to fetch, calc, update (slow) or use a pipeline update (fast).
-        // Simplified: We simply set the overrides provided in `settings`.
-        // If complex logic needed, we'd use updateMany with aggregation pipeline.
-        
-        // We will perform a basic update for now. 
-        // NOTE: This does not re-calculate based on row-specific tokens unless we implement pipeline.
-        
-        const updates = {};
-        if (settings.om !== undefined) updates['O&M'] = settings.om;
-        if (settings.capital !== undefined) updates['Capital'] = settings.capital;
-        if (settings.decommission !== undefined) updates['Decommission'] = settings.decommission;
+        const cursor = collection.find({});
+        const bulkOps = [];
 
-        if (Object.keys(updates).length > 0) {
-          await collection.updateMany({}, { $set: updates });
-          touchedSheets++;
+        // Process each document individually to support re-calculation based on per-row tokens
+        while(await cursor.hasNext()) {
+            const doc = await cursor.next();
+            const splitVal = doc['Funding Split'] || '';
+            const tokens = parseFundingSplitTokens(splitVal);
+            
+            const updates = {};
+            let changed = false;
+
+            // Helper: decide value (same logic as excel_worker.js)
+            const decide = (incoming, currentVal) => {
+                 const v = String(incoming ?? '').trim();
+                 // If setting is blank, revert to default calc based on tokens
+                 if (!v) {
+                    if (tokens.length > 0) return formatEqualSplitForTokens(tokens);
+                    return ''; // No tokens -> blank
+                 }
+                 // Validate override format (simple check)
+                 const valCheck = validateFundingOverrideString(v);
+                 if (!valCheck.ok) throw new Error(`Invalid funding override "${v}": ${valCheck.reason}`);
+                 return v;
+            };
+
+            const updateField = (field, settingVal) => {
+              if (settingVal !== undefined) {
+                const key = getFundingKey(field);
+                // Check composite key first, then plain
+                const currentVal = doc[key] || doc[field];
+                const newVal = decide(settingVal, currentVal);
+
+                if (newVal !== (currentVal || '')) {
+                  updates[key] = newVal;
+                  changed = true;
+                }
+              }
+            };
+
+            updateField('O&M', settings.om);
+            updateField('Capital', settings.capital);
+            updateField('Decommission', settings.decommission);
+
+            if (changed) {
+                bulkOps.push({ updateOne: { filter: { _id: doc._id }, update: { $set: updates } } });
+            }
+        }
+        
+        if (bulkOps.length > 0) {
+            await collection.bulkWrite(bulkOps);
+            touchedSheets++;
         }
       }
 
@@ -1465,16 +1560,59 @@ class MongoPersistence extends IPersistence {
     try {
       const collectionName = mongoClient.getStationCollectionName(company, location, assetType);
       const collection = mongoClient.getCollection(collectionName);
+      
+      // Use same logic as saveFundingSettings but only for this specific collection
+      const cursor = collection.find({});
+      const bulkOps = [];
 
-      const updates = {};
-      if (settings.om !== undefined) updates['O&M'] = settings.om;
-      if (settings.capital !== undefined) updates['Capital'] = settings.capital;
-      if (settings.decommission !== undefined) updates['Decommission'] = settings.decommission;
+      while(await cursor.hasNext()) {
+        const doc = await cursor.next();
+        const splitVal = doc['Funding Split'] || '';
+        const tokens = parseFundingSplitTokens(splitVal);
+        
+        const updates = {};
+        let changed = false;
 
-      await collection.updateMany({}, { $set: updates });
+        const decide = (incoming, currentVal) => {
+          const v = String(incoming ?? '').trim();
+          if (!v) {
+            if (tokens.length > 0) return formatEqualSplitForTokens(tokens);
+            return '';
+          }
+          const valCheck = validateFundingOverrideString(v);
+          if (!valCheck.ok) throw new Error(`Invalid funding override "${v}": ${valCheck.reason}`);
+          return v;
+        };
+
+        const updateField = (field, settingVal) => {
+          if (settingVal !== undefined) {
+            const key = getFundingKey(field);
+            // Check composite key first, then plain
+            const currentVal = doc[key] || doc[field];
+            const newVal = decide(settingVal, currentVal);
+
+            if (newVal !== (currentVal || '')) {
+              updates[key] = newVal;
+              changed = true;
+            }
+          }
+        };
+
+        updateField('O&M', settings.om);
+        updateField('Capital', settings.capital);
+        updateField('Decommission', settings.decommission);
+
+        if (changed) {
+            bulkOps.push({ updateOne: { filter: { _id: doc._id }, update: { $set: updates } } });
+        }
+      }
+      
+      if (bulkOps.length > 0) {
+          await collection.bulkWrite(bulkOps);
+      }
+
       return { success: true };
     } catch (error) {
-      // Collection might not exist
       return { success: false, message: error.message };
     }
   }
@@ -1495,19 +1633,22 @@ class MongoPersistence extends IPersistence {
         // Parse name back to parts
         const parts = collName.replace('_stationData', '').split('_');
         // Format: Company_Location_AssetType
-        // Company is parts[0]
         const loc = parts[1];
         const assetType = parts.slice(2).join('_'); // handle spaces in asset type if they became underscores
         
         const doc = await db.collection(collName).findOne({});
-        if (doc && (doc['O&M'] || doc['Capital'] || doc['Decommission'])) {
-           const key = `${company}|${loc}|${assetType}`; // Replicating Excel Map key format
-           result.set(key, {
-             om: doc['O&M'] || '',
-             capital: doc['Capital'] || '',
-             decommission: doc['Decommission'] || ''
-           });
+        
+        const getVal = (k) => doc[getFundingKey(k)] || doc[k];
+
+        if (doc && (getVal('O&M') || getVal('Capital') || getVal('Decommission'))) {
+          const key = `${company}|${loc}|${assetType}`; // Replicating Excel Map key format
+          result.set(key, {
+            om: getVal('O&M') || '',
+            capital: getVal('Capital') || '',
+            decommission: getVal('Decommission') || ''
+          });
         }
+
       }
       return Object.fromEntries(result);
     } catch (error) {
@@ -1524,47 +1665,43 @@ class MongoPersistence extends IPersistence {
 
       for (const collName of stationColls) {
         const collection = db.collection(collName);
+        // Find docs where fields are missing BUT Funding Split exists
+        const cursor = collection.find({ 
+          'Funding Split': { $exists: true, $ne: '' }
+          // Removed the specific $or check for fields to ensure we scan all docs with tokens
+          // strictly speaking, we can iterate all docs with Funding Split and fix them in memory
+        });
         
-        // In Excel, this copies "Funding Split" to O&M/Capital/Decommission if they are empty.
-        // We use an aggregation pipeline update to do this atomically and efficiently.
-        
-        await collection.updateMany(
-          { 
-            $or: [
-              { 'O&M': { $exists: false } }, 
-              { 'O&M': '' },
-              { 'Capital': { $exists: false } }, 
-              { 'Capital': '' },
-              { 'Decommission': { $exists: false } }, 
-              { 'Decommission': '' }
-            ],
-            'Funding Split': { $exists: true, $ne: '' }
-          },
-          [
-            {
-              $set: {
-                'O&M': {
-                  $cond: {
-                    if: { $or: [{ $not: ["$O&M"] }, { $eq: ["$O&M", ""] }] },
-                    then: "50%Default", // Simplified: Excel does complex token parsing logic here.
-                    else: "$O&M"
-                  }
-                },
-                'Capital': {
-                  $cond: {
-                     if: { $or: [{ $not: ["$Capital"] }, { $eq: ["$Capital", ""] }] },
-                     then: "50%Default",
-                    else: "$Capital"
-                  }
-                }
-                // Logic repeats... 
-                // NOTE: Full replication of Excel token parsing in Mongo pipeline is very complex.
-                // This is a placeholder indicating where that logic belongs.
+        const bulkOps = [];
+
+        while(await cursor.hasNext()) {
+            const doc = await cursor.next();
+            const tokens = parseFundingSplitTokens(doc['Funding Split']);
+            if (!tokens.length) continue;
+
+            const def = formatEqualSplitForTokens(tokens);
+            const updates = {};
+            let changed = false;
+
+            FUNDING_FIELDS.forEach(field => {
+              const key = getFundingKey(field);
+              // If both composite and plain are missing/empty, set default
+              const val = doc[key] || doc[field];
+              if (!val) {
+                updates[key] = def;
+                changed = true;
               }
+            });
+
+            if (changed) {
+                bulkOps.push({ updateOne: { filter: { _id: doc._id }, update: { $set: updates } } });
             }
-          ]
-        );
-        filesTouched++;
+        }
+        
+        if (bulkOps.length > 0) {
+            await collection.bulkWrite(bulkOps);
+            filesTouched++;
+        }
       }
       return { success: true, filesTouched };
     } catch (error) {

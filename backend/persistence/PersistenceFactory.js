@@ -131,6 +131,18 @@ class DualWritePersistence {
   async listSheets(b64) {
     return await this.readPersistence.listSheets(b64);
   }
+  
+  async getAllFundingSettings(company) {
+    return await this.readPersistence.getAllFundingSettings(company);
+  }
+  
+  async getFundingSettings(company, location) {
+    return await this.readPersistence.getFundingSettings(company, location);
+  }
+  
+  async getWorkbookFieldCatalog(company, locationName) {
+    return await this.readPersistence.getWorkbookFieldCatalog(company, locationName);
+  }
 
   // ════════════════════════════════════════════════════════════════════════════
   // WRITE OPERATIONS - Write to all target persistence layers
@@ -154,8 +166,8 @@ class DualWritePersistence {
     };
   }
 
-  async upsertCompany(name, active) {
-    return await this._writeToAll('upsertCompany', name, active);
+  async upsertCompany(name, active, description, email) {
+    return await this._writeToAll('upsertCompany', name, active, description, email);
   }
 
   async upsertLocation(location, company) {
@@ -215,6 +227,10 @@ class DualWritePersistence {
   async updateStationInLocationFile(company, locationName, stationId, updatedRowData, schema) {
     return await this._writeToAll('updateStationInLocationFile', company, locationName, stationId, updatedRowData, schema);
   }
+  
+  async updateAssetTypeSchema(assetType, schema, excludeStationId) {
+     return await this._writeToAll('updateAssetTypeSchema', assetType, schema, excludeStationId);
+  }
 
   async saveStationRepairs(company, location, assetType, stationId, repairs) {
     return await this._writeToAll('saveStationRepairs', company, location, assetType, stationId, repairs);
@@ -246,6 +262,34 @@ class DualWritePersistence {
 
   async ensureLookupsReady() {
     return await this._writeToAll('ensureLookupsReady');
+  }
+  
+  async saveFundingSettings(company, location, settings) {
+    return await this._writeToAll('saveFundingSettings', company, location, settings);
+  }
+
+  async saveFundingSettingsForAssetType(company, location, assetType, settings) {
+    return await this._writeToAll('saveFundingSettingsForAssetType', company, location, assetType, settings);
+  }
+
+  async normalizeFundingOverrides() {
+    return await this._writeToAll('normalizeFundingOverrides');
+  }
+  
+  async deleteCompanyFromLookups(companyName) {
+    return await this._writeToAll('deleteCompanyFromLookups', companyName);
+  }
+
+  async deleteLocationFromLookups(companyName, locationName) {
+    return await this._writeToAll('deleteLocationFromLookups', companyName, locationName);
+  }
+
+  async deleteAssetTypeFromLookups(companyName, locationName, assetTypeName) {
+    return await this._writeToAll('deleteAssetTypeFromLookups', companyName, locationName, assetTypeName);
+  }
+
+  async deleteAssetTypeFromLocation(companyName, locationName, assetTypeName) {
+    return await this._writeToAll('deleteAssetTypeFromLocation', companyName, locationName, assetTypeName);
   }
 }
 
