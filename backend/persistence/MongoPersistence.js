@@ -736,7 +736,7 @@ class MongoPersistence extends IPersistence {
       // 1. Determine Collection Name based on sheetName (Asset Type)
       let assetType = sheetName;
       if (sheetName.endsWith(' ' + location)) {
-          assetType = sheetName.substring(0, sheetName.lastIndexOf(' ' + location));
+        assetType = sheetName.substring(0, sheetName.lastIndexOf(' ' + location));
       }
       
       const collectionName = mongoClient.getStationCollectionName(company, location, assetType);
@@ -760,33 +760,69 @@ class MongoPersistence extends IPersistence {
           lon: row['Longitude'] || row['lon'] || '',
           status: row['Status'] || row['status'] || 'Active',
           company: company,
-          location_file: location, // Used for filters
+          location_file: location,
           _updatedAt: now
         };
 
-        // Combine core fields with the dynamic Excel fields
-        // We strip any existing metadata (_id, etc) from the incoming row first
+        // Strip metadata from incoming row
         const { _id, _createdAt, ...dynamicData } = row;
+
+        // ═══════════════════════════════════════════════════════════════════
+        // FIX: Find Funding Split/Type value to auto-populate funding override fields
+        // ═══════════════════════════════════════════════════════════════════
+        let fundingSplitVal = '';
+        const fundingSplitVariants = ['Funding Split', 'Funding Type'];
         
-        // Ensure keys exist with the specific Section Prefix so frontend renders them correctly
+        for (const variant of fundingSplitVariants) {
+          // Check plain key first
+          if (dynamicData[variant]) {
+            fundingSplitVal = String(dynamicData[variant]).trim();
+            break;
+          }
+          // Check composite keys (any section prefix)
+          for (const key of Object.keys(dynamicData)) {
+            const keyLower = key.toLowerCase();
+            const variantLower = variant.toLowerCase();
+            // Match patterns like "Section – Funding Split" or "Section - Funding Type"
+            if (keyLower.endsWith(` – ${variantLower}`) || 
+                keyLower.endsWith(` - ${variantLower}`)) {
+              fundingSplitVal = String(dynamicData[key] || '').trim();
+              break;
+            }
+          }
+          if (fundingSplitVal) break;
+        }
+
+        // Parse tokens and generate default funding value
+        const tokens = parseFundingSplitTokens(fundingSplitVal);
+        const defaultFundingValue = formatEqualSplitForTokens(tokens);
+
+        // Ensure Funding Type Override Settings fields exist and are populated
         FUNDING_FIELDS.forEach(field => {
           const compositeKey = getFundingKey(field);
 
           // 1. If plain key exists (e.g. from import), migrate it to composite
           if (dynamicData[field] !== undefined && dynamicData[compositeKey] === undefined) {
             dynamicData[compositeKey] = dynamicData[field];
-            delete dynamicData[field]; // Remove plain key
+            delete dynamicData[field];
           }
 
-          // 2. If neither exists, initialize composite to empty string
+          // 2. FIX: If composite key is empty/missing AND we have tokens, populate with default
+          const currentVal = dynamicData[compositeKey];
+          if ((!currentVal || String(currentVal).trim() === '') && defaultFundingValue) {
+            dynamicData[compositeKey] = defaultFundingValue;
+          }
+
+          // 3. If still undefined, initialize to empty string
           if (dynamicData[compositeKey] === undefined) {
             dynamicData[compositeKey] = '';
           }
         });
+        // ═══════════════════════════════════════════════════════════════════
 
         const doc = {
-          ...dynamicData, // The "Excel" columns (e.g. "General Information – Depth")
-          ...coreFields   // The enforced root fields
+          ...dynamicData,
+          ...coreFields
         };
 
         return {
@@ -1705,42 +1741,67 @@ async getWorkbookFieldCatalog(company, locationName) {
 
       for (const collName of stationColls) {
         const collection = db.collection(collName);
-        // Find docs where fields are missing BUT Funding Split exists
-        const cursor = collection.find({ 
-          'Funding Split': { $exists: true, $ne: '' }
-          // Removed the specific $or check for fields to ensure we scan all docs with tokens
-          // strictly speaking, we can iterate all docs with Funding Split and fix them in memory
-        });
         
+        // FIX: Get all documents - we need to search for Funding Split/Type 
+        // in both plain and composite key formats
+        const docs = await collection.find({}).toArray();
         const bulkOps = [];
 
-        while(await cursor.hasNext()) {
-            const doc = await cursor.next();
-            const tokens = parseFundingSplitTokens(doc['Funding Split']);
-            if (!tokens.length) continue;
-
-            const def = formatEqualSplitForTokens(tokens);
-            const updates = {};
-            let changed = false;
-
-            FUNDING_FIELDS.forEach(field => {
-              const key = getFundingKey(field);
-              // If both composite and plain are missing/empty, set default
-              const val = doc[key] || doc[field];
-              if (!val) {
-                updates[key] = def;
-                changed = true;
-              }
-            });
-
-            if (changed) {
-                bulkOps.push({ updateOne: { filter: { _id: doc._id }, update: { $set: updates } } });
+        for (const doc of docs) {
+          // ═══════════════════════════════════════════════════════════════════
+          // FIX: Find Funding Split/Type value - check both plain and composite keys
+          // ═══════════════════════════════════════════════════════════════════
+          let fundingSplitVal = '';
+          const fundingSplitVariants = ['Funding Split', 'Funding Type'];
+          
+          for (const variant of fundingSplitVariants) {
+            // Check plain key first
+            if (doc[variant]) {
+              fundingSplitVal = String(doc[variant]).trim();
+              break;
             }
+            // Check composite keys (any section prefix)
+            for (const key of Object.keys(doc)) {
+              const keyLower = key.toLowerCase();
+              const variantLower = variant.toLowerCase();
+              // Match patterns like "Section – Funding Split" or "Section - Funding Type"
+              if (keyLower.endsWith(` – ${variantLower}`) || 
+                  keyLower.endsWith(` - ${variantLower}`)) {
+                fundingSplitVal = String(doc[key] || '').trim();
+                break;
+              }
+            }
+            if (fundingSplitVal) break;
+          }
+          // ═══════════════════════════════════════════════════════════════════
+
+          if (!fundingSplitVal) continue;
+
+          const tokens = parseFundingSplitTokens(fundingSplitVal);
+          if (!tokens.length) continue;
+
+          const def = formatEqualSplitForTokens(tokens);
+          const updates = {};
+          let changed = false;
+
+          FUNDING_FIELDS.forEach(field => {
+            const key = getFundingKey(field);
+            // If both composite and plain are missing/empty, set default
+            const val = doc[key] || doc[field];
+            if (!val || String(val).trim() === '') {
+              updates[key] = def;
+              changed = true;
+            }
+          });
+
+          if (changed) {
+            bulkOps.push({ updateOne: { filter: { _id: doc._id }, update: { $set: updates } } });
+          }
         }
         
         if (bulkOps.length > 0) {
-            await collection.bulkWrite(bulkOps);
-            filesTouched++;
+          await collection.bulkWrite(bulkOps);
+          filesTouched++;
         }
       }
       return { success: true, filesTouched };
