@@ -8,7 +8,6 @@
       <button class="tab-btn active" data-tab="mapPin">Map Pin</button>
       <button class="tab-btn" data-tab="stationInfo">Station Info</button>
       <button class="tab-btn" data-tab="nuke">Nuke</button>
-      <button class="tab-btn" data-tab="comingSoon" disabled>Coming Soon</button>
     </div>
 
     <div class="tab-panel" id="tab-mapPin" data-tab="mapPin" style="display:block;">
@@ -69,7 +68,7 @@
       <!-- NEW: Repair Colors (coming soon) -->
       <div class="settings-section" style="margin-top:1rem;">
         <div class="settings-section-header" style="display:flex;align-items:center;gap:.75rem;">
-          <h3 style="margin:.25rem 0;">Repair Colors <span class="hint" style="font-weight:normal;opacity:.6;">(coming soon)</span></h3>
+          <h3 style="margin:.25rem 0;">Repair Colors</h3>
           <label style="display:flex;align-items:center;gap:.35rem;font-size:.9rem;">
             <input id="applyRepairColorsChk" type="checkbox" />
             <span>Apply repair color scheme on map</span>
@@ -84,12 +83,6 @@
               </tr>
             </thead>
             <tbody id="repairColorTbody">
-              <tr>
-                <td><em>Not implemented yet</em></td>
-                <td>
-                  <input type="color" disabled style="width:42px;height:28px;border:0;background:transparent;cursor:not-allowed;opacity:.4;" />
-                </td>
-              </tr>
             </tbody>
           </table>
         </div>
@@ -137,9 +130,6 @@
       <div id="nukeMount"></div>
     </div>
 
-    <div class="tab-panel" id="tab-comingSoon" data-tab="comingSoon" style="display:none;">
-      <p>More settings coming soon…</p>
-    </div>
   </div>
 
   <div class="settings-footer">

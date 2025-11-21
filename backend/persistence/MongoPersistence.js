@@ -1273,12 +1273,54 @@ class MongoPersistence extends IPersistence {
     }
   }
 
-  async getWorkbookFieldCatalog(company, locationName) {
+async getWorkbookFieldCatalog(company, locationName) {
     try {
       const db = mongoClient.getDatabase();
       const collections = await mongoClient.listCollections();
       const result = { repairs: [], sheets: {} };
+      
+      // Helper to get clean keys from a doc
+      const getKeys = (doc) => Object.keys(doc || {}).filter(k => !k.startsWith('_') && k !== 'station_id');
 
+      // MODE 1: GLOBAL SCAN (No arguments provided) - Used for Autocomplete
+      if (!company && !locationName) {
+        const repairFields = new Set();
+        const sheetFields = {}; // Map<AssetType, Set<Field>>
+
+        for (const collName of collections) {
+          if (collName.endsWith('_repairs')) {
+            const doc = await db.collection(collName).findOne({});
+            if (doc) getKeys(doc).forEach(k => repairFields.add(k));
+          } else if (collName.endsWith('_stationData')) {
+            const doc = await db.collection(collName).findOne({});
+            if (doc) {
+              // Use asset_type field if available, otherwise fallback to collection name parsing
+              // Collection format: Company_Location_AssetType_stationData
+              // We accept multiple sheets might map to same AssetType, we merge their fields.
+              let assetType = doc.asset_type;
+              if (!assetType) {
+                // Fallback parsing if field missing
+                const parts = collName.replace('_stationData', '').split('_');
+                assetType = parts.slice(2).join(' '); 
+              }
+              
+              if (assetType) {
+                if (!sheetFields[assetType]) sheetFields[assetType] = new Set();
+                getKeys(doc).forEach(k => sheetFields[assetType].add(k));
+              }
+            }
+          }
+        }
+
+        result.repairs = Array.from(repairFields).sort();
+        Object.keys(sheetFields).forEach(sheet => {
+          result.sheets[sheet] = Array.from(sheetFields[sheet]).sort();
+        });
+        
+        return result;
+      }
+
+      // MODE 2: SPECIFIC LOCATION SCAN (Existing logic)
       const normalize = (str) => String(str || '').trim().replace(/[^a-zA-Z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
       const prefix = `${normalize(company)}_${normalize(locationName)}_`;
 
@@ -1287,8 +1329,7 @@ class MongoPersistence extends IPersistence {
       if (collections.includes(repairsCollName)) {
         const sample = await db.collection(repairsCollName).findOne({});
         if (sample) {
-          // Filter out internal mongo fields
-          result.repairs = Object.keys(sample).filter(k => !k.startsWith('_')).sort();
+          result.repairs = getKeys(sample).sort();
         }
       }
 
@@ -1296,14 +1337,12 @@ class MongoPersistence extends IPersistence {
       const stationColls = collections.filter(c => c.startsWith(prefix) && c.endsWith('_stationData'));
       
       for (const collName of stationColls) {
-        // Extract "Sheet Name" (Asset Type) from collection name
         let suffix = collName.replace(prefix, '').replace('_stationData', '');
-        // Reconstruct friendly name (underscores to spaces)
         const sheetName = suffix.replace(/_/g, ' ');
 
         const sample = await db.collection(collName).findOne({});
         if (sample) {
-          result.sheets[sheetName] = Object.keys(sample).filter(k => !k.startsWith('_')).sort();
+          result.sheets[sheetName] = getKeys(sample).sort();
         } else {
           result.sheets[sheetName] = [];
         }
@@ -1311,10 +1350,11 @@ class MongoPersistence extends IPersistence {
 
       return result;
     } catch (error) {
+      console.error('[MongoPersistence] getWorkbookFieldCatalog failed:', error);
       return { repairs: [], sheets: {} };
     }
   }
-
+  
   // ════════════════════════════════════════════════════════════════════════════
   // AUTHENTICATION SYSTEM (NEW)
   // ════════════════════════════════════════════════════════════════════════════

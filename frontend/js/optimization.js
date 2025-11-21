@@ -99,47 +99,43 @@ document.addEventListener('DOMContentLoaded', () => {
         catalog = await window.electronAPI.getWorkbookFieldCatalog();
       }
 
-      if (catalog && (Array.isArray(catalog.repairs) || catalog.sheets)) {
-        const fieldCounts = new Map();
-        const fieldSources = new Map();
+if (catalog && (Array.isArray(catalog.repairs) || catalog.sheets)) {
+        // Consolidate fields into two main buckets: "Repairs" and "Station Data"
+        const fieldMap = new Map(); // Key: Lowercase -> { original: String, sources: Set }
 
-        // Count repairs fields
-        (catalog.repairs || []).forEach(field => {
-          const key = field.toLowerCase();
-          fieldCounts.set(key, (fieldCounts.get(key) || 0) + 1);
-          if (!fieldSources.has(key)) fieldSources.set(key, []);
-          fieldSources.get(key).push({ sheet: 'Repairs', field });
+        const addField = (field, sourceCategory) => {
+          const key = field.trim().toLowerCase();
+          if (!fieldMap.has(key)) {
+            fieldMap.set(key, { original: field.trim(), sources: new Set() });
+          }
+          fieldMap.get(key).sources.add(sourceCategory);
+        };
+
+        // 1. Process Repairs
+        (catalog.repairs || []).forEach(field => addField(field, 'Repairs'));
+
+        // 2. Process all Asset Sheets (consolidate into 'Station Data')
+        Object.values(catalog.sheets || {}).forEach(fields => {
+          (fields || []).forEach(field => addField(field, 'Station Data'));
         });
 
-        // Count asset sheet fields
-        Object.entries(catalog.sheets || {}).forEach(([sheetName, fields]) => {
-          (fields || []).forEach(field => {
-            const key = field.toLowerCase();
-            fieldCounts.set(key, (fieldCounts.get(key) || 0) + 1);
-            if (!fieldSources.has(key)) fieldSources.set(key, []);
-            fieldSources.get(key).push({ sheet: sheetName, field });
-          });
-        });
-
-        // Build qualified field names
         const qualifiedFields = [];
 
-        for (const [key, sources] of fieldSources.entries()) {
-          const count = fieldCounts.get(key) || 0;
-
-          if (count === 1) {
-            // Unique - no qualifier needed
-            qualifiedFields.push(sources[0].field);
-          } else {
-            // Duplicate - add sheet qualifier to ALL instances
-            sources.forEach(({ sheet, field }) => {
-              qualifiedFields.push(`${field} (${sheet})`);
-            });
+        for (const { original, sources } of fieldMap.values()) {
+          if (sources.has('Repairs') && sources.has('Station Data')) {
+            // Collision: Exists in both contexts -> Explicitly qualify both
+            qualifiedFields.push(`${original} (Repairs)`);
+            qualifiedFields.push(`${original} (Station Data)`);
+          } else if (sources.has('Repairs')) {
+            // Only in Repairs -> No qualifier needed
+            qualifiedFields.push(original);
+          } else if (sources.has('Station Data')) {
+            // Only in Station Data -> No qualifier needed
+            qualifiedFields.push(original);
           }
         }
 
-        availableFieldNames = uniqCaseInsensitive(qualifiedFields).sort((a,b)=>a.localeCompare(b));
-        availableParameterNames = [];
+        availableFieldNames = qualifiedFields.sort((a,b)=>a.toLowerCase().localeCompare(b.toLowerCase()));        availableParameterNames = [];
         availableAllNames = availableFieldNames.slice();
 
         console.log('[loadAvailableFields] Loaded', availableFieldNames.length, 'fields');
