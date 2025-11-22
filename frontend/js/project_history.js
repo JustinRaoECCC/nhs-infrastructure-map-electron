@@ -441,16 +441,11 @@
     lbBackdrop?.addEventListener('click', closePhotoLightbox);
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePhotoLightbox(); });
 
-    // Lazy render on first open
-    let loaded = false;
-    const ensureLoad = async () => {
-      if (loaded) return;
-      loaded = true;
-      await renderList(host, stn);
-    };
-    tabBtn?.addEventListener('click', ensureLoad);
-    const content = container.querySelector('#project-history');
-    if (content?.classList.contains('active')) await ensureLoad();
+    // Load immediately to ensure instant display
+    await renderList(host, stn);
+    
+    // Reload on tab click (optional, keeps data fresh if user switches tabs)
+    tabBtn?.addEventListener('click', () => renderList(host, stn));
 
     // ---- Add Project modal logic ----
     const addBtn = host.querySelector('#phAddBtn');

@@ -439,11 +439,14 @@ class MongoPersistence extends IPersistence {
         }
       }
 
+      // Helper to normalize location keys (lowercase) to match app.js/config.js expectation
+      const normKey = (s) => String(s || '').trim().toLowerCase();
+
       const locationLinks = {};
       for (const loc of allLocations) {
         if (loc.link) {
           if (!locationLinks[loc.company]) locationLinks[loc.company] = {};
-          locationLinks[loc.company][loc.location] = loc.link;
+          locationLinks[loc.company][normKey(loc.location)] = loc.link;
         }
       }
 
@@ -451,8 +454,9 @@ class MongoPersistence extends IPersistence {
       for (const asset of allAssets) {
         if (asset.link && asset.company && asset.location) {
           if (!assetTypeLinks[asset.company]) assetTypeLinks[asset.company] = {};
-          if (!assetTypeLinks[asset.company][asset.location]) assetTypeLinks[asset.company][asset.location] = {};
-          assetTypeLinks[asset.company][asset.location][asset.asset_type] = asset.link;
+          const lKey = normKey(asset.location);
+          if (!assetTypeLinks[asset.company][lKey]) assetTypeLinks[asset.company][lKey] = {};
+          assetTypeLinks[asset.company][lKey][asset.asset_type] = asset.link;
         }
       }
 

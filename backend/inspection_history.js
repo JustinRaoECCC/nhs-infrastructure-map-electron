@@ -40,16 +40,27 @@ async function copyWithUniqueName(src, destDir) {
   return target;
 }
 
-function containsInspectionWordFromList(s, words) {
-  const x = String(s || '').toLowerCase();
-  // NOTE:
-  // - If 'words' is undefined (no opts passed), the caller should provide a default.
-  // - If 'words' is an empty array, match NOTHING (return false).
-  const list = (Array.isArray(words) ? words : [])
-    .map(w => String(w || '').toLowerCase().trim())
-    .filter(Boolean);
-  if (list.length === 0) return false;
-  return list.some(w => x.includes(w));
+function containsInspectionWordFromList(folderName, keywords) {
+  // 1. Safety check and normalize the folder name to lowercase
+  const nameLower = String(folderName || '').trim().toLowerCase();
+  
+  if (!nameLower) return false;
+
+  // 2. Normalize the keywords list:
+  //    - Ensure it's an array
+  //    - Convert every keyword to string
+  //    - Trim whitespace
+  //    - Convert to lowercase
+  //    - Remove empty strings
+  const validKeywords = (Array.isArray(keywords) ? keywords : [])
+    .map(k => String(k || '').trim().toLowerCase())
+    .filter(k => k.length > 0);
+
+  // 3. If list is empty, nothing can match
+  if (validKeywords.length === 0) return false;
+
+  // 4. Check if ANY keyword is inside the folder name
+  return validKeywords.some(keyword => nameLower.includes(keyword));
 }
 
 function parseDateFromFolderName(name) {
