@@ -44,7 +44,13 @@ function debounce(key, fn, delay = 100) {
   });
 }
 
-// ─── Public API ────────────────────────────────────────────────────────────
+// ─── Cache Optimization ────────────────────────────────────────────────────
+// Simple memory cache to avoid hitting Excel worker too frequently
+// This drastically improves performance for features like the Documents tab
+let _aggregateCache = null;
+let _aggregateTimestamp = 0;
+const AGGREGATE_CACHE_TTL = 3000; // 3 seconds
+
 // ─── Public API ────────────────────────────────────────────────────────────
 // backend/app.js
 async function getStationData(opts = {}) {
@@ -64,7 +70,18 @@ async function getStationData(opts = {}) {
 
   const skipColors = !!opts.skipColors;
   const persistence = await getPersistence();
-  const agg = await persistence.readStationsAggregate().catch(() => ({ success:false, rows: [] }));
+
+  // ─── Caching Logic ───
+  // If we have valid cached rows, use them to avoid the expensive Excel read
+  let agg;
+  if (_aggregateCache && (Date.now() - _aggregateTimestamp < AGGREGATE_CACHE_TTL)) {
+    agg = _aggregateCache;
+  } else {
+    agg = await persistence.readStationsAggregate().catch(() => ({ success:false, rows: [] }));
+    _aggregateCache = agg;
+    _aggregateTimestamp = Date.now();
+  }
+  
   const rows = agg?.rows || [];
   const out = new Array(rows.length);
 
@@ -164,8 +181,9 @@ async function getStationData(opts = {}) {
   return out;
 }
 
-// Make invalidate meaningful: re-prime lookup caches
+// Make invalidate meaningful: re-prime lookup caches AND clear data cache
 async function invalidateStationCache() {
+  _aggregateCache = null; // Clear local memory cache
   try { await lookupsRepo.primeAllCaches(); } catch (_) {}
   return { success: true };
 }
@@ -178,8 +196,8 @@ async function getActiveCompanies() {
   } catch (e) {
     console.error('[lookups] getActiveCompanies failed:', e);
   }
-  // Fallback must match the new object structure
-  return [{ name: 'NHS', description: '', email: '' }];
+  // Fallback must match the new object structure
+  return [{ name: 'NHS', description: '', email: '' }];
 }
 
 async function getLocationsForCompany(_company) {
@@ -354,9 +372,9 @@ async function addStationsFromSelection(payload) {
 /**
  * Manually add a single asset instance without Excel import.
  * payload: {
- *   company, location, assetType,
- *   general: { stationId, siteName, lat, lon, status },
- *   extras: [ { section, field, value }, ... ]
+ * company, location, assetType,
+ * general: { stationId, siteName, lat, lon, status },
+ * extras: [ { section, field, value }, ... ]
  * }
  */
 async function manualAddInstance(payload = {}) {
@@ -499,7 +517,13 @@ async function resolvePhotosBaseAndStationDir(siteName, stationId) {
     let company   = '';
     
     try {
-      const all = await getStationData({ skipColors: true });
+      // ══════════════════════════════════════════════════════════════════
+      // FIX: Disable debounce here. 
+      // We need immediate, actual data to resolve the path.
+      // ══════════════════════════════════════════════════════════════════
+      const all = await getStationData({ skipColors: true, debounce: false });
+      // ══════════════════════════════════════════════════════════════════
+
       const st = all.find(
         s => String(s.station_id).trim().toLowerCase() === String(stationId).trim().toLowerCase()
       );
@@ -680,9 +704,9 @@ async function updateStationData(updatedStation, schema) {
 
     // Determine the location file (Excel file to update)
     const locationFile = currentStation.location_file || 
-                        updatedStation.province || 
-                        currentStation.province || 
-                        'Unknown';
+                         updatedStation.province || 
+                         currentStation.province || 
+                         'Unknown';
 
     // Prepare the row data
     const rowData = prepareStationRowForExcel(updatedStation);
@@ -738,7 +762,7 @@ function prepareStationRowForExcel(station) {
 
 /**
  * Append a repair entry using the new storage model:
- *   data/companies/<company>/<location>.xlsx with sheet "{AssetType} {Location} Repairs"
+ * data/companies/<company>/<location>.xlsx with sheet "{AssetType} {Location} Repairs"
  * If the Station ID already exists in the sheet, the new row is inserted
  * right after the last existing row for that station.
  *
