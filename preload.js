@@ -143,6 +143,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteStatus:            (statusKey) => ipcRenderer.invoke('status:delete', statusKey),
   setApplyStatusColors:    (flag) => ipcRenderer.invoke('status:setApply', !!flag),
   setApplyRepairColors:    (flag) => ipcRenderer.invoke('repair:setApply', !!flag),
+  setStatusOverridesRepair: (flag) => ipcRenderer.invoke('status:setPriority', !!flag),
 
   // ─── Nuke ────────────────────────────────────────────────────────────────
   nukeProgram: () => ipcRenderer.invoke('nuke:run'),

@@ -128,6 +128,10 @@
     try { return await window.electronAPI.setApplyRepairColors(flag); }
     catch (e) { console.warn('[settings] setApplyRepairColors failed', e); return { success:false }; }
   }
+  async function setStatusOverridesRepair(flag) {
+    try { return await window.electronAPI.setStatusOverridesRepair(flag); }
+    catch (e) { console.warn('[settings] setStatusOverridesRepair failed', e); return { success:false }; }
+  }
 
   // ──────────────────────────────────────────────────────────────────────────
   // State
@@ -144,10 +148,42 @@
     statusColors: { inactive:'#8e8e8e', mothballed:'#a87ecb', unknown:'#999999' },
     applyStatusColorsOnMap: false,
     applyRepairColorsOnMap: false,
+    statusOverridesRepair: false, // true = Status wins, false = Repair wins
     statusChanged: new Set(), // lowercased keys that changed color/label
     togglesChanged: new Set(), // 'applyStatus','applyRepair'
     statusTimer: null          // timer for auto-clearing the "Saved changes" message
   };
+
+  // Helper for Custom Modal
+  function showPriorityConflictModal() {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999;';
+      
+      const modal = document.createElement('div');
+      modal.style.cssText = 'background:white;padding:20px;border-radius:8px;width:400px;box-shadow:0 4px 15px rgba(0,0,0,0.2);font-family:sans-serif;';
+      
+      modal.innerHTML = `
+        <h3 style="margin-top:0;">Conflict Resolution</h3>
+        <p style="color:#555;margin-bottom:20px;">Both <b>Status Overrides</b> and <b>Repair Colors</b> are enabled. When a station has both, which color should take priority?</p>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <button id="btnStatus" class="btn btn-primary" style="padding:10px;">Prioritize Status Override</button>
+          <button id="btnRepair" class="btn btn-secondary" style="padding:10px;background:#eee;border:1px solid #ddd;">Prioritize Repair Colors</button>
+        </div>
+      `;
+
+      const close = (val) => {
+        document.body.removeChild(overlay);
+        resolve(val);
+      };
+
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      modal.querySelector('#btnStatus').onclick = () => close(true);  // Status Wins
+      modal.querySelector('#btnRepair').onclick = () => close(false); // Repair Wins
+    });
+  }
 
   // ──────────────────────────────────────────────────────────────────────────
   // Rendering (Map pin)
@@ -378,6 +414,15 @@
     const statusChanged = Array.from(state.statusChanged.values());
     const deleted = Array.from(state.deletedStatusKeys.values());
 
+    // Check for conflict priority if both enabled
+    if (state.applyStatusColorsOnMap && state.applyRepairColorsOnMap) {
+      const userChoice = await showPriorityConflictModal();
+      if (userChoice !== state.statusOverridesRepair) {
+        state.statusOverridesRepair = userChoice;
+        state.togglesChanged.add('statusPriority');
+      }
+    }
+
     // Check if Photo Links tab has changes
     const linkHasChanges = window.linkSettings && window.linkSettings.hasChanges();
     // Check for funding changes
@@ -438,6 +483,10 @@
     }
     if (state.togglesChanged.has('applyRepair')) {
       const res = await setApplyRepairColors(!!state.applyRepairColorsOnMap);
+      res && res.success ? ok++ : fail++;
+    }
+    if (state.togglesChanged.has('statusPriority')) {
+      const res = await setStatusOverridesRepair(!!state.statusOverridesRepair);
       res && res.success ? ok++ : fail++;
     }
 
@@ -569,6 +618,7 @@
     state.statusRows = rows2;
     state.applyStatusColorsOnMap = !!s.applyStatusColorsOnMap;
     state.applyRepairColorsOnMap = !!s.applyRepairColorsOnMap;
+    state.statusOverridesRepair = !!s.statusOverridesRepair;
 
     // Render dynamic table + bind toolbar/toggles
     renderStatusTable();

@@ -519,12 +519,19 @@ class MongoPersistence extends IPersistence {
       const statusColorsCollection = mongoClient.getCollection(COLLECTIONS.STATUS_COLORS);
       const statusColorsDocs = await statusColorsCollection.find({}).toArray();
       for (const doc of statusColorsDocs) {
-        statusColorsMap[doc.Status] = doc.Color;
+        // FIX: Normalize status keys to lowercase so app.js can match them
+        if (doc.Status) {
+          statusColorsMap[doc.Status.toLowerCase()] = doc.Color;
+        }
       }
 
       const settingsCollection = mongoClient.getCollection(COLLECTIONS.SETTINGS);
-      const applyStatusSetting = await settingsCollection.findOne({ Key: 'applyStatusColorsOnMap' });
-      const applyRepairSetting = await settingsCollection.findOne({ Key: 'applyRepairColorsOnMap' });
+      // Fetch all settings and helper to find case-insensitive keys
+      const settingsDocs = await settingsCollection.find({}).toArray();
+      const getSetting = (key) => {
+        const found = settingsDocs.find(d => d.Key && d.Key.toLowerCase() === key.toLowerCase());
+        return found ? found.Value : false;
+      };
 
       const inspectionKeywordsCollection = mongoClient.getCollection(COLLECTIONS.INSPECTION_KEYWORDS);
       const inspectionKeywordsDocs = await inspectionKeywordsCollection.find({}).toArray();
@@ -557,9 +564,10 @@ class MongoPersistence extends IPersistence {
         locationLinks,
         assetTypeLinks,
         statusColors: statusColorsMap,
-        applyStatusColorsOnMap: applyStatusSetting ? applyStatusSetting.Value : false,
+        applyStatusColorsOnMap: !!getSetting('applyStatusColorsOnMap'),
         repairColors: repairColorsByCompanyLoc,
-        applyRepairColorsOnMap: applyRepairSetting ? applyRepairSetting.Value : false,
+        applyRepairColorsOnMap: !!getSetting('applyRepairColorsOnMap'),
+        statusOverridesRepair: !!getSetting('statusOverridesRepair'),
         inspectionKeywords,
         projectKeywords
       };
@@ -579,6 +587,7 @@ class MongoPersistence extends IPersistence {
         applyStatusColorsOnMap: false,
         repairColors: {},
         applyRepairColorsOnMap: false,
+        statusOverridesRepair: false,
         inspectionKeywords: [],
         projectKeywords: []
       };

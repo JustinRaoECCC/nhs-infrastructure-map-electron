@@ -141,12 +141,14 @@ async function getStationData(opts = {}) {
   let applyStatus = false;
   let statusColors = new Map();
   let applyRepairColors = false;
+  let statusOverridesRepair = false;
   let repairByCoLocN = new Map();
   try {
     const sr = await lookupsRepo.getStatusAndRepairSettings();
     applyStatus = !!sr.applyStatusColorsOnMap;
     statusColors = new Map(Object.entries(sr.statusColors || {})); // keys expected lower-cased
     applyRepairColors = !!sr.applyRepairColorsOnMap;
+    statusOverridesRepair = !!sr.statusOverridesRepair;
 
     // Normalize repair color map to case-insensitive lookup: company -> location -> assetType
     const rcSrc = sr.repairColors instanceof Map
@@ -200,14 +202,20 @@ async function getStationData(opts = {}) {
     const atKey = norm(atRaw);
 
     let color = null;
+    let baseColor = null;
+    let repairColor = null;
+    let statusColor = null;
+
     if (!skipColors) {
       if (co && L && byCoLocN.has(co)) {
         const locMap = byCoLocN.get(co);
         const m = locMap && locMap.get(L);
         if (m && m.has(atKey)) {
-          color = m.get(atKey);
+          baseColor = m.get(atKey);
         }
       }
+      // Default to base color
+      color = baseColor;
 
       // Repair color override (if enabled)
       if (applyRepairColors && co && L && repairByCoLocN.has(co)) {
@@ -216,7 +224,7 @@ async function getStationData(opts = {}) {
           const locMap = repairByCoLocN.get(co);
           const m = locMap && locMap.get(L);
           if (m && m.has(atKey)) {
-            color = m.get(atKey);
+            repairColor = m.get(atKey);
           }
         }
       }
@@ -228,8 +236,19 @@ async function getStationData(opts = {}) {
       const s = norm(st.status || '');
       if (s && s !== 'active') {
         const override = statusColors.get(s);
-        if (override) color = override;
+        if (override) statusColor = override;
       }
+    }
+
+    // Final Priority Logic
+    if (statusOverridesRepair) {
+      // Status wins: Apply repair first, then overwrite with status if present
+      if (repairColor) color = repairColor;
+      if (statusColor) color = statusColor;
+    } else {
+      // Repair wins: Apply status first, then overwrite with repair if present
+      if (statusColor) color = statusColor;
+      if (repairColor) color = repairColor;
     }
 
     out[i] = { ...st, color };

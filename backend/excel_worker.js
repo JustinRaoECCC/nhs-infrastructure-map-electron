@@ -540,6 +540,7 @@ async function readLookupsSnapshot() {
   const wsCfg = getSheet(wb, 'Settings');
   let applyStatusColorsOnMap = false;
   let applyRepairColorsOnMap = false;
+  let statusOverridesRepair = false;
   if (wsCfg) {
     wsCfg.eachRow({ includeEmpty:false }, (row, i) => {
       if (i === 1) return;
@@ -547,6 +548,7 @@ async function readLookupsSnapshot() {
       const val = normStr(row.getCell(2)?.text);
       if (key.toLowerCase() === 'applystatuscolorsonmap') applyStatusColorsOnMap = toBool(val);
       if (key.toLowerCase() === 'applyrepaircolorsonmap') applyRepairColorsOnMap = toBool(val);
+      if (key.toLowerCase() === 'statusoverridesrepair') statusOverridesRepair = toBool(val);
     });
   }
 
@@ -566,6 +568,7 @@ async function readLookupsSnapshot() {
     applyStatusColorsOnMap,
     repairColors,
     applyRepairColorsOnMap,
+    statusOverridesRepair,
     // NEW:
     locationLinks,
     assetTypeLinks,

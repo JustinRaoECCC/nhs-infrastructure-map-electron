@@ -563,6 +563,7 @@ ipcMain.handle('status:setColor', async (_evt, key, color) => lookups.setStatusC
 ipcMain.handle('status:delete', async (_evt, key) => lookups.deleteStatus(key));
 ipcMain.handle('status:setApply', async (_evt, flag) => lookups.setApplyStatusColors(!!flag));
 ipcMain.handle('repair:setApply', async (_evt, flag) => lookups.setApplyRepairColors(!!flag));
+ipcMain.handle('status:setPriority', async (_evt, flag) => lookups.setStatusOverridesRepair(!!flag));
 
 // ─── IPC: UI Confirm (sync) ───────────────────────────────────────────────
 ipcMain.on('ui:confirm:sync', (event, opts = {}) => {

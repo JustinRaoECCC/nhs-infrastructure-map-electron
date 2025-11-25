@@ -52,6 +52,7 @@ let _cache = {
   applyStatusColorsOnMap: false,
   repairColors: new Map(),         // Map<company, Map<location, Map<assetType, color>>>
   applyRepairColorsOnMap: false,
+  statusOverridesRepair: false,    // New priority setting
   // NEW: links
   locationLinks: new Map(),        // Map<company, Map<location, link>>
   assetTypeLinks: new Map(),       // Map<company, Map<location, Map<assetType, link>>>
@@ -100,6 +101,7 @@ function _loadJsonCache(mtimeMs) {
         )
       ),
       applyRepairColorsOnMap: !!raw.applyRepairColorsOnMap,
+      statusOverridesRepair: !!raw.statusOverridesRepair,
       // NEW: links
       locationLinks: new Map(
         Object.entries(raw.locationLinks || {}).map(
@@ -168,6 +170,7 @@ function _saveJsonCache() {
         )
       ),
       applyRepairColorsOnMap: _cache.applyRepairColorsOnMap,
+      statusOverridesRepair: _cache.statusOverridesRepair,
       // NEW: links
       locationLinks: Object.fromEntries(
         Array.from(_cache.locationLinks.entries()).map(
@@ -257,6 +260,7 @@ async function _primeAllCaches() {
     })
   );
   const applyRepairColorsOnMap = !!snap.applyRepairColorsOnMap;
+  const statusOverridesRepair = !!snap.statusOverridesRepair;
 
   // NEW: hydrate link maps from snapshot
  const locLinks = new Map(
@@ -292,6 +296,7 @@ async function _primeAllCaches() {
     applyStatusColorsOnMap,
     repairColors,
     applyRepairColorsOnMap,
+    statusOverridesRepair,
     // NEW: links
     locationLinks: locLinks,
     assetTypeLinks: atLinks,
@@ -536,7 +541,8 @@ async function getStatusAndRepairSettings() {
         ]
       )
     ),
-    applyRepairColorsOnMap: _cache.applyRepairColorsOnMap
+    applyRepairColorsOnMap: _cache.applyRepairColorsOnMap,
+    statusOverridesRepair: _cache.statusOverridesRepair
   };
 }
 
@@ -557,6 +563,13 @@ async function setApplyStatusColors(flag) {
 async function setApplyRepairColors(flag) {
   const persistence = await getPersistence();
   const res = await persistence.setSettingBoolean('applyRepairColorsOnMap', !!flag);
+  _invalidateAllCaches();
+  return res;
+}
+
+async function setStatusOverridesRepair(flag) {
+  const persistence = await getPersistence();
+  const res = await persistence.setSettingBoolean('statusOverridesRepair', !!flag);
   _invalidateAllCaches();
   return res;
 }
@@ -613,6 +626,7 @@ module.exports = {
   setStatusColor,
   setApplyStatusColors,
   setApplyRepairColors,
+  setStatusOverridesRepair,
   deleteStatus,
   // NEW: inspection keywords
   getInspectionKeywords,
