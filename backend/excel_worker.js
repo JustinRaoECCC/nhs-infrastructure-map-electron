@@ -293,6 +293,7 @@ const ALG_PARAMS_SHEET       = 'Algorithm Parameters';
 const WORKPLAN_CONST_SHEET   = 'Workplan Constants';
 const CUSTOM_WEIGHTS_SHEET   = 'Custom Weights';
 const FIXED_PARAMS_SHEET     = 'Fixed Parameters';
+const REPAIR_COLOURS_SHEET   = 'Repair Colours';
 
 // ─── Ensure workbook exists with canonical sheets ─────────────────────────
 async function ensureLookupsReady() {
@@ -354,6 +355,12 @@ async function ensureLookupsReady() {
       ws.addRow(['inspection']); // default on creation
       changed = true;
     }
+    // NEW: Repair Colours sheet
+    if (need(REPAIR_COLOURS_SHEET)) {
+      const ws = wb.addWorksheet(REPAIR_COLOURS_SHEET);
+      ws.addRow(['company','location','asset type','repair colour']);
+      changed = true;
+    }
     if (changed) {
       progress('ensure', 75, 'Writing workbook changes…');
       await wb.xlsx.writeFile(LOOKUPS_PATH);
@@ -398,6 +405,9 @@ async function ensureLookupsReady() {
     wsPH.addRow(['repair']);
     wsPH.addRow(['decommission']);
 
+    const wsRC = wb.addWorksheet(REPAIR_COLOURS_SHEET);
+    wsRC.addRow(['company','location','asset type','repair colour']);
+
     progress('ensure', 70, 'Saving new workbook…');
     await wb.xlsx.writeFile(LOOKUPS_PATH);
     progress('ensure', 80, 'Workbook ready');
@@ -421,6 +431,7 @@ async function readLookupsSnapshot() {
   const wsL = getSheet(wb, 'Locations');
   const wsK = getSheet(wb, IH_KEYWORDS_SHEET);
   const wsPK = getSheet(wb, PH_KEYWORDS_SHEET);
+  const wsRC = getSheet(wb, REPAIR_COLOURS_SHEET);
 
   // NEW: link caches
   const locationLinks = {};        // { company: { location: link } }
@@ -496,6 +507,24 @@ async function readLookupsSnapshot() {
       }
     });
   }
+
+  // NEW: Read Repair Colours
+  const repairColors = {};
+  if (wsRC) {
+    wsRC.eachRow({ includeEmpty:false }, (row, i) => {
+      if (i === 1) return;
+      const co  = normStr(row.getCell(1)?.text);
+      const loc = normStr(row.getCell(2)?.text);
+      const at  = normStr(row.getCell(3)?.text);
+      const col = normStr(row.getCell(4)?.text);
+      if (co && loc && at && col) {
+        if (!repairColors[co]) repairColors[co] = {};
+        if (!repairColors[co][loc]) repairColors[co][loc] = {};
+        repairColors[co][loc][at] = col;
+      }
+    });
+  }
+
   // NEW: Status Colors + Settings
   const wsSC = getSheet(wb, 'Status Colors');
   const statusColors = {};
@@ -535,6 +564,7 @@ async function readLookupsSnapshot() {
     assetsByCompanyLocation,
     statusColors,
     applyStatusColorsOnMap,
+    repairColors,
     applyRepairColorsOnMap,
     // NEW:
     locationLinks,
@@ -3553,6 +3583,38 @@ async function deleteAssetTypeFromLocation(companyName, locationName, assetTypeN
   return { success: true };
 }
 
+// NEW: Write Repair Colour
+async function setRepairColorForCompanyLocation(assetType, company, location, color) {
+  await ensureLookupsReady();
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(LOOKUPS_PATH);
+  const ws = getSheet(wb, REPAIR_COLOURS_SHEET) || wb.addWorksheet(REPAIR_COLOURS_SHEET);
+  if (ws.rowCount === 0) ws.addRow(['company','location','asset type','repair colour']);
+  
+  const tgtAt  = lc(assetType);
+  const tgtCo  = lc(company);
+  const tgtLoc = lc(location);
+  
+  let updated = false;
+  ws.eachRow({ includeEmpty:false }, (row, idx) => {
+    if (idx === 1) return;
+    const co  = lc(row.getCell(1)?.text);
+    const loc = lc(row.getCell(2)?.text);
+    const at  = lc(row.getCell(3)?.text);
+    
+    if (at === tgtAt && loc === tgtLoc && co === tgtCo) {
+      row.getCell(4).value = normStr(color);
+      updated = true;
+    }
+  });
+  if (!updated) {
+    ws.addRow([normStr(company), normStr(location), normStr(assetType), normStr(color)]);
+  }
+  await wb.xlsx.writeFile(LOOKUPS_PATH);
+  return { success: true };
+}
+
 // ─── RPC shim ─────────────────────────────────────────────────────────────
 const handlers = {
   ping: async () => 'pong',
@@ -3561,6 +3623,7 @@ const handlers = {
   setAssetTypeColor,
   setAssetTypeColorForLocation,
   setAssetTypeColorForCompanyLocation,
+  setRepairColorForCompanyLocation,
   upsertCompany,
   upsertLocation,
   upsertAssetType,

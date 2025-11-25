@@ -70,6 +70,10 @@ class DualWritePersistence {
     return await this.readPersistence.getColorMaps();
   }
 
+  async getRepairColorMaps() {
+    return await this.readPersistence.getRepairColorMaps();
+  }
+
   async readLookupsSnapshot() {
     return await this.readPersistence.readLookupsSnapshot();
   }
@@ -196,6 +200,10 @@ class DualWritePersistence {
 
   async setAssetTypeColorForCompanyLocation(assetType, company, location, color) {
     return await this._writeToAll('setAssetTypeColorForCompanyLocation', assetType, company, location, color);
+  }
+
+  async setRepairColorForCompanyLocation(assetType, company, location, color) {
+    return await this._writeToAll('setRepairColorForCompanyLocation', assetType, company, location, color);
   }
 
   async setStatusColor(statusKey, color) {

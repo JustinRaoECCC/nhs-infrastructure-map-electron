@@ -74,6 +74,38 @@
     return false;
   }
 
+  async function getRepairColorMapFromBackend() {
+    const api = window.electronAPI || {};
+    if (typeof api.getRepairColorMaps !== 'function') return {};
+    try {
+      const maps = await api.getRepairColorMaps();
+      const out = {};
+      if (maps && maps.byCompanyLocation) {
+        const byCo = maps.byCompanyLocation instanceof Map ? maps.byCompanyLocation : new Map(Object.entries(maps.byCompanyLocation));
+        for (const [co, locMapLike] of byCo.entries()) {
+          const locMap = locMapLike instanceof Map ? locMapLike : new Map(Object.entries(locMapLike));
+          for (const [loc, innerLike] of locMap.entries()) {
+            const inner = innerLike instanceof Map ? innerLike : new Map(Object.entries(innerLike));
+            for (const [at, color] of inner.entries()) {
+              out[rowKey(at, co, loc)] = normalizeHex(color);
+            }
+          }
+        }
+      }
+      return out;
+    } catch (e) { console.error('[settings] getRepairColorMaps failed', e); return {}; }
+  }
+  async function persistRepairColorChange(assetType, company, location, color) {
+    const api = window.electronAPI || {};
+    if (typeof api.setRepairColorForCompanyLocation === 'function') {
+      try {
+        const res = await api.setRepairColorForCompanyLocation(assetType, company, location, color);
+        if (res && res.success !== false) return true;
+      } catch (e) { console.warn('[settings] setRepairColorForCompanyLocation failed', e); }
+    }
+    return false;
+  }
+
   // NEW: Status/Repair settings IPC
   async function getStatusRepairSettings() {
     try { return await window.electronAPI.getStatusRepairSettings(); }
@@ -102,6 +134,8 @@
   const state = {
     rows: [],              // Map pin rows
     changes: new Map(),    // k=rowKey -> {asset_type, company, location, color}
+    repairRows: [],        // Repair rows
+    repairChanges: new Map(),
     // NEW (dynamic status rows):
     statusRows: [],        // [{label:'Inactive', color:'#8e8e8e', _origKey:'inactive'}]
     deletedStatusKeys: new Set(), // lowercased labels the user removed
@@ -147,6 +181,45 @@
       if (code) code.textContent = val;
       const k = rowKey(at, co, loc);
       state.changes.set(k, { asset_type: at, company: co, location: loc, color: val });
+    }, { passive: true });
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // NEW: Repair Colors Rendering
+  function renderRepairRows(tbody) {
+    tbody.innerHTML = '';
+    const frag = document.createDocumentFragment();
+    state.repairRows.forEach((r) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${r.company}</td>
+        <td>${r.asset_type}</td>
+        <td>${r.location}</td>
+        <td>
+          <input type="color" value="${r.color}" 
+                 data-asset="${r.asset_type}" data-company="${r.company}" data-location="${r.location}" 
+                 class="repair-color-input"
+                 style="width:42px;height:28px;border:0;background:transparent;cursor:pointer;" />
+          <code style="margin-left:.5rem;opacity:.8;">${r.color}</code>
+        </td>
+      `;
+      frag.appendChild(tr);
+    });
+    tbody.appendChild(frag);
+  }
+
+  function bindRepairInputs(tbody) {
+    tbody.addEventListener('input', (e) => {
+      const inp = e.target;
+      if (!(inp instanceof HTMLInputElement) || !inp.classList.contains('repair-color-input')) return;
+      const at  = inp.dataset.asset || '';
+      const co  = inp.dataset.company || '';
+      const loc = inp.dataset.location || '';
+      const val = normalizeHex(inp.value);
+      const code = inp.parentElement?.querySelector('code');
+      if (code) code.textContent = val;
+      const k = rowKey(at, co, loc);
+      state.repairChanges.set(k, { asset_type: at, company: co, location: loc, color: val });
     }, { passive: true });
   }
 
@@ -301,6 +374,7 @@
     if (!saveBtn) return;
 
     const entries = Array.from(state.changes.values());
+    const repairEntries = Array.from(state.repairChanges.values());
     const statusChanged = Array.from(state.statusChanged.values());
     const deleted = Array.from(state.deletedStatusKeys.values());
 
@@ -322,8 +396,14 @@
       const success = await persistColorChange(asset_type, company, location, color);
       success ? ok++ : fail++;
     }
+  
+    // 2) Repair color changes
+    for (const { asset_type, company, location, color } of repairEntries) {
+      const success = await persistRepairColorChange(asset_type, company, location, color);
+      success ? ok++ : fail++;
+    }
 
-    // 2) Status colors (add/update + deletes)
+    // 3) Status colors (add/update + deletes)
     const finalMap = {};
     state.statusRows.forEach(r => {
       const key = String(r.label || '').trim();
@@ -412,6 +492,7 @@
     if (cancelBtn) cancelBtn.disabled = false;
     if (!fail) {
       state.changes.clear();
+      state.repairChanges.clear();
       state.statusChanged.clear();
       state.deletedStatusKeys.clear();
       state.togglesChanged.clear();
@@ -420,6 +501,7 @@
 
   async function loadAndRender(root) {
     const tbody = root.querySelector('#mapPinTbody');
+    const tbodyRepair = root.querySelector('#repairColorTbody');
     if (!tbody) return;
 
     // Reset save status/counter display whenever Settings is (re)opened/reloaded
@@ -428,6 +510,7 @@
 
     // Clear transient change-tracking state on (re)open
     state.changes.clear();
+    state.repairChanges.clear();
     state.statusChanged.clear();
     state.deletedStatusKeys.clear();
     state.togglesChanged.clear();
@@ -435,8 +518,10 @@
     // Load lookups for main table
     const lookups = await getLookupTreeSafe();
     const colorMap = await getColorMapFromBackend();
+    const repairColorMap = await getRepairColorMapFromBackend();
 
     const rows = [];
+    const repairRows = [];
     const byCo = lookups.locationsByCompany || {};
     Object.keys(byCo).sort().forEach(company => {
       (byCo[company] || []).slice().sort().forEach(loc => {
@@ -447,6 +532,10 @@
           const c = colorMap[rowKey(at, company, loc)];
           const color = normalizeHex(c || HEX_DEFAULT);
           rows.push({ company, asset_type: at, location: loc, color });
+
+          const rc = repairColorMap[rowKey(at, company, loc)];
+          const rColor = normalizeHex(rc || HEX_DEFAULT);
+          repairRows.push({ company, asset_type: at, location: loc, color: rColor });
         });
       });
     });
@@ -454,6 +543,12 @@
     state.rows = rows;
     renderRows(tbody);
     bindColorInputs(tbody);
+
+    state.repairRows = repairRows;
+    if (tbodyRepair) {
+      renderRepairRows(tbodyRepair);
+      bindRepairInputs(tbodyRepair);
+    }
 
     // NEW: Load status/repair settings and render
     const s = await getStatusRepairSettings();

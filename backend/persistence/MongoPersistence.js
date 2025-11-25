@@ -155,6 +155,11 @@ class MongoPersistence extends IPersistence {
         { key: { Keyword: 1 }, unique: true }
       ]);
 
+      // Repair Colors
+      await mongoClient.createIndexes(COLLECTIONS.REPAIR_COLORS, [
+        { key: { company: 1, location: 1, asset_type: 1 }, unique: true }
+      ]);
+
       console.log('[MongoPersistence] Indexes created successfully');
     } catch (error) {
       console.warn('[MongoPersistence] Some indexes may already exist:', error.message);
@@ -382,6 +387,56 @@ class MongoPersistence extends IPersistence {
   }
 
   // ════════════════════════════════════════════════════════════════════════════
+  // REPAIR COLORS
+  // ════════════════════════════════════════════════════════════════════════════
+
+  async getRepairColorMaps() {
+    const collection = mongoClient.getCollection(COLLECTIONS.REPAIR_COLORS);
+    const docs = await collection.find({}).toArray();
+
+    const byCompanyLocation = new Map();
+
+    for (const doc of docs) {
+      const { asset_type, location, company, color } = doc;
+      if (!color || !company || !location) continue;
+
+      if (!byCompanyLocation.has(company)) {
+        byCompanyLocation.set(company, new Map());
+      }
+      const locMap = byCompanyLocation.get(company);
+
+      if (!locMap.has(location)) {
+        locMap.set(location, new Map());
+      }
+      const assetMap = locMap.get(location);
+      assetMap.set(asset_type, color);
+    }
+
+    return { byCompanyLocation };
+  }
+
+  async setRepairColorForCompanyLocation(assetType, company, location, color) {
+    try {
+      const collection = mongoClient.getCollection(COLLECTIONS.REPAIR_COLORS);
+      const now = new Date();
+
+      await collection.updateOne(
+        { asset_type: assetType, company, location },
+        { 
+          $set: { color: color || '', _updatedAt: now },
+          $setOnInsert: { _createdAt: now, _source: 'manual' }
+        },
+        { upsert: true }
+      );
+
+      return { success: true };
+    } catch (error) {
+      console.error('[MongoPersistence] setRepairColorForCompanyLocation failed:', error.message);
+      return { success: false, message: error.message };
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
   // LOOKUPS - SNAPSHOT & TREE
   // ════════════════════════════════════════════════════════════════════════════
 
@@ -479,6 +534,18 @@ class MongoPersistence extends IPersistence {
       const projectKeywordsDocs = await projectKeywordsCollection.find({}).toArray();
       const projectKeywords = projectKeywordsDocs.map(k => k.Keyword);
 
+      // Load Repair Colors for Snapshot
+      const repairColorsCollection = mongoClient.getCollection(COLLECTIONS.REPAIR_COLORS);
+      const repairColorsDocs = await repairColorsCollection.find({}).toArray();
+      
+      const repairColorsByCompanyLoc = {};
+      for (const doc of repairColorsDocs) {
+        if (!doc.color) continue;
+        if (!repairColorsByCompanyLoc[doc.company]) repairColorsByCompanyLoc[doc.company] = {};
+        if (!repairColorsByCompanyLoc[doc.company][doc.location]) repairColorsByCompanyLoc[doc.company][doc.location] = {};
+        repairColorsByCompanyLoc[doc.company][doc.location][doc.asset_type] = doc.color;
+      }
+
       return {
         mtimeMs: Date.now(),
         companies,
@@ -491,7 +558,7 @@ class MongoPersistence extends IPersistence {
         assetTypeLinks,
         statusColors: statusColorsMap,
         applyStatusColorsOnMap: applyStatusSetting ? applyStatusSetting.Value : false,
-        repairColors: {},
+        repairColors: repairColorsByCompanyLoc,
         applyRepairColorsOnMap: applyRepairSetting ? applyRepairSetting.Value : false,
         inspectionKeywords,
         projectKeywords

@@ -285,8 +285,9 @@ module.exports = {
     STATUS_COLORS: 'statusColors',
     SETTINGS: 'settings',
     INSPECTION_KEYWORDS: 'inspectionHistoryKeywords',
-    PROJECT_KEYWORDS: 'projectHistoryKeywords', // <-- ADDED
-    AUTH_USERS: 'authUsers'
+    PROJECT_KEYWORDS: 'projectHistoryKeywords',
+    AUTH_USERS: 'authUsers',
+    REPAIR_COLORS: 'repairColors'
   },
 
   // Helper to add metadata to documents

@@ -50,7 +50,7 @@ let _cache = {
   // NEW: status/repair settings
   statusColors: new Map(),         // Map<statusKey, color> (keys lowercased: inactive, mothballed, unknown)
   applyStatusColorsOnMap: false,
-  repairColors: new Map(),         // reserved for future
+  repairColors: new Map(),         // Map<company, Map<location, Map<assetType, color>>>
   applyRepairColorsOnMap: false,
   // NEW: links
   locationLinks: new Map(),        // Map<company, Map<location, link>>
@@ -89,7 +89,16 @@ function _loadJsonCache(mtimeMs) {
       // NEW
       statusColors: new Map(Object.entries(raw.statusColors || {})),
       applyStatusColorsOnMap: !!raw.applyStatusColorsOnMap,
-      repairColors: new Map(Object.entries(raw.repairColors || {})),
+      repairColors: new Map(
+        Object.entries(raw.repairColors || {}).map(
+          ([company, locObj]) => [
+            company,
+            new Map(Object.entries(locObj).map(
+              ([loc, obj]) => [loc, new Map(Object.entries(obj))]
+            ))
+          ]
+        )
+      ),
       applyRepairColorsOnMap: !!raw.applyRepairColorsOnMap,
       // NEW: links
       locationLinks: new Map(
@@ -146,7 +155,18 @@ function _saveJsonCache() {
       // NEW
       statusColors: Object.fromEntries(_cache.statusColors),
       applyStatusColorsOnMap: _cache.applyStatusColorsOnMap,
-      repairColors: Object.fromEntries(_cache.repairColors),
+      repairColors: Object.fromEntries(
+        Array.from(_cache.repairColors.entries()).map(
+          ([company, locMap]) => [
+            company,
+            Object.fromEntries(
+              Array.from(locMap.entries()).map(
+                ([loc, m]) => [loc, Object.fromEntries(m)]
+              )
+            )
+          ]
+        )
+      ),
       applyRepairColorsOnMap: _cache.applyRepairColorsOnMap,
       // NEW: links
       locationLinks: Object.fromEntries(
@@ -231,6 +251,11 @@ async function _primeAllCaches() {
   // NEW: status/repair settings from snapshot
   const statusColors = new Map(Object.entries(snap.statusColors || {}));
   const applyStatusColorsOnMap = !!snap.applyStatusColorsOnMap;
+  const repairColors = new Map(
+    Object.entries(snap.repairColors || {}).map(([co, locObj]) => {
+      return [co, new Map(Object.entries(locObj).map(([loc, obj]) => [loc, new Map(Object.entries(obj))]))];
+    })
+  );
   const applyRepairColorsOnMap = !!snap.applyRepairColorsOnMap;
 
   // NEW: hydrate link maps from snapshot
@@ -265,7 +290,7 @@ async function _primeAllCaches() {
     // NEW
     statusColors,
     applyStatusColorsOnMap,
-    repairColors: new Map(), // future
+    repairColors,
     applyRepairColorsOnMap,
     // NEW: links
     locationLinks: locLinks,
@@ -400,6 +425,19 @@ async function setAssetTypeColorForCompanyLocation(assetType, company, location,
   return res;
 }
 
+// ─── Repair Colors ────────────────────────────────────────────────────────
+async function getRepairColorMaps() {
+  await _primeAllCaches();
+  return { byCompanyLocation: _cache.repairColors };
+}
+
+async function setRepairColorForCompanyLocation(assetType, company, location, color) {
+  const persistence = await getPersistence();
+  const res = await persistence.setRepairColorForCompanyLocation(assetType, company, location, color);
+  _invalidateAllCaches();
+  return res;
+}
+
 // ─── Writes / Upserts ─────────────────────────────────────────────────────
 async function upsertCompany(name, active = true, description = '', email = '') {
   const persistence = await getPersistence();
@@ -485,7 +523,19 @@ async function getStatusAndRepairSettings() {
   return {
     statusColors: Object.fromEntries(_cache.statusColors),
     applyStatusColorsOnMap: _cache.applyStatusColorsOnMap,
-    repairColors: Object.fromEntries(_cache.repairColors),
+    // Convert repair colors map to plain object for IPC/serialization safety
+    repairColors: Object.fromEntries(
+      Array.from(_cache.repairColors.entries()).map(
+        ([company, locMap]) => [
+          company,
+          Object.fromEntries(
+            Array.from(locMap.entries()).map(
+              ([loc, atMap]) => [loc, Object.fromEntries(atMap)]
+            )
+          )
+        ]
+      )
+    ),
     applyRepairColorsOnMap: _cache.applyRepairColorsOnMap
   };
 }
@@ -555,6 +605,9 @@ module.exports = {
   setAssetTypeColor,
   setAssetTypeColorForLocation,
   setAssetTypeColorForCompanyLocation,
+  // NEW: repair colors
+  getRepairColorMaps,
+  setRepairColorForCompanyLocation,
   // NEW: status/repair settings
   getStatusAndRepairSettings,
   setStatusColor,

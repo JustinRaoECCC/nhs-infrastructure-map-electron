@@ -172,6 +172,25 @@ class IPersistence {
   }
 
   // ════════════════════════════════════════════════════════════════════════════
+  // REPAIR COLORS
+  // ════════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Get repair color maps
+   * @returns {Promise<Object>} - { byCompanyLocation: Map }
+   */
+  async getRepairColorMaps() {
+    throw new Error('Method "getRepairColorMaps()" must be implemented');
+  }
+
+  /**
+   * Set repair color for a company/location/asset combination
+   */
+  async setRepairColorForCompanyLocation(assetType, company, location, color) {
+    throw new Error('Method "setRepairColorForCompanyLocation()" must be implemented');
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
   // LOOKUPS - SNAPSHOT & TREE
   // ════════════════════════════════════════════════════════════════════════════
 

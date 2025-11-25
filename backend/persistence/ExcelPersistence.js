@@ -145,6 +145,27 @@ class ExcelPersistence extends IPersistence {
     return await excel.setAssetTypeColorForCompanyLocation(assetType, company, location, color);
   }
 
+  async getRepairColorMaps() {
+    const excel = getExcel();
+    const snapshot = await excel.readLookupsSnapshot();
+    const byCompanyLocation = new Map(
+      Object.entries(snapshot.repairColors || {}).map(
+        ([company, locObj]) => [
+          company,
+          new Map(Object.entries(locObj).map(
+            ([loc, obj]) => [loc, new Map(Object.entries(obj))]
+          ))
+        ]
+      )
+    );
+    return { byCompanyLocation };
+  }
+
+  async setRepairColorForCompanyLocation(assetType, company, location, color) {
+    const excel = getExcel();
+    return await excel.setRepairColorForCompanyLocation(assetType, company, location, color);
+  }
+
   // ════════════════════════════════════════════════════════════════════════════
   // LOOKUPS - SNAPSHOT & TREE
   // ════════════════════════════════════════════════════════════════════════════

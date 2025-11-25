@@ -365,6 +365,25 @@ ipcMain.handle('setAssetTypeColorForLocation', async (_, assetType, location, co
 ipcMain.handle('setAssetTypeColorForCompanyLocation', async (_evt, assetType, company, location, color) => {
   return lookups.setAssetTypeColorForCompanyLocation(assetType, company, location, color);
 });
+ipcMain.handle('getRepairColorMaps', async () => {
+  const maps = await lookups.getRepairColorMaps();
+  const toObj = (m) => Object.fromEntries(m instanceof Map ? m : new Map(Object.entries(m || {})));
+  const byCoLocObj = {};
+  const byCo = maps.byCompanyLocation instanceof Map
+    ? maps.byCompanyLocation
+    : new Map(Object.entries(maps.byCompanyLocation || {}));
+  for (const [co, locMapLike] of byCo.entries()) {
+    const locMap = locMapLike instanceof Map ? locMapLike : new Map(Object.entries(locMapLike || {}));
+    byCoLocObj[co] = {};
+    for (const [loc, inner] of locMap.entries()) {
+      byCoLocObj[co][loc] = toObj(inner);
+    }
+  }
+  return { byCompanyLocation: byCoLocObj };
+});
+ipcMain.handle('setRepairColorForCompanyLocation', async (_evt, assetType, company, location, color) =>
+  lookups.setRepairColorForCompanyLocation(assetType, company, location, color)
+);
 
 // ─── IPC: Colors ───────────────────────────────────────────────────────────
 ipcMain.handle('lookups:getAssetTypeColor', async (_evt, assetType) => backend.getAssetTypeColor(assetType));

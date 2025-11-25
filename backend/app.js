@@ -62,7 +62,7 @@ async function getStationData(opts = {}) {
     } catch (e) {
       if (e.message === 'Debounced') {
         // Return empty data for debounced calls
-        return { success: true, rows: [] };
+        return [];
       }
       throw e;
     }
@@ -89,6 +89,9 @@ async function getStationData(opts = {}) {
 
   // Build normalized color maps (case-insensitive) — only company→location→assetType
   let byCoLocN = new Map();
+
+  // Track which stations actually have repairs to apply conditional coloring
+  const stationsWithRepairs = new Set();
 
   if (!skipColors) {
     try {
@@ -137,10 +140,53 @@ async function getStationData(opts = {}) {
   // NEW: load status override settings once (used to optionally override color)
   let applyStatus = false;
   let statusColors = new Map();
+  let applyRepairColors = false;
+  let repairByCoLocN = new Map();
   try {
     const sr = await lookupsRepo.getStatusAndRepairSettings();
     applyStatus = !!sr.applyStatusColorsOnMap;
     statusColors = new Map(Object.entries(sr.statusColors || {})); // keys expected lower-cased
+    applyRepairColors = !!sr.applyRepairColorsOnMap;
+
+    // Normalize repair color map to case-insensitive lookup: company -> location -> assetType
+    const rcSrc = sr.repairColors instanceof Map
+      ? sr.repairColors
+      : new Map(Object.entries(sr.repairColors || {}));
+    for (const [company, locMapLike] of rcSrc.entries()) {
+      const coNorm = norm(company);
+      const locMap = locMapLike instanceof Map
+        ? locMapLike
+        : new Map(Object.entries(locMapLike || {}));
+
+      const nLocMap = new Map();
+      for (const [loc, innerLike] of locMap.entries()) {
+        const locNorm = normLoc(loc);
+        const inner = innerLike instanceof Map
+          ? innerLike
+          : new Map(Object.entries(innerLike || {}));
+
+        const nInner = new Map();
+        for (const [at, col] of inner.entries()) {
+          nInner.set(norm(at), col);
+        }
+        nLocMap.set(locNorm, nInner);
+      }
+      repairByCoLocN.set(coNorm, nLocMap);
+    }
+
+    // FIX: If repair colors are enabled, we must know WHICH stations have repairs.
+    // Otherwise, we overwrite the color for every single station of that asset type.
+    if (applyRepairColors && !skipColors) {
+      try {
+        const allRepairs = await persistence.getAllRepairs();
+        for (const r of allRepairs) {
+          if (r.station_id) stationsWithRepairs.add(norm(r.station_id));
+        }
+      } catch (e) {
+        console.warn('[app.js] Failed to load repairs list for coloring:', e);
+      }
+    }
+
   } catch (e) {
     console.warn('[colors] failed to read status settings:', e?.message || e);
   }
@@ -162,8 +208,19 @@ async function getStationData(opts = {}) {
           color = m.get(atKey);
         }
       }
+
+      // Repair color override (if enabled)
+      if (applyRepairColors && co && L && repairByCoLocN.has(co)) {
+        // FIX: Only apply repair color if the station actually has a repair
+        if (stationsWithRepairs.has(norm(st.station_id))) {
+          const locMap = repairByCoLocN.get(co);
+          const m = locMap && locMap.get(L);
+          if (m && m.has(atKey)) {
+            color = m.get(atKey);
+          }
+        }
+      }
     }
-    out[i] = { ...st, color };
 
     // NEW: Status overrides (only for non-Active). If enabled, override computed color.
     // Supported keys: 'inactive', 'mothballed', 'unknown'. Keys matched case-insensitively.
