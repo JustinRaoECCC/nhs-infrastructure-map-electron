@@ -3120,13 +3120,33 @@ async function createAuthWorkbook() {
   
   const _ExcelJS = getExcel();
   const workbook = new _ExcelJS.Workbook();
+  const HEADERS = ['Name','Email','Password','Admin','Permissions','Status','Created','LastLogin'];
+
+  // If the auth file already exists, do NOT overwrite it (prevents wiping users on reload).
+  if (fs.existsSync(AUTH_FILE)) {
+    await workbook.xlsx.readFile(AUTH_FILE);
+    let sheet = workbook.getWorksheet('Users');
+
+    // If the sheet is missing (legacy/accidental deletion), add it with headers but keep other sheets/data
+    if (!sheet) {
+      sheet = workbook.addWorksheet('Users');
+      sheet.addRow(HEADERS);
+      await workbook.xlsx.writeFile(AUTH_FILE);
+    } else if (sheet.rowCount < 1) {
+      // Sheet exists but empty—seed headers once
+      sheet.addRow(HEADERS);
+      await workbook.xlsx.writeFile(AUTH_FILE);
+    }
+
+    return { success: true, exists: true };
+  }
+
+  // Fresh file creation
   const sheet = workbook.addWorksheet('Users');
-  
-  // Add single header row
-  sheet.addRow(['Name','Email','Password','Admin','Permissions','Status','Created','LastLogin']);
+  sheet.addRow(HEADERS);
 
   await workbook.xlsx.writeFile(AUTH_FILE);
-  return { success: true };
+  return { success: true, created: true };
 }
 
 async function createAuthUser(userData) {
