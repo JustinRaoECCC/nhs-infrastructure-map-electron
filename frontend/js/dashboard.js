@@ -33,18 +33,6 @@
   const stationLocation = (s) => normStr(s.province || s.location || s.location_file);
   const stationAssetType = (s) => normStr(s.asset_type);
 
-  // Haversine distance in km
-  function haversineKm(lat1, lon1, lat2, lon2) {
-    const toRad = (d) => (d * Math.PI) / 180;
-    const R = 6371;
-    const dLat = toRad(lat2 - lat1);
-    const dLon = toRad(lon2 - lon1);
-    const a =
-      Math.sin(dLat / 2) ** 2 +
-      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-    return 2 * R * Math.asin(Math.sqrt(a));
-  }
-
   // Basic, dependency-free bar chart
   function renderBarChart(container, dataPairs, opts = {}) {
     // dataPairs: [{ label, value }]
@@ -119,13 +107,63 @@
 
   // ---- State ---------------------------------------------------------------
 
+  const chartPalette = [
+    '#2563eb', '#0ea5e9', '#22c55e', '#f59e0b', '#ef4444',
+    '#8b5cf6', '#10b981', '#f97316', '#e11d48', '#14b8a6'
+  ];
+
   const state = {
     allStations: [],
     filteredStations: [],
     lookupTree: null,
     cards: [],
-    initialized: false
+    initialized: false,
+    fieldNames: [],
+    scopeCounts: null,
+    scopeIndex: null,
+    dataVersion: 0,
+    scopeDataCache: new Map(),
+    distributionCache: new Map()
   };
+
+  const builderEls = {
+    fieldInput: null,
+    vizSelect: null,
+    valueInput: null,
+    valueCol: null,
+    scopeMode: null,
+    scopeCompany: null,
+    scopeLocation: null,
+    scopeAsset: null,
+    conditionBox: null,
+    conditionList: null,
+    addConditionBtn: null,
+    addCardBtn: null,
+    builderTotal: null
+  };
+
+  const warn = (msg) => {
+    if (window.appAlert) window.appAlert(msg);
+    else alert(msg);
+  };
+
+  const uniqCaseInsensitive = (arr) => {
+    const seen = new Set();
+    const out = [];
+    for (const val of arr || []) {
+      const key = String(val || '').toLowerCase();
+      if (!seen.has(key)) { seen.add(key); out.push(val); }
+    }
+    return out;
+  };
+
+  function resolveFieldValue(row, fieldName) {
+    if (!fieldName) return '';
+    const clean = String(fieldName).replace(/\s*\((?:Station Data|Repairs)\)$/i, '').trim();
+    const direct = getFieldValue(row, clean);
+    if (direct !== '') return direct;
+    return getFieldValue(row, fieldName);
+  }
 
   // ---- Filters integration (Analytics only) --------------------------------
 
@@ -133,13 +171,11 @@
     const tree = $('#filterTree');
     if (!tree) return { locations: null, assetsByLocation: new Map() };
 
-    // Selected locations
     const locCbs = $$('input.location', tree);
     const checkedLocs = new Set(locCbs.filter(cb => cb.checked).map(cb => cb.value));
 
-    // Selected asset types per location (only if not all are selected)
     const assetsByLoc = new Map();
-    const locMap = new Map(); // quick map of location -> all asset type checkboxes under it
+    const locMap = new Map();
     $$('.ft-location', tree).forEach(locDetails => {
       const locCb = $('input.location', locDetails);
       if (!locCb) return;
@@ -158,89 +194,350 @@
     return { locations: checkedLocs, assetsByLocation: assetsByLoc };
   }
 
+  function clearCaches() {
+    state.scopeDataCache.clear();
+    state.distributionCache.clear();
+  }
+
   function applyAnalyticsFilters() {
     const { locations, assetsByLocation } = readActiveFilters();
 
     if (!locations || locations.size === 0) {
       state.filteredStations = [];
-      return;
+    } else {
+      const matches = (s) => {
+        const loc = stationLocation(s);
+        if (!loc || !locations.has(loc)) return false;
+        const set = assetsByLocation.get(loc);
+        if (!set || set.size === 0) return true;
+        return set.has(stationAssetType(s));
+      };
+      state.filteredStations = state.allStations.filter(matches);
     }
 
-    const matches = (s) => {
-      const loc = stationLocation(s);
-      if (!loc || !locations.has(loc)) return false;
-      const set = assetsByLocation.get(loc);
-      if (!set || set.size === 0) return true; // no AT filter for this location
-      return set.has(stationAssetType(s));
-    };
-
-    state.filteredStations = state.allStations.filter(matches);
+    state.dataVersion += 1;
+    clearCaches();
+    rebuildScopeCaches();
+    updateBuilderTotal();
   }
 
   function onFiltersChanged() {
     applyAnalyticsFilters();
-    // Re-render all analytics cards
-    state.cards.forEach(c => c.update());
+    renderScopeSummary();
+    populateScopeSelectors();
+    scheduleCardUpdates();
   }
 
-  // ---- Overview (unfiltered) -----------------------------------------------
+  // ---- Scope helpers -------------------------------------------------------
 
-  function computeOverview() {
-    const all = state.allStations;
+  function scopeKey(scope) {
+    const mode = scope?.mode || 'all';
+    const parts = [mode];
+    if (scope?.company) parts.push(scope.company);
+    if (scope?.location) parts.push(scope.location);
+    if (scope?.assetType) parts.push(scope.assetType);
+    return parts.join('|');
+  }
 
-    const byLoc = new Map();
-    const byCo  = new Map();
+  function matchesScope(row, scope) {
+    if (!scope || scope.mode === 'all') return true;
+    const co = normStr(row.company);
+    const loc = stationLocation(row);
+    const at = stationAssetType(row);
+    switch (scope.mode) {
+      case 'company': return co && scope.company && co === scope.company;
+      case 'company-location': return co === scope.company && loc === scope.location;
+      case 'company-location-asset': return co === scope.company && loc === scope.location && at === scope.assetType;
+      case 'location': return loc && scope.location && loc === scope.location;
+      case 'location-asset': return loc === scope.location && at === scope.assetType;
+      case 'asset': return at && scope.assetType && at === scope.assetType;
+      default: return true;
+    }
+  }
 
-    // Build location -> count
-    all.forEach(s => {
+  function getScopedStations(scope) {
+    const key = `${state.dataVersion}:${scopeKey(scope)}`;
+    if (state.scopeDataCache.has(key)) return state.scopeDataCache.get(key);
+    const rows = state.filteredStations.filter(r => matchesScope(r, scope));
+    state.scopeDataCache.set(key, rows);
+    return rows;
+  }
+
+  function applyConditions(rows, conditions) {
+    const conds = (conditions || [])
+      .map(c => ({ field: normStr(c.field), value: normStr(c.value).toLowerCase() }))
+      .filter(c => c.field && c.value);
+    if (!conds.length) return rows;
+    return rows.filter(r => conds.every(c => normStr(resolveFieldValue(r, c.field)).toLowerCase() === c.value));
+  }
+
+  function rebuildScopeCaches() {
+    const counts = {
+      company: new Map(),
+      location: new Map(),
+      assetType: new Map(),
+      companyLocation: new Map(),
+      companyLocationAsset: new Map(),
+      locationAsset: new Map()
+    };
+
+    for (const s of state.filteredStations) {
+      const co = normStr(s.company);
       const loc = stationLocation(s);
-      if (!loc) return;
-      byLoc.set(loc, (byLoc.get(loc) || 0) + 1);
-    });
+      const at = stationAssetType(s);
+      if (co) counts.company.set(co, (counts.company.get(co) || 0) + 1);
+      if (loc) counts.location.set(loc, (counts.location.get(loc) || 0) + 1);
+      if (at) counts.assetType.set(at, (counts.assetType.get(at) || 0) + 1);
+      if (co && loc) counts.companyLocation.set(`${co}|||${loc}`, (counts.companyLocation.get(`${co}|||${loc}`) || 0) + 1);
+      if (loc && at) counts.locationAsset.set(`${loc}|||${at}`, (counts.locationAsset.get(`${loc}|||${at}`) || 0) + 1);
+      if (co && loc && at) counts.companyLocationAsset.set(`${co}|||${loc}|||${at}`, (counts.companyLocationAsset.get(`${co}|||${loc}|||${at}`) || 0) + 1);
+    }
 
-    // Derive company counts from lookup tree: sum counts of their locations
-    const companies = (state.lookupTree?.companies || []);
-    const locsByCompany = state.lookupTree?.locationsByCompany || {};
-    companies.forEach(companyObj => {
-      const co = companyObj.name || companyObj;
-      let sum = 0;
-      (locsByCompany[co] || []).forEach(loc => { sum += (byLoc.get(loc) || 0); });
-      // Even if a company has 0 (no stations yet), we still show it.
-      byCo.set(co, sum);
-    });
+    const toList = (map, mapper) => Array.from(map.entries()).map(mapper).sort((a, b) => b.count - a.count || String(a.label || '').localeCompare(String(b.label || '')));
 
-    return {
-      totalStations: all.length,
-      totalLocations: byLoc.size,
-      totalCompanies: companies.length,
-      byLocation: Array.from(byLoc.entries()).sort((a,b)=>a[0].localeCompare(b[0])),
-      byCompany: Array.from(byCo.entries()).sort((a,b)=>a[0].localeCompare(b[0]))
+    state.scopeCounts = counts;
+    state.scopeIndex = {
+      companies: toList(counts.company, ([company, count]) => ({ company, count })),
+      locations: toList(counts.location, ([location, count]) => ({ location, count })),
+      assetTypes: toList(counts.assetType, ([assetType, count]) => ({ assetType, count })),
+      companyLocations: toList(counts.companyLocation, ([key, count]) => {
+        const [company, location] = key.split('|||');
+        return { company, location, count };
+      }),
+      companyLocationAssets: toList(counts.companyLocationAsset, ([key, count]) => {
+        const [company, location, assetType] = key.split('|||');
+        return { company, location, assetType, count };
+      }),
+      locationAssets: toList(counts.locationAsset, ([key, count]) => {
+        const [location, assetType] = key.split('|||');
+        return { location, assetType, count };
+      })
     };
   }
 
-  function renderOverview() {
-    const ov = computeOverview();
-    $('#ovTotalStations').textContent = String(ov.totalStations);
-    $('#ovTotalLocations').textContent = String(ov.totalLocations);
-    $('#ovTotalCompanies').textContent = String(ov.totalCompanies);
+  function renderScopeSummary() {
+    const wrap = $('#scopeSummary');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    const idx = state.scopeIndex;
+    if (!idx) return;
 
-    const locWrap = $('#ovByLocation');
-    locWrap.innerHTML = '';
-    ov.byLocation.forEach(([loc, n]) => {
-      const row = document.createElement('div');
-      row.className = 'kv';
-      row.innerHTML = `<div class="k">Total ${esc(loc)}</div><div class="v">${n}</div>`;
-      locWrap.appendChild(row);
-    });
+    const groups = [
+      { title: 'Company -> Location -> Asset Type', items: idx.companyLocationAssets },
+      { title: 'Company -> Location', items: idx.companyLocations },
+      { title: 'Company', items: idx.companies },
+      { title: 'Location -> Asset Type', items: idx.locationAssets },
+      { title: 'Location', items: idx.locations },
+      { title: 'Asset Type', items: idx.assetTypes }
+    ];
 
-    const coWrap = $('#ovByCompany');
-    coWrap.innerHTML = '';
-    ov.byCompany.forEach(([co, n]) => {
-      const row = document.createElement('div');
-      row.className = 'kv';
-      row.innerHTML = `<div class="k">Total ${esc(co)}</div><div class="v">${n}</div>`;
-      coWrap.appendChild(row);
+    groups.forEach(group => {
+      if (!group.items || !group.items.length) return;
+      const chip = document.createElement('div');
+      chip.className = 'scope-chip';
+      chip.innerHTML = `<div class="chip-title">${esc(group.title)}</div>`;
+      const list = document.createElement('div');
+      list.className = 'chip-list';
+      group.items.slice(0, 4).forEach(item => {
+        const labelParts = [];
+        if (item.company) labelParts.push(item.company);
+        if (item.location) labelParts.push(item.location);
+        if (item.assetType) labelParts.push(item.assetType);
+        const label = labelParts.join(' -> ') || item.location || item.assetType || item.company;
+        const row = document.createElement('div');
+        row.className = 'tag';
+        row.innerHTML = `<span>${esc(label)}</span><span class="count">${item.count}</span>`;
+        list.appendChild(row);
+      });
+      chip.appendChild(list);
+      wrap.appendChild(chip);
     });
+  }
+
+  // ---- Field catalog + value hints ----------------------------------------
+
+  async function loadAnalyticsFieldNames() {
+    try {
+      let names = [];
+      if (window.electronAPI?.getWorkbookFieldCatalog) {
+        const catalog = await window.electronAPI.getWorkbookFieldCatalog();
+        if (catalog?.sheets) {
+          Object.values(catalog.sheets).forEach(fields => {
+            (fields || []).forEach(f => names.push(f));
+          });
+        }
+      }
+
+      if (!names.length && state.allStations.length) {
+        const set = new Set();
+        state.allStations.forEach(row => Object.keys(row || {}).forEach(k => set.add(k)));
+        names = Array.from(set);
+      }
+
+      state.fieldNames = uniqCaseInsensitive(names).sort((a, b) => a.localeCompare(b));
+      renderFieldDatalist();
+    } catch (e) {
+      console.error('[analytics] Failed to load field names', e);
+    }
+  }
+
+  function renderFieldDatalist() {
+    const list = $('#analyticsFieldList');
+    if (!list) return;
+    list.innerHTML = '';
+    state.fieldNames.forEach(f => {
+      const opt = document.createElement('option');
+      opt.value = f;
+      list.appendChild(opt);
+    });
+  }
+
+  // ---- Scope selector wiring ----------------------------------------------
+
+  function populateScopeSelectors() {
+    const { scopeIndex } = state;
+    if (!scopeIndex) return;
+    const setOptions = (el, items, formatter) => {
+      if (!el) return;
+      const current = el.value;
+      el.innerHTML = '';
+      const placeholder = document.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = 'Choose...';
+      el.appendChild(placeholder);
+      items.forEach(item => {
+        const opt = document.createElement('option');
+        opt.value = item.value || item.company || item.location || item.assetType || '';
+        opt.textContent = formatter(item);
+        el.appendChild(opt);
+      });
+      if (current) el.value = current;
+    };
+
+    setOptions(builderEls.scopeCompany, scopeIndex.companies, (i) => `${i.company} (${i.count})`);
+    setOptions(builderEls.scopeLocation, scopeIndex.locations, (i) => `${i.location} (${i.count})`);
+    setOptions(builderEls.scopeAsset, scopeIndex.assetTypes, (i) => `${i.assetType} (${i.count})`);
+
+    onScopeCompanyChange();
+    onScopeLocationChange();
+    syncScopePickerVisibility();
+  }
+
+  function onScopeCompanyChange() {
+    const company = normStr(builderEls.scopeCompany?.value || '');
+    const locSel = builderEls.scopeLocation;
+    if (!locSel || !state.scopeIndex) return;
+    if (!company) return;
+    const locs = state.scopeIndex.companyLocations.filter(item => item.company === company);
+    locSel.innerHTML = '<option value="">' + 'Choose...' + '</option>';
+    locs.forEach(item => {
+      const opt = document.createElement('option');
+      opt.value = item.location;
+      opt.textContent = `${item.location} (${item.count})`;
+      locSel.appendChild(opt);
+    });
+    onScopeLocationChange();
+  }
+
+  function onScopeLocationChange() {
+    const loc = normStr(builderEls.scopeLocation?.value || '');
+    const co = normStr(builderEls.scopeCompany?.value || '');
+    const assetSel = builderEls.scopeAsset;
+    if (!assetSel || !state.scopeIndex) return;
+    const assets = [];
+    if (co && loc) {
+      state.scopeIndex.companyLocationAssets.forEach(item => {
+        if (item.company === co && item.location === loc) assets.push(item);
+      });
+    } else if (loc) {
+      state.scopeIndex.locationAssets.forEach(item => {
+        if (item.location === loc) assets.push(item);
+      });
+    } else {
+      assets.push(...state.scopeIndex.assetTypes);
+    }
+    assetSel.innerHTML = '<option value="">' + 'Choose...' + '</option>';
+    assets.forEach(item => {
+      const opt = document.createElement('option');
+      opt.value = item.assetType;
+      opt.textContent = `${item.assetType} (${item.count})`;
+      assetSel.appendChild(opt);
+    });
+  }
+
+  function syncScopePickerVisibility() {
+    const mode = builderEls.scopeMode?.value || 'all';
+    const companyWrap = builderEls.scopeCompany?.closest('.scope-picker');
+    const locationWrap = builderEls.scopeLocation?.closest('.scope-picker');
+    const assetWrap = builderEls.scopeAsset?.closest('.scope-picker');
+    if (companyWrap) companyWrap.classList.add('hidden');
+    if (locationWrap) locationWrap.classList.add('hidden');
+    if (assetWrap) assetWrap.classList.add('hidden');
+    if (mode.includes('company') && companyWrap) companyWrap.classList.remove('hidden');
+    if (mode.includes('location') && locationWrap) locationWrap.classList.remove('hidden');
+    if (mode.includes('asset') && assetWrap) assetWrap.classList.remove('hidden');
+  }
+
+  // ---- Condition rows ------------------------------------------------------
+
+  function addConditionRow(field = '', value = '') {
+    if (!builderEls.conditionList) return;
+    const row = document.createElement('div');
+    row.className = 'condition-row';
+    row.innerHTML = `
+      <input class="cond-field" list="analyticsFieldList" placeholder="Field" value="${esc(field)}" />
+      <input class="cond-value" placeholder="Value" value="${esc(value)}" />
+      <button type="button" class="remove">Remove</button>
+    `;
+    const fieldInput = $('.cond-field', row);
+    const valueInput = $('.cond-value', row);
+    if (fieldInput) {
+      fieldInput.dataset.autofill = field ? '0' : '1';
+      fieldInput.addEventListener('input', () => fieldInput.dataset.autofill = '0');
+    }
+    if (valueInput) {
+      valueInput.addEventListener('input', () => valueInput.dataset.autofill = '0');
+    }
+    $('.remove', row).addEventListener('click', () => row.remove());
+    builderEls.conditionList.appendChild(row);
+  }
+
+  function collectConditionRows() {
+    const rows = [];
+    (builderEls.conditionList ? $$('.condition-row', builderEls.conditionList) : []).forEach(row => {
+      const field = normStr($('.cond-field', row)?.value);
+      const value = normStr($('.cond-value', row)?.value);
+      if (field && value) {
+        rows.push({ field, value });
+      } else if (field || value) {
+        rows.push({ field, value, _incomplete: true });
+      }
+    });
+    return rows;
+  }
+
+  function syncPrimaryConditionField() {
+    if (builderEls.vizSelect?.value !== 'ratio') return;
+    const firstRow = builderEls.conditionList?.querySelector('.condition-row');
+    if (!firstRow) return;
+    const fieldInput = $('.cond-field', firstRow);
+    if (!fieldInput) return;
+    const shouldAutofill = !fieldInput.value || fieldInput.dataset.autofill === '1';
+    if (shouldAutofill) {
+      fieldInput.value = builderEls.fieldInput?.value || '';
+      fieldInput.dataset.autofill = '1';
+    }
+  }
+
+  function onVizChange() {
+    const isRatio = builderEls.vizSelect?.value === 'ratio';
+    if (builderEls.valueCol) builderEls.valueCol.style.display = isRatio ? '' : 'none';
+    if (builderEls.conditionBox) builderEls.conditionBox.style.display = isRatio ? '' : 'none';
+    if (!isRatio && builderEls.conditionList) builderEls.conditionList.innerHTML = '';
+    if (isRatio && builderEls.conditionList && builderEls.conditionList.childElementCount === 0) {
+      addConditionRow(builderEls.fieldInput?.value || '', '');
+    }
+    if (isRatio) syncPrimaryConditionField();
   }
 
   // ---- Analytics cards -----------------------------------------------------
@@ -255,8 +552,8 @@
     body.className = 'stat-card-body';
     const closeBtn = document.createElement('button');
     closeBtn.className = 'btn btn-ghost stat-card-close';
-    closeBtn.textContent = '';
-    closeBtn.title = 'Remove';
+    closeBtn.textContent = '×';
+    closeBtn.title = 'Remove this analytic';
     closeBtn.addEventListener('click', () => {
       wrap.remove();
       state.cards = state.cards.filter(c => c.wrap !== wrap);
@@ -274,161 +571,271 @@
     return card;
   }
 
-  // -- Card: Province bar chart
-  function createProvinceCard() {
-    const root = document.createElement('div');
-    root.innerHTML = `
-      <div class="stat-title">Stations per Province</div>
-      <div class="chart" style="width:100%;" aria-label="Province chart"></div>
-    `;
-    const chart = $('.chart', root);
-
-    const update = () => {
-      const data = state.filteredStations;
-      const counts = new Map();
-      data.forEach(s => {
-        const loc = stationLocation(s);
-        if (!loc) return;
-        counts.set(loc, (counts.get(loc) || 0) + 1);
-      });
-      const items = Array.from(counts.entries()).sort((a,b)=>a[0].localeCompare(b[0]))
-        .map(([label, value]) => ({ label, value }));
-      chart.innerHTML = '';
-      if (!items.length) {
-        chart.innerHTML = '<div class="empty">No data (adjust filters)</div>';
-        return;
-      }
-      renderBarChart(chart, items, { ariaLabel: 'Stations per province' });
-    };
-
-    return addCard(root, update);
-  }
-
-  // -- Card: Inspection Frequency bar chart
-  function createInspectionFrequencyCard() {
-    const root = document.createElement('div');
-    root.innerHTML = `
-      <div class="stat-title">Stations by Inspection Frequency</div>
-      <div class="chart" style="width:100%;" aria-label="Inspection Frequency chart"></div>
-      <div class="hint">Looks for a column named Inspection Frequency (any section).</div>
-    `;
-    const chart = $('.chart', root);
-
-    const update = () => {
-      const data = state.filteredStations;
-      const counts = new Map();
-      data.forEach(s => {
-        let v = getFieldValue(s, 'Inspection Frequency');
-        v = normStr(v) || 'Unknown';
-        counts.set(v, (counts.get(v) || 0) + 1);
-      });
-      const items = Array.from(counts.entries()).sort((a,b)=>a[0].localeCompare(b[0]))
-        .map(([label, value]) => ({ label, value }));
-      chart.innerHTML = '';
-      if (!items.length) {
-        chart.innerHTML = '<div class="empty">No data (adjust filters)</div>';
-        return;
-      }
-      renderBarChart(chart, items, { ariaLabel: 'Stations by inspection frequency' });
-    };
-
-    return addCard(root, update);
-  }
-
-  // -- Card: Lat/Lon radius count
-  function createLatLonCard() {
-    const root = document.createElement('div');
-    root.innerHTML = `
-      <div class="stat-title">Count within radius</div>
-      <div class="form-row compact">
-        <label>Latitude</label>
-        <input type="number" step="0.000001" class="in-lat" placeholder="49.2827">
-        <label>Longitude</label>
-        <input type="number" step="0.000001" class="in-lon" placeholder="-123.1207">
-        <label>Radius (km)</label>
-        <input type="number" step="0.1" class="in-rad" placeholder="10" value="10">
-        <button class="btn btn-primary btn-run">Compute</button>
-      </div>
-      <div class="result"><strong>Stations in circle:</strong> <span class="out"></span></div>
-      <div class="hint">Uses the current filters. Change inputs and click Compute.</div>
-    `;
-    const out = $('.result .out', root);
-    const latIn = $('.in-lat', root);
-    const lonIn = $('.in-lon', root);
-    const radIn = $('.in-rad', root);
-    const runBtn = $('.btn-run', root);
-
-    // Provide a sane default center (mean of filtered lat/lon if available)
-    const seedDefaults = () => {
-      const pts = state.filteredStations
-        .map(s => ({ lat: parseFloat(s.lat), lon: parseFloat(s.lon) }))
-        .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon));
-      if (!pts.length) return;
-      const avgLat = pts.reduce((a,b)=>a+b.lat,0)/pts.length;
-      const avgLon = pts.reduce((a,b)=>a+b.lon,0)/pts.length;
-      if (!latIn.value) latIn.value = String(avgLat.toFixed(6));
-      if (!lonIn.value) lonIn.value = String(avgLon.toFixed(6));
-    };
-
-    const compute = () => {
-      const lat = parseFloat(latIn.value);
-      const lon = parseFloat(lonIn.value);
-      const rad = Math.max(0, parseFloat(radIn.value));
-      if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(rad)) {
-        out.textContent = '';
-        return;
-      }
-      let n = 0;
-      for (const s of state.filteredStations) {
-        const a = parseFloat(s.lat), b = parseFloat(s.lon);
-        if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
-        if (haversineKm(lat, lon, a, b) <= rad) n++;
-      }
-      out.textContent = String(n);
-    };
-
-    runBtn.addEventListener('click', compute);
-
-    const update = () => {
-      // try to seed reasonable center; do not auto-compute to avoid surprises
-      seedDefaults();
-      out.textContent = '';
-    };
-
-    return addCard(root, update);
-  }
-
-  // ---- Add-stat popup ------------------------------------------------------
-
-  function openAddStatMenu(anchor) {
-    const menu = $('#addStatMenu');
-    if (!menu) return;
-    const rect = anchor.getBoundingClientRect();
-    menu.style.display = 'block';
-    menu.style.position = 'fixed';
-    menu.style.top = (rect.bottom + 6) + 'px';
-    menu.style.left = rect.left + 'px';
-
-    const onDoc = (e) => {
-      if (!menu.contains(e.target) && e.target !== anchor) close();
-    };
-    const close = () => {
-      menu.style.display = 'none';
-      document.removeEventListener('click', onDoc, true);
-    };
-
-    setTimeout(() => document.addEventListener('click', onDoc, true), 0);
-
-    $$('.menu-item', menu).forEach(btn => {
-      btn.onclick = () => {
-        const kind = btn.dataset.kind;
-        if (kind === 'province') createProvinceCard();
-        else if (kind === 'inspection_frequency') createInspectionFrequencyCard();
-        else if (kind === 'latlon') createLatLonCard();
-        // FUTURE: add more cases here to introduce new stats
-        close();
-      };
+  function renderPieChart(container, dataPairs, opts = {}) {
+    container.innerHTML = '';
+    const size = opts.size || 240;
+    const r = size / 2 - 8;
+    const cx = size / 2;
+    const cy = size / 2;
+    const total = dataPairs.reduce((sum, d) => sum + (+d.value || 0), 0);
+    if (!total) {
+      container.innerHTML = '<div class="empty">No data</div>';
+      return;
+    }
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', size);
+    svg.setAttribute('height', size);
+    svg.setAttribute('viewBox', `0 0 ${size} ${size}`);
+    svg.setAttribute('aria-label', esc(opts.ariaLabel || 'Pie chart'));
+    let angle = -Math.PI / 2;
+    dataPairs.forEach((slice, idx) => {
+      const v = +slice.value || 0;
+      if (v <= 0) return;
+      const delta = (v / total) * Math.PI * 2;
+      const next = angle + delta;
+      const x1 = cx + r * Math.cos(angle);
+      const y1 = cy + r * Math.sin(angle);
+      const x2 = cx + r * Math.cos(next);
+      const y2 = cy + r * Math.sin(next);
+      const large = delta > Math.PI ? 1 : 0;
+      const path = document.createElementNS(svg.namespaceURI, 'path');
+      const d = [
+        'M', cx, cy,
+        'L', x1, y1,
+        'A', r, r, 0, large, 1, x2, y2,
+        'Z'
+      ].join(' ');
+      path.setAttribute('d', d);
+      path.setAttribute('fill', chartPalette[idx % chartPalette.length]);
+      path.setAttribute('fill-opacity', '0.92');
+      svg.appendChild(path);
+      angle = next;
     });
+    container.appendChild(svg);
+  }
+
+  function scopeLabel(scope) {
+    if (!scope || scope.mode === 'all') return 'All data (using current filters)';
+    const parts = [];
+    if (scope.company) parts.push(scope.company);
+    if (scope.location) parts.push(scope.location);
+    if (scope.assetType) parts.push(scope.assetType);
+    return parts.join(' -> ') || 'All data';
+  }
+
+  function conditionSummary(conditions) {
+    if (!conditions || !conditions.length) return 'No extra filters';
+    return conditions.map(c => `${c.field} = ${c.value}`).join(' · ');
+  }
+
+  function createDistributionCard(cfg) {
+    const root = document.createElement('div');
+    const title = esc(cfg.field || 'Unknown field');
+    root.innerHTML = `
+      <div class="stat-title">${title} (${cfg.viz === 'pie' ? 'Pie' : 'Bar'})</div>
+      <div class="meta-line">${esc(scopeLabel(cfg.scope))}</div>
+      <div class="chart" style="width:100%;" aria-label="${title} chart"></div>
+      <div class="chart-legend"></div>
+      ${cfg.conditions?.length ? `<div class="meta-line">${esc(conditionSummary(cfg.conditions))}</div>` : ''}
+    `;
+    const chart = $('.chart', root);
+    const legend = $('.chart-legend', root);
+
+    const lastRender = { key: null, width: 0 };
+
+    const update = () => {
+      const cacheKey = `${state.dataVersion}:${scopeKey(cfg.scope)}:${(cfg.field || '').toLowerCase()}:${cfg.viz}:${conditionSummary(cfg.conditions)}`;
+      const width = chart.clientWidth || 0;
+      if (lastRender.key === cacheKey && lastRender.width === width) return;
+
+      if (!state.distributionCache.has(cacheKey)) {
+        const scoped = getScopedStations(cfg.scope);
+        const filtered = applyConditions(scoped, cfg.conditions);
+        const counts = new Map();
+        filtered.forEach(row => {
+          const v = normStr(resolveFieldValue(row, cfg.field)) || 'Unknown';
+          counts.set(v, (counts.get(v) || 0) + 1);
+        });
+        let items = Array.from(counts.entries()).map(([label, value]) => ({ label, value }));
+        items.sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
+        const MAX_SLICES = 12;
+        if (items.length > MAX_SLICES) {
+          const head = items.slice(0, MAX_SLICES - 1);
+          const otherSum = items.slice(MAX_SLICES - 1).reduce((s, d) => s + d.value, 0);
+          head.push({ label: 'Other', value: otherSum });
+          items = head;
+        }
+        state.distributionCache.set(cacheKey, items);
+      }
+
+      const items = state.distributionCache.get(cacheKey);
+      chart.innerHTML = '';
+      legend.innerHTML = '';
+      if (!items.length) {
+        chart.innerHTML = '<div class="empty">No data (adjust filters)</div>';
+        lastRender.key = cacheKey;
+        lastRender.width = width;
+        return;
+      }
+
+      if (cfg.viz === 'pie') {
+        renderPieChart(chart, items, { ariaLabel: `${cfg.field} pie chart` });
+      } else {
+        renderBarChart(chart, items, { ariaLabel: `${cfg.field} bar chart`, height: 260 });
+      }
+
+      const total = items.reduce((s, d) => s + (+d.value || 0), 0) || 1;
+      items.forEach((item, idx) => {
+        const row = document.createElement('div');
+        row.className = 'legend-row';
+        row.innerHTML = `
+          <span class="dot" style="background:${chartPalette[idx % chartPalette.length]};"></span>
+          <span>${esc(item.label)}</span>
+          <span class="legend-value">${item.value} (${((item.value / total) * 100).toFixed(1)}%)</span>
+        `;
+        legend.appendChild(row);
+      });
+
+      lastRender.key = cacheKey;
+      lastRender.width = width;
+    };
+
+    return addCard(root, update);
+  }
+
+  function createRatioCard(cfg) {
+    const root = document.createElement('div');
+    const title = esc(cfg.field || 'Ratio');
+    root.innerHTML = `
+      <div class="stat-title">${title} ratio</div>
+      <div class="meta-line">${esc(scopeLabel(cfg.scope))}</div>
+      <div class="ratio-block">
+        <div class="ratio-fraction">
+          <span class="num" data-role="num"></span>
+          <span class="den">/ <span data-role="den"></span></span>
+        </div>
+        <div class="ratio-bar"><div class="fill"></div></div>
+        <div class="ratio-pct" data-role="pct"></div>
+        <div class="meta-line" data-role="detail"></div>
+      </div>
+    `;
+    const numEl = root.querySelector('[data-role="num"]');
+    const denEl = root.querySelector('[data-role="den"]');
+    const pctEl = root.querySelector('[data-role="pct"]');
+    const detailEl = root.querySelector('[data-role="detail"]');
+    const fillEl = root.querySelector('.ratio-bar .fill');
+
+    const lastRender = { key: null };
+
+    const update = () => {
+      const key = `${state.dataVersion}:${scopeKey(cfg.scope)}:${conditionSummary(cfg.conditions)}`;
+      if (lastRender.key === key) return;
+      const scoped = getScopedStations(cfg.scope);
+      const denom = scoped.length;
+      const numerator = applyConditions(scoped, cfg.conditions).length;
+      const pct = denom ? (numerator / denom) * 100 : 0;
+      numEl.textContent = numerator;
+      denEl.textContent = denom;
+      pctEl.textContent = `${pct.toFixed(1)}%`;
+      fillEl.style.width = `${Math.min(100, pct).toFixed(1)}%`;
+      detailEl.textContent = conditionSummary(cfg.conditions);
+      lastRender.key = key;
+    };
+
+    return addCard(root, update);
+  }
+
+  function createAnalyticsCard(cfg) {
+    if (cfg.viz === 'ratio') return createRatioCard(cfg);
+    return createDistributionCard(cfg);
+  }
+
+  // ---- Builder form --------------------------------------------------------
+
+  let pendingCardsUpdate = null;
+  function scheduleCardUpdates() {
+    if (pendingCardsUpdate) return;
+    pendingCardsUpdate = requestAnimationFrame(() => {
+      pendingCardsUpdate = null;
+      state.cards.forEach(c => c.update());
+    });
+  }
+
+  function readScopeFromForm() {
+    const mode = builderEls.scopeMode?.value || 'all';
+    const scope = { mode };
+    if (mode.includes('company')) scope.company = normStr(builderEls.scopeCompany?.value);
+    if (mode.includes('location')) scope.location = normStr(builderEls.scopeLocation?.value);
+    if (mode.includes('asset')) scope.assetType = normStr(builderEls.scopeAsset?.value);
+
+    if (mode === 'company' && !scope.company) { warn('Pick a company for this scope'); return null; }
+    if (mode === 'company-location' && (!scope.company || !scope.location)) { warn('Pick a company and location'); return null; }
+    if (mode === 'company-location-asset' && (!scope.company || !scope.location || !scope.assetType)) { warn('Pick company, location, and asset type'); return null; }
+    if (mode === 'location' && !scope.location) { warn('Pick a location'); return null; }
+    if (mode === 'location-asset' && (!scope.location || !scope.assetType)) { warn('Pick a location and asset type'); return null; }
+    if (mode === 'asset' && !scope.assetType) { warn('Pick an asset type'); return null; }
+    return scope;
+  }
+
+  function readCardConfig() {
+    const field = normStr(builderEls.fieldInput?.value);
+    if (!field) { warn('Pick a field to analyze'); return null; }
+    const viz = builderEls.vizSelect?.value || 'pie';
+    const scope = readScopeFromForm();
+    if (!scope) return null;
+
+    if (viz === 'ratio') {
+      const value = normStr(builderEls.valueInput?.value);
+      if (!value) { warn('Enter the value you want to count'); return null; }
+      const extraConds = collectConditionRows();
+      if (extraConds.some(c => c._incomplete)) {
+        warn('Fill every numerator condition field or remove the row.');
+        return null;
+      }
+      const conditions = [{ field, value }, ...extraConds];
+      return { field, viz, scope, conditions };
+    }
+
+    const conditions = collectConditionRows().filter(c => !c._incomplete);
+    return { field, viz, scope, conditions };
+  }
+
+  function updateBuilderTotal() {
+    if (builderEls.builderTotal) {
+      builderEls.builderTotal.textContent = `${state.filteredStations.length} stations in current filters`;
+    }
+  }
+
+  function wireBuilder() {
+    builderEls.fieldInput = $('#fieldInput');
+    builderEls.vizSelect = $('#vizType');
+    builderEls.valueInput = $('#valueInput');
+    builderEls.valueCol = $('#valueCol');
+    builderEls.scopeMode = $('#scopeMode');
+    builderEls.scopeCompany = $('#scopeCompany');
+    builderEls.scopeLocation = $('#scopeLocation');
+    builderEls.scopeAsset = $('#scopeAsset');
+    builderEls.conditionBox = $('#conditionBox');
+    builderEls.conditionList = $('#conditionList');
+    builderEls.addConditionBtn = $('#btnAddCondition');
+    builderEls.addCardBtn = $('#btnAddCard');
+    builderEls.builderTotal = $('#builderTotal');
+
+    builderEls.vizSelect?.addEventListener('change', onVizChange);
+    builderEls.fieldInput?.addEventListener('input', () => {
+      syncPrimaryConditionField();
+    });
+    builderEls.scopeMode?.addEventListener('change', syncScopePickerVisibility);
+    builderEls.scopeCompany?.addEventListener('change', onScopeCompanyChange);
+    builderEls.scopeLocation?.addEventListener('change', onScopeLocationChange);
+    builderEls.addConditionBtn?.addEventListener('click', () => addConditionRow());
+    builderEls.addCardBtn?.addEventListener('click', () => {
+      const cfg = readCardConfig();
+      if (cfg) createAnalyticsCard(cfg);
+    });
+
+    onVizChange();
+    syncScopePickerVisibility();
   }
 
   // ---- Repairs and Maintenance Tab ---------------------------------------
@@ -1744,42 +2151,29 @@
   // ---- Tabs ----------------------------------------------------------------
 
   function bindTabs() {
-    const tabOverview = $('#tabOverview');
     const tabAnalytics = $('#tabAnalytics');
     const tabRepairs = $('#tabRepairs');
-    const paneOverview = $('#overviewTab');
     const paneAnalytics = $('#analyticsTab');
     const paneRepairs = $('#repairsTab');
 
-    tabOverview.addEventListener('click', () => {
-      tabOverview.classList.add('active');
-      tabAnalytics.classList.remove('active');
-      tabRepairs.classList.remove('active');
-      paneOverview.style.display = '';
-      paneAnalytics.style.display = 'none';
-      paneRepairs.style.display = 'none';
-    });
+    if (tabAnalytics) {
+      tabAnalytics.addEventListener('click', () => {
+        tabAnalytics.classList.add('active');
+        tabRepairs?.classList.remove('active');
+        if (paneAnalytics) paneAnalytics.style.display = '';
+        if (paneRepairs) paneRepairs.style.display = 'none';
+      });
+    }
 
-    tabAnalytics.addEventListener('click', () => {
-      tabAnalytics.classList.add('active');
-      tabOverview.classList.remove('active');
-      tabRepairs.classList.remove('active');
-      paneAnalytics.style.display = '';
-      paneOverview.style.display = 'none';
-      paneRepairs.style.display = 'none';
-    });
-
-    tabRepairs.addEventListener('click', async () => {
-      tabRepairs.classList.add('active');
-      tabOverview.classList.remove('active');
-      tabAnalytics.classList.remove('active');
-      paneRepairs.style.display = '';
-      paneOverview.style.display = 'none';
-      paneAnalytics.style.display = 'none';
-      await loadRepairsData();
-      // select-all events are wired per-render; nothing to do here
-    });
-
+    if (tabRepairs) {
+      tabRepairs.addEventListener('click', async () => {
+        tabRepairs.classList.add('active');
+        tabAnalytics?.classList.remove('active');
+        if (paneRepairs) paneRepairs.style.display = '';
+        if (paneAnalytics) paneAnalytics.style.display = 'none';
+        await loadRepairsData();
+      });
+    }
   }
 
   // ---- Initialization -------------------------------------------------------
@@ -1799,10 +2193,11 @@
       state.allStations = [];
       state.lookupTree = { companies: [], locationsByCompany: {} };
     }
-    // Re-render everything
-    renderOverview();           // Overview = unfiltered
-    applyAnalyticsFilters();    // Analytics = filtered
-    state.cards.forEach(c => c.update());
+    await loadAnalyticsFieldNames();
+    applyAnalyticsFilters();
+    renderScopeSummary();
+    populateScopeSelectors();
+    scheduleCardUpdates();
   }
   // Expose globally so other flows can poke it after imports/adds
   window.refreshStatisticsView = refreshStatisticsView;
@@ -1816,6 +2211,7 @@
     state.initialized = true;
 
     bindTabs();
+    wireBuilder();
 
     // Wire up repairs buttons
     const btnAddRepair = $('#btnAddGlobalRepair');
@@ -1843,12 +2239,6 @@
       btnDeselectAll.addEventListener('click', deselectAllRepairs);
     }
 
-    // Wire + Add Statistic
-    const addBtn = $('#btnAddStat');
-    if (addBtn) {
-      addBtn.addEventListener('click', (e) => openAddStatMenu(addBtn));
-    }
-
     // First data load + paint
     await refreshStatisticsView();
 
@@ -1863,7 +2253,7 @@
 
     // Recompute on resize (charts)
     window.addEventListener('resize', () => {
-      state.cards.forEach(c => c.update());
+      scheduleCardUpdates();
     });
   }
 

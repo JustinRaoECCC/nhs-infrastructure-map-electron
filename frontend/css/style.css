@@ -3483,6 +3483,252 @@ html.modal-open, body.modal-open { overflow: hidden; }
   padding: 6px 10px;
 }
 
+/* Analytics builder (custom ratios/charts) */
+.stats-view .analytics-builder {
+  border: 1px solid var(--stats-border);
+  border-radius: var(--stats-radius-lg);
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--stats-surface) 94%, transparent),
+      color-mix(in srgb, var(--stats-surface) 98%, transparent));
+  padding: 14px 16px;
+  box-shadow: var(--stats-shadow-sm);
+  margin-bottom: 14px;
+}
+.stats-view .builder-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.stats-view .builder-title {
+  font-size: clamp(18px, 3vw, 22px);
+  font-weight: 800;
+  margin: 4px 0 2px;
+}
+.stats-view .builder-subtitle {
+  margin: 0;
+  color: var(--stats-muted);
+  font-size: 13px;
+}
+.stats-view .eyebrow {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--stats-muted);
+}
+.stats-view .eyebrow.small { font-size: 10px; letter-spacing: 0.16em; }
+.stats-view .builder-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+.stats-view .pill {
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-weight: 700;
+  border: 1px solid var(--stats-border);
+  background: color-mix(in srgb, var(--stats-surface) 92%, transparent);
+}
+.stats-view .pill.muted { color: var(--stats-muted); }
+.stats-view .builder-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.stats-view .form-col label {
+  display: block;
+  font-size: 12px;
+  color: var(--stats-muted);
+  margin-bottom: 6px;
+}
+.stats-view .form-col input,
+.stats-view .form-col select {
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--stats-border);
+  background: var(--stats-surface);
+  color: var(--stats-text);
+  font-size: 14px;
+  outline: none;
+  transition: border-color .16s ease, box-shadow .16s ease;
+}
+.stats-view .form-col input:focus,
+.stats-view .form-col select:focus {
+  border-color: color-mix(in srgb, var(--stats-accent-1) 50%, var(--stats-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--stats-accent-1) 20%, transparent);
+}
+.stats-view .scope-pickers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+.stats-view .scope-picker select { font-size: 13px; }
+.stats-view .condition-box {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px dashed color-mix(in srgb, var(--stats-accent-1) 32%, var(--stats-border));
+  border-radius: var(--stats-radius-lg);
+  background: color-mix(in srgb, var(--stats-accent-1) 6%, transparent);
+}
+.stats-view .condition-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.stats-view .condition-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.stats-view .condition-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+.stats-view .condition-row input {
+  padding: 8px 10px;
+}
+.stats-view .condition-row .remove {
+  border: 0;
+  background: color-mix(in srgb, var(--stats-text) 8%, transparent);
+  border-radius: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.stats-view .condition-row .remove:hover { background: color-mix(in srgb, var(--stats-text) 14%, transparent); }
+
+.stats-view .scope-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+  margin: 8px 0 4px;
+}
+.stats-view .scope-chip {
+  border: 1px solid var(--stats-border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--stats-surface) 94%, transparent);
+  box-shadow: var(--stats-shadow-sm);
+}
+.stats-view .scope-chip .chip-title {
+  font-weight: 800;
+  margin-bottom: 6px;
+}
+.stats-view .scope-chip .chip-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.stats-view .scope-chip .tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--stats-accent-2) 10%, transparent);
+  font-weight: 700;
+  font-size: 12px;
+}
+.stats-view .scope-chip .tag .count {
+  font-variant-numeric: tabular-nums;
+  color: var(--stats-muted);
+}
+
+.stats-view .chart-legend {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 6px;
+}
+.stats-view .chart-legend .legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.stats-view .chart-legend .dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.stats-view .chart-legend .legend-value {
+  margin-left: auto;
+  color: var(--stats-muted);
+  font-variant-numeric: tabular-nums;
+}
+.stats-view .stat-card-body {
+  background: radial-gradient(120% 120% at 10% 10%, color-mix(in srgb, var(--stats-accent-1) 6%, transparent), transparent 38%),
+              radial-gradient(120% 120% at 90% 0%, color-mix(in srgb, var(--stats-accent-2) 6%, transparent), transparent 32%),
+              color-mix(in srgb, var(--stats-surface) 96%, transparent);
+}
+.stats-view .chart {
+  background: color-mix(in srgb, var(--stats-surface) 92%, transparent);
+  border: 1px solid var(--stats-border);
+  border-radius: 14px;
+  padding: 8px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.4);
+}
+.stats-view .chart svg text { fill: currentColor; }
+.stats-view .chart svg .axis { stroke: currentColor; stroke-opacity: 0.3; }
+.stats-view .stat-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.stats-view .stat-title::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--stats-border) 60%, transparent), transparent);
+  margin-left: 6px;
+}
+
+.stats-view .ratio-block {
+  display: grid;
+  gap: 8px;
+}
+.stats-view .ratio-fraction {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-weight: 800;
+}
+.stats-view .ratio-fraction .num { font-size: 26px; }
+.stats-view .ratio-fraction .den {
+  color: var(--stats-muted);
+  font-size: 16px;
+}
+.stats-view .ratio-pct {
+  font-size: 20px;
+  font-weight: 800;
+}
+.stats-view .ratio-bar {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--stats-text) 6%, transparent);
+  overflow: hidden;
+}
+.stats-view .ratio-bar .fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--stats-accent-1), var(--stats-accent-2));
+}
+.stats-view .meta-line {
+  color: var(--stats-muted);
+  font-size: 12px;
+}
+.stats-view .hidden { display: none !important; }
+
 /* Add at the end of style.css */
 
 /* ─── Login Page ───────────────────────────────────────────────────────── */

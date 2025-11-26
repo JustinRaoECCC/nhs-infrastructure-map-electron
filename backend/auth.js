@@ -5,7 +5,7 @@ const { getPersistence } = require('./persistence');
 // Toggle to enable/disable authentication logic.
 // false means NO LOGIN
 // true means YES LOGIN
-const AUTH_ENABLED = true;
+const AUTH_ENABLED = false;
 
 let currentUser = null;
 let sessionToken = null;

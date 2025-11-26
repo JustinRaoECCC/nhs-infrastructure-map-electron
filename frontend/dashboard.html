@@ -6,51 +6,85 @@
   </header>
 
   <div class="stats-tabs">
-    <button id="tabOverview" class="tab-button active" type="button">Overview</button>
-    <button id="tabAnalytics" class="tab-button" type="button">Analytics</button>
+    <button id="tabAnalytics" class="tab-button active" type="button">Analytics</button>
     <button id="tabRepairs" class="tab-button" type="button">Repairs and Maintenance</button>
   </div>
 
-  <!-- OVERVIEW (always uses ALL data; not affected by filters) -->
-  <section id="overviewTab" class="stats-tab">
-    <div class="stats-summary">
-      <div class="summary-card">
-        <div class="summary-title">Total Stations</div>
-        <div id="ovTotalStations" class="summary-value">—</div>
+  <!-- ANALYTICS -->
+  <section id="analyticsTab" class="stats-tab">
+    <div class="analytics-builder">
+      <div class="builder-header">
+        <div>
+          <div class="eyebrow">Custom analytics</div>
+          <div class="builder-title">Pick any field, any scope, any ratio.</div>
+          <p class="builder-subtitle">Fields are discovered the same way as the Optimization tab. Scope options mirror the filters on the left.</p>
+        </div>
+        <div class="builder-actions">
+          <div id="builderTotal" class="pill muted"></div>
+          <button id="btnAddCard" class="btn" type="button">+ Add to board</button>
+        </div>
       </div>
-      <div class="summary-card">
-        <div class="summary-title">Total Locations</div>
-        <div id="ovTotalLocations" class="summary-value">—</div>
+
+      <div class="builder-grid">
+        <div class="form-col">
+          <label for="fieldInput">Field</label>
+          <input id="fieldInput" list="analyticsFieldList" placeholder="Search any field (Status, Owner, ...)" autocomplete="off" />
+          <datalist id="analyticsFieldList"></datalist>
+        </div>
+        <div class="form-col">
+          <label for="vizType">Show as</label>
+          <select id="vizType">
+            <option value="pie">Pie chart (value share)</option>
+            <option value="bar">Bar chart (value counts)</option>
+            <option value="ratio">Ratio / fraction</option>
+          </select>
+        </div>
+        <div class="form-col ratio-only" id="valueCol" style="display:none;">
+          <label for="valueInput">Value to count</label>
+          <input id="valueInput" placeholder="e.g., Active" autocomplete="off" />
+        </div>
+        <div class="form-col">
+          <label for="scopeMode">Scope</label>
+          <select id="scopeMode">
+            <option value="all">Use current filters (all)</option>
+            <option value="company">Company</option>
+            <option value="company-location">Company -> Location</option>
+            <option value="company-location-asset">Company -> Location -> Asset Type</option>
+            <option value="location">Location</option>
+            <option value="location-asset">Location -> Asset Type</option>
+            <option value="asset">Asset Type</option>
+          </select>
+        </div>
+        <div class="form-col scope-pickers">
+          <div class="scope-picker" data-scope="company">
+            <label for="scopeCompany">Company</label>
+            <select id="scopeCompany"></select>
+          </div>
+          <div class="scope-picker" data-scope="location">
+            <label for="scopeLocation">Location</label>
+            <select id="scopeLocation"></select>
+          </div>
+          <div class="scope-picker" data-scope="asset">
+            <label for="scopeAsset">Asset Type</label>
+            <select id="scopeAsset"></select>
+          </div>
+        </div>
       </div>
-      <div class="summary-card">
-        <div class="summary-title">Total Companies</div>
-        <div id="ovTotalCompanies" class="summary-value">—</div>
+
+      <div class="condition-box" id="conditionBox" style="display:none;">
+        <div class="condition-header">
+          <div>
+            <div class="eyebrow small">Numerator filters</div>
+            <div class="builder-subtitle">Layer extra requirements for ratio questions.</div>
+          </div>
+          <button id="btnAddCondition" class="btn btn-ghost" type="button">+ And condition</button>
+        </div>
+        <div id="conditionList" class="condition-list"></div>
+        <p class="hint">Example: "how many 5 meter A frame Cableways in AB are manned by Matthias Gasser" = scope by location + asset type, then add a condition for the person.</p>
       </div>
     </div>
 
-    <div class="split-columns">
-      <div class="panel">
-        <div class="panel-title">Totals by Location</div>
-        <div id="ovByLocation" class="kv-list"><!-- filled by JS --></div>
-      </div>
-
-      <div class="panel">
-        <div class="panel-title">Totals by Company</div>
-        <div id="ovByCompany" class="kv-list"><!-- filled by JS --></div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ANALYTICS (affected by the LHS filters) -->
-  <section id="analyticsTab" class="stats-tab" style="display:none;">
-    <div class="analytics-toolbar">
-      <button id="btnAddStat" class="btn">+ Add Statistic</button>
-      <div class="hint">
-        Use the button to add a statistic. The filters on the left apply to this Analytics tab only
-        (the Overview tab is always unfiltered).
-      </div>
-    </div>
-
+    <div id="scopeSummary" class="scope-summary"><!-- quick counts --></div>
     <div id="statsCards" class="stats-cards"><!-- dynamic stat cards --></div>
   </section>
 
@@ -58,7 +92,7 @@
   <section id="repairsTab" class="stats-tab" style="display:none;">
     <div class="repairs-toolbar">
       <button id="btnAddGlobalRepair" class="btn">+ Add Repair/Maintenance</button>
-      <button id="btnImportRepairs" class="btn">📁 Import from Excel</button>
+      <button id="btnImportRepairs" class="btn">dY"? Import from Excel</button>
       <button id="btnSelectAllRepairs" class="btn btn-secondary">Select All</button>
       <button id="btnDeselectAllRepairs" class="btn btn-ghost">Deselect All</button>
       <button id="btnResolveRepairs" class="btn btn-ghost">Resolve Selected</button>
@@ -83,14 +117,4 @@
     </div>
 
   </section>
-
-  <!-- lightweight popup menu for + Add Statistic -->
-  <div id="addStatMenu" class="stat-menu" style="display:none;">
-    <button class="menu-item" data-kind="latlon">Latitude &amp; Longitude (radius count)</button>
-    <button class="menu-item" data-kind="province">Province (bar chart)</button>
-    <button class="menu-item" data-kind="inspection_frequency">Inspection Frequency (bar chart)</button>
-    <div class="menu-sep"></div>
-    <!-- Future stats hook -->
-    <div class="menu-note">More statistics coming soon…</div>
-  </div>
 </div>
