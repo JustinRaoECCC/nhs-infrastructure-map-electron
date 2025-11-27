@@ -34,71 +34,120 @@
   const stationAssetType = (s) => normStr(s.asset_type);
 
   // Basic, dependency-free bar chart
-  function renderBarChart(container, dataPairs, opts = {}) {
-    // dataPairs: [{ label, value }]
+function renderBarChart(container, dataPairs, opts = {}) {
     container.innerHTML = '';
-    const width = Math.max(320, container.clientWidth || 600);
-    const height = opts.height || 240;
-    const padL = 40, padR = 12, padT = 10, padB = 28;
+    // Tooltip element
+    const tip = document.createElement('div');
+    tip.className = 'chart-tooltip';
+    container.appendChild(tip);
+
+    const width = Math.max(0, container.clientWidth || 300);
+    const height = Math.max(0, container.clientHeight || width); // Safety check
+    const padL = 35, padR = 10, padT = 15, padB = 30; // Increased padding for aesthetics
 
     const W = width, H = height;
     const plotW = W - padL - padR;
     const plotH = H - padT - padB;
 
     const maxVal = Math.max(1, ...dataPairs.map(d => +d.value || 0));
-    const barGap = 8;
-    const n = dataPairs.length || 1;
-    const barW = Math.max(6, (plotW - (n - 1) * barGap) / n);
-
+    // Round max up to nice number for grid
+    const niceMax = Math.ceil(maxVal / 10) * 10 || 10;
+    
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('width', W);
     svg.setAttribute('height', H);
-    svg.setAttribute('role', 'img');
-    svg.setAttribute('aria-label', esc(opts.ariaLabel || 'Bar chart'));
+    svg.style.overflow = 'visible';
 
-    // Y axis line
-    const yAxis = document.createElementNS(svg.namespaceURI, 'line');
-    yAxis.setAttribute('x1', padL);
-    yAxis.setAttribute('x2', padL);
-    yAxis.setAttribute('y1', padT);
-    yAxis.setAttribute('y2', padT + plotH);
-    yAxis.setAttribute('stroke', 'currentColor');
-    yAxis.setAttribute('stroke-opacity', '0.35');
-    svg.appendChild(yAxis);
+    // 1. Grid Lines (Background)
+    const gridGroup = document.createElementNS(svg.namespaceURI, 'g');
+    const numGridLines = 5;
+    for (let i = 0; i <= numGridLines; i++) {
+      const yVal = padT + (plotH * (i / numGridLines));
+      const line = document.createElementNS(svg.namespaceURI, 'line');
+      line.setAttribute('x1', padL);
+      line.setAttribute('x2', W - padR);
+      line.setAttribute('y1', yVal);
+      line.setAttribute('y2', yVal);
+      line.setAttribute('stroke', 'currentColor');
+      line.setAttribute('stroke-opacity', '0.05');
+      line.setAttribute('stroke-dasharray', '4 2');
+      gridGroup.appendChild(line);
 
-    // Bars + labels
+      // Y-Axis label (Value)
+      const label = document.createElementNS(svg.namespaceURI, 'text');
+      const val = Math.round(niceMax - (niceMax * (i / numGridLines)));
+      label.setAttribute('x', padL - 8);
+      label.setAttribute('y', yVal + 4);
+      label.setAttribute('text-anchor', 'end');
+      label.setAttribute('font-size', '10');
+      label.setAttribute('fill', 'currentColor');
+      label.setAttribute('fill-opacity', '0.5');
+      label.textContent = val > 1000 ? (val/1000).toFixed(1) + 'k' : val;
+      gridGroup.appendChild(label);
+    }
+    svg.appendChild(gridGroup);
+
+    // 2. Bars
+    const barGap = 12;
+    const n = dataPairs.length || 1;
+    const barW = Math.max(6, Math.min(60, (plotW - (n - 1) * barGap) / n)); // Cap max width
+    const totalBarBlockW = n * barW + (n - 1) * barGap;
+    const startX = padL + (plotW - totalBarBlockW) / 2; // Center chart if few items
+
     dataPairs.forEach((d, i) => {
       const v = (+d.value || 0);
-      const h = Math.round((v / maxVal) * plotH);
-      const x = padL + i * (barW + barGap);
+      const h = Math.round((v / niceMax) * plotH);
+      const x = startX + i * (barW + barGap);
       const y = padT + (plotH - h);
 
+      // Bar Rect (Rounded Top)
       const rect = document.createElementNS(svg.namespaceURI, 'rect');
       rect.setAttribute('x', x);
       rect.setAttribute('y', y);
       rect.setAttribute('width', barW);
       rect.setAttribute('height', h);
-      rect.setAttribute('fill', 'currentColor');
-      rect.setAttribute('fill-opacity', '0.8');
+      rect.setAttribute('rx', 4); // Rounded corners
+      rect.setAttribute('fill', chartPalette[i % chartPalette.length]);
+      rect.setAttribute('fill-opacity', '0.85');
+      rect.style.transition = 'opacity 0.2s';
+      rect.style.cursor = 'pointer';
+
+      // Hover Effects
+      rect.addEventListener('mouseenter', () => {
+        rect.setAttribute('fill-opacity', '1');
+        tip.textContent = `${d.label}: ${d.value}`;
+        tip.style.left = `${x + barW/2}px`;
+        tip.style.top = `${y}px`;
+        tip.classList.add('visible');
+      });
+      rect.addEventListener('mouseleave', () => {
+        rect.setAttribute('fill-opacity', '0.85');
+        tip.classList.remove('visible');
+      });
+
       svg.appendChild(rect);
 
-      // Value label
-      const tv = document.createElementNS(svg.namespaceURI, 'text');
-      tv.setAttribute('x', x + barW / 2);
-      tv.setAttribute('y', y - 4);
-      tv.setAttribute('text-anchor', 'middle');
-      tv.setAttribute('font-size', '10');
-      tv.textContent = String(v);
-      svg.appendChild(tv);
-
-      // X labels (rotate if long)
+      // X Label (Rotate if necessary, truncate if long)
       const tl = document.createElementNS(svg.namespaceURI, 'text');
-      tl.setAttribute('x', x + barW / 2);
-      tl.setAttribute('y', padT + plotH + 14);
-      tl.setAttribute('text-anchor', 'end');
-      tl.setAttribute('transform', `rotate(-30, ${x + barW / 2}, ${padT + plotH + 14})`);
-      tl.setAttribute('font-size', '10');
-      tl.textContent = String(d.label);
+      const tx = x + barW / 2;
+      const ty = padT + plotH + 16;
+      tl.setAttribute('x', tx);
+      tl.setAttribute('y', ty);
+      tl.setAttribute('text-anchor', 'middle');
+      tl.setAttribute('font-size', '11');
+      tl.setAttribute('fill', 'currentColor');
+      
+      let labelText = String(d.label);
+      if (labelText.length > 15) labelText = labelText.slice(0, 12) + '...';
+      tl.textContent = labelText;
+
+      // Rotate if crowded
+      if (dataPairs.length > 6) {
+        tl.setAttribute('text-anchor', 'end');
+        tl.setAttribute('transform', `rotate(-35, ${tx}, ${ty})`);
+        tl.setAttribute('dy', '6');
+      }
+
       svg.appendChild(tl);
     });
 
@@ -571,46 +620,119 @@
     return card;
   }
 
-  function renderPieChart(container, dataPairs, opts = {}) {
+function renderPieChart(container, dataPairs, opts = {}) {
     container.innerHTML = '';
-    const size = opts.size || 240;
-    const r = size / 2 - 8;
+    // Tooltip
+    const tip = document.createElement('div');
+    tip.className = 'chart-tooltip';
+    container.appendChild(tip);
+
+    const boxW = container.clientWidth || 300;
+    const boxH = container.clientHeight || 300;
+    const size = Math.max(0, Math.min(boxW, boxH) - 10); // Safety check
+    const r = size / 2 - 10;
     const cx = size / 2;
     const cy = size / 2;
+    // Donut hole radius
+    const holeR = r * 0.55; 
+
     const total = dataPairs.reduce((sum, d) => sum + (+d.value || 0), 0);
     if (!total) {
       container.innerHTML = '<div class="empty">No data</div>';
       return;
     }
+
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('width', size);
     svg.setAttribute('height', size);
     svg.setAttribute('viewBox', `0 0 ${size} ${size}`);
-    svg.setAttribute('aria-label', esc(opts.ariaLabel || 'Pie chart'));
+
     let angle = -Math.PI / 2;
+    
     dataPairs.forEach((slice, idx) => {
       const v = +slice.value || 0;
       if (v <= 0) return;
-      const delta = (v / total) * Math.PI * 2;
+      const fraction = v / total;
+      const delta = fraction * Math.PI * 2;
       const next = angle + delta;
+
+      // Calculate coordinates for outer circle
       const x1 = cx + r * Math.cos(angle);
       const y1 = cy + r * Math.sin(angle);
       const x2 = cx + r * Math.cos(next);
       const y2 = cy + r * Math.sin(next);
+
+      // Calculate coordinates for inner circle (donut hole)
+      const x3 = cx + holeR * Math.cos(next);
+      const y3 = cy + holeR * Math.sin(next);
+      const x4 = cx + holeR * Math.cos(angle);
+      const y4 = cy + holeR * Math.sin(angle);
+
       const large = delta > Math.PI ? 1 : 0;
+      
+      // Draw Donut Slice
       const path = document.createElementNS(svg.namespaceURI, 'path');
       const d = [
-        'M', cx, cy,
-        'L', x1, y1,
+        'M', x1, y1,
         'A', r, r, 0, large, 1, x2, y2,
+        'L', x3, y3,
+        'A', holeR, holeR, 0, large, 0, x4, y4,
         'Z'
       ].join(' ');
+
       path.setAttribute('d', d);
-      path.setAttribute('fill', chartPalette[idx % chartPalette.length]);
-      path.setAttribute('fill-opacity', '0.92');
+      const color = chartPalette[idx % chartPalette.length];
+      path.setAttribute('fill', color);
+      path.setAttribute('fill-opacity', '0.9');
+      path.setAttribute('stroke', '#fff');
+      path.setAttribute('stroke-width', '2');
+      path.style.cursor = 'pointer';
+      path.style.transition = 'fill-opacity 0.2s, transform 0.2s';
+      path.style.transformOrigin = `${cx}px ${cy}px`;
+
+      path.addEventListener('mouseenter', () => {
+        path.setAttribute('fill-opacity', '1');
+        path.style.transform = 'scale(1.03)'; // Mild pop effect
+        tip.textContent = `${slice.label}: ${slice.value} (${(fraction*100).toFixed(1)}%)`;
+        // Position tip roughly near mouse or center - simplifying to center of chart for stability
+        tip.style.left = `${cx}px`;
+        tip.style.top = `${cy - 10}px`; 
+        tip.classList.add('visible');
+      });
+
+      path.addEventListener('mouseleave', () => {
+        path.setAttribute('fill-opacity', '0.9');
+        path.style.transform = 'scale(1)';
+        tip.classList.remove('visible');
+      });
+
       svg.appendChild(path);
       angle = next;
     });
+
+    // Donut Center Text
+    const centerText = document.createElementNS(svg.namespaceURI, 'text');
+    centerText.setAttribute('x', cx);
+    centerText.setAttribute('y', cy + 5);
+    centerText.setAttribute('text-anchor', 'middle');
+    centerText.setAttribute('font-weight', 'bold');
+    centerText.setAttribute('font-size', '14');
+    centerText.setAttribute('fill', 'currentColor');
+    centerText.style.pointerEvents = 'none';
+    centerText.textContent = total.toLocaleString();
+    svg.appendChild(centerText);
+
+    const centerLabel = document.createElementNS(svg.namespaceURI, 'text');
+    centerLabel.setAttribute('x', cx);
+    centerLabel.setAttribute('y', cy + 20);
+    centerLabel.setAttribute('text-anchor', 'middle');
+    centerLabel.setAttribute('font-size', '10');
+    centerLabel.setAttribute('fill', 'currentColor');
+    centerLabel.setAttribute('fill-opacity', '0.6');
+    centerLabel.style.pointerEvents = 'none';
+    centerLabel.textContent = 'Total';
+    svg.appendChild(centerLabel);
+
     container.appendChild(svg);
   }
 
@@ -641,12 +763,10 @@
     const chart = $('.chart', root);
     const legend = $('.chart-legend', root);
 
-    const lastRender = { key: null, width: 0 };
+    const lastRender = { key: null };
 
     const update = () => {
       const cacheKey = `${state.dataVersion}:${scopeKey(cfg.scope)}:${(cfg.field || '').toLowerCase()}:${cfg.viz}:${conditionSummary(cfg.conditions)}`;
-      const width = chart.clientWidth || 0;
-      if (lastRender.key === cacheKey && lastRender.width === width) return;
 
       if (!state.distributionCache.has(cacheKey)) {
         const scoped = getScopedStations(cfg.scope);
@@ -669,21 +789,18 @@
       }
 
       const items = state.distributionCache.get(cacheKey);
+
+      // 1. Clear containers
       chart.innerHTML = '';
       legend.innerHTML = '';
+
       if (!items.length) {
         chart.innerHTML = '<div class="empty">No data (adjust filters)</div>';
         lastRender.key = cacheKey;
-        lastRender.width = width;
         return;
       }
 
-      if (cfg.viz === 'pie') {
-        renderPieChart(chart, items, { ariaLabel: `${cfg.field} pie chart` });
-      } else {
-        renderBarChart(chart, items, { ariaLabel: `${cfg.field} bar chart`, height: 260 });
-      }
-
+      // 2. RENDER LEGEND FIRST (So it takes up space)
       const total = items.reduce((s, d) => s + (+d.value || 0), 0) || 1;
       items.forEach((item, idx) => {
         const row = document.createElement('div');
@@ -696,8 +813,18 @@
         legend.appendChild(row);
       });
 
+      // 3. RENDER CHART SECOND (Calculates remaining height correctly)
+      // Use a micro-task to ensure DOM has updated heights from the legend insertion
+      requestAnimationFrame(() => {
+        if (cfg.viz === 'pie') {
+          renderPieChart(chart, items, { ariaLabel: `${cfg.field} pie chart` });
+        } else {
+          renderBarChart(chart, items, { ariaLabel: `${cfg.field} bar chart` });
+        }
+      });
+
       lastRender.key = cacheKey;
-      lastRender.width = width;
+      // lastRender.width check removed as it's less reliable with flex resizing
     };
 
     return addCard(root, update);

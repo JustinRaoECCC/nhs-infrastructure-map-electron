@@ -3330,11 +3330,36 @@ html.modal-open, body.modal-open { overflow: hidden; }
 
 /* Stat cards */
 .stats-view .stats-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  display: flex;
+  flex-wrap: nowrap;           /* Force single row */
+  overflow-x: auto;            /* Enable horizontal scroll */
   gap: 14px;
+  padding-bottom: 12px;        /* Space for scrollbar */
+  scroll-snap-type: x mandatory; /* Nice snapping effect */
 }
+/* Custom scrollbar for the cards strip */
+.stats-view .stats-cards::-webkit-scrollbar {
+  height: 8px;
+}
+.stats-view .stats-cards::-webkit-scrollbar-track {
+  background: transparent;
+}
+.stats-view .stats-cards::-webkit-scrollbar-thumb {
+  background: var(--stats-border);
+  border-radius: 4px;
+}
+.stats-view .stats-cards::-webkit-scrollbar-thumb:hover {
+  background: var(--stats-muted);
+}
+
 .stats-view .stat-card {
+  /* Math: (100% width - 3 gaps of 14px) / 4 items */
+  flex: 0 0 calc((100% - (14px * 3)) / 4);
+  width: calc((100% - (14px * 3)) / 4);
+  aspect-ratio: 1 / 1;         /* Force Square */
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--stats-border);
   border-radius: var(--stats-radius-lg);
   background:
@@ -3369,7 +3394,12 @@ html.modal-open, body.modal-open { overflow: hidden; }
   color: var(--stats-text);
 }
 .stats-view .stat-card-body {
-  padding: 12px 14px 16px 14px;
+  padding: 0 14px 14px 14px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center; /* Center chart vertically in the square */
+  overflow: hidden;
 }
 .stats-view .stat-title {
   font-weight: 800;
@@ -3554,6 +3584,7 @@ html.modal-open, body.modal-open { overflow: hidden; }
   background: var(--stats-surface);
   color: var(--stats-text);
   font-size: 14px;
+  font-weight: 500;
   outline: none;
   transition: border-color .16s ease, box-shadow .16s ease;
 }
@@ -3648,6 +3679,8 @@ html.modal-open, body.modal-open { overflow: hidden; }
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 6px;
+  max-height: 60px;  /* Stop legend from eating the chart space */
+  overflow-y: auto;  /* Scroll legend if too many items */
 }
 .stats-view .chart-legend .legend-row {
   display: flex;
@@ -3672,12 +3705,48 @@ html.modal-open, body.modal-open { overflow: hidden; }
               color-mix(in srgb, var(--stats-surface) 96%, transparent);
 }
 .stats-view .chart {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: color-mix(in srgb, var(--stats-surface) 92%, transparent);
   border: 1px solid var(--stats-border);
   border-radius: 14px;
   padding: 8px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,.4);
+  position: relative; /* Context for tooltip */
+  overflow: visible;
 }
+
+.stats-view .chart-tooltip {
+  position: absolute;
+  background: rgba(15, 23, 42, 0.9);
+  color: #fff;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+  z-index: 10;
+  transform: translate(-50%, -100%);
+  margin-top: -8px;
+  white-space: nowrap;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.stats-view .chart-tooltip.visible {
+  opacity: 1;
+}
+/* Ensure dropdown options are not bold */
+.stats-view select option {
+  font-weight: normal;
+  padding: 4px;
+}
+
 .stats-view .chart svg text { fill: currentColor; }
 .stats-view .chart svg .axis { stroke: currentColor; stroke-opacity: 0.3; }
 .stats-view .stat-title {
