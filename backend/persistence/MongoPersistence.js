@@ -26,6 +26,10 @@ function parseFundingSplitTokens(splitStr) {
     .filter(Boolean);
 }
 
+function randHexColor() {
+  return '#' + Math.floor(Math.random() * 0xFFFFFF).toString(16).padStart(6, '0');
+}
+
 function formatEqualSplitForTokens(tokens) {
   const n = Array.isArray(tokens) ? tokens.length : 0;
   if (!n) return '';
@@ -264,7 +268,7 @@ class MongoPersistence extends IPersistence {
         { asset_type: assetType, location, company },
         {
           $set: { asset_type: assetType, location, company, _updatedAt: now },
-          $setOnInsert: { color: '', link: '', _createdAt: now, _source: 'manual' }
+          $setOnInsert: { color: randHexColor(), link: '', _createdAt: now, _source: 'manual' }
         },
         { upsert: true }
       );

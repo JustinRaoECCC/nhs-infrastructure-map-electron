@@ -513,7 +513,17 @@ async function showStationDetails(stn) {
   // Extra sections as collapsible accordions
   if (Object.keys(extras).length > 0) {
     html += '<div class="rhs-accordion">';
-    Object.entries(extras).forEach(([section, fields]) => {
+   // SORTING: Alphabetical, with "Funding Type Override Settings" forced to the bottom
+    const sectionKeys = Object.keys(extras).sort((a, b) => {
+      const sA = String(a).trim();
+      const sB = String(b).trim();
+      if (sA === 'Funding Type Override Settings') return 1;
+      if (sB === 'Funding Type Override Settings') return -1;
+      return sA.localeCompare(sB);
+    });
+
+    sectionKeys.forEach(section => {
+      const fields = extras[section];
       const title = section;
       html += `
         <div class="rhs-accordion-item">

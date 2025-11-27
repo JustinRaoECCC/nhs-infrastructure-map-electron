@@ -337,7 +337,7 @@ async function ensureLookupsReady() {
     if (need('Status Colors')) {
       const ws = wb.addWorksheet('Status Colors');
       ws.addRow(['Status','Color']);
-      ws.addRow(['Inactive',    '#8e8e8e']);
+      ws.addRow(['Inactive',    '#ff0000']);
       ws.addRow(['Mothballed',  '#a87ecb']);
       ws.addRow(['Unknown',     '#999999']);
       changed = true;
@@ -382,7 +382,7 @@ async function ensureLookupsReady() {
     // NEW: default Status Colors & Settings
     const wsS = wb.addWorksheet('Status Colors');
     wsS.addRow(['Status','Color']);
-    wsS.addRow(['Inactive','#8e8e8e']);
+    wsS.addRow(['Inactive','#ff0000']);
     wsS.addRow(['Mothballed','#a87ecb']);
     wsS.addRow(['Unknown','#999999']);
 

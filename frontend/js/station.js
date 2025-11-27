@@ -397,10 +397,24 @@ function renderDynamicSections(container, stn) {
 
   // Render sections
   sectionsContainer.innerHTML = '';
-  Object.entries(sections).forEach(([sectionName, fields]) => {
+  // SORTING: Alphabetical, with "Funding Type Override Settings" forced to the bottom
+  const sortedNames = Object.keys(sections).sort((a, b) => {
+    const sA = String(a).trim();
+    const sB = String(b).trim();
+    // Use the constant defined at top of file if available, or string literal
+    const funding = typeof FUNDING_SECTION_NAME !== 'undefined' ? FUNDING_SECTION_NAME : 'Funding Type Override Settings';
+    
+    if (sA === funding) return 1;
+    if (sB === funding) return -1;
+    return sA.localeCompare(sB);
+  });
+
+  sortedNames.forEach(sectionName => {
+    const fields = sections[sectionName];
     const sectionDiv = createEditableSection(sectionName, fields);
     sectionsContainer.appendChild(sectionDiv);
   });
+
 }
 
 function createEditableSection(sectionName, fields) {

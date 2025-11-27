@@ -145,7 +145,7 @@
     deletedStatusKeys: new Set(), // lowercased labels the user removed
     isStatusEditMode: false,
     // Legacy fallback (not used after migration, kept for backward compatibility)
-    statusColors: { inactive:'#8e8e8e', mothballed:'#a87ecb', unknown:'#999999' },
+    statusColors: { inactive:'#ff0000', mothballed:'#a87ecb', unknown:'#999999' },
     applyStatusColorsOnMap: false,
     applyRepairColorsOnMap: false,
     statusOverridesRepair: false, // true = Status wins, false = Repair wins
@@ -583,7 +583,7 @@
           rows.push({ company, asset_type: at, location: loc, color });
 
           const rc = repairColorMap[rowKey(at, company, loc)];
-          const rColor = normalizeHex(rc || HEX_DEFAULT);
+          const rColor = normalizeHex(rc || "#ff0000");
           repairRows.push({ company, asset_type: at, location: loc, color: rColor });
         });
       });
