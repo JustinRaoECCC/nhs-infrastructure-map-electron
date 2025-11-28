@@ -196,7 +196,7 @@
     }
   }
 
-  function showViews({ map = false, list = false, docs = false, wizard = false, settings = false }) {
+  function showViews({ map = false, list = false, docs = false, wizard = false, settings = false, materials = false }) {
     const mapEl      = document.getElementById('mapContainer');
     const listEl     = document.getElementById('listContainer');
     const docsEl     = document.getElementById('dashboardContentContainer');
@@ -206,9 +206,10 @@
     const statsEl    = document.getElementById('statisticsContainer');
     const rightToggleBtn = document.getElementById('toggleRight');
     const rightPanel = document.getElementById('rightPanel');
-    const usersEl    = document.getElementById('usersContainer');
+    const usersEl    = document.getElementById('usersContainer');
+    const materialsEl = document.getElementById('materialsManagerContainer');
 
-    const isFullWidthView = docs || wizard || settings || arguments[0]?.stats || arguments[0]?.users;
+    const isFullWidthView = docs || wizard || settings || arguments[0]?.stats || arguments[0]?.users || materials;
 
     if (mapEl)      mapEl.style.display      = map    ? 'block' : 'none';
     if (listEl)     listEl.style.display     = list   ? 'block' : 'none';
@@ -217,15 +218,16 @@
     if (settingsEl) settingsEl.style.display = settings ? 'block' : 'none';
     if (statsEl)    statsEl.style.display    = arguments[0]?.stats ? 'block' : 'none';
     if (usersEl)    usersEl.style.display    = arguments[0]?.users ? 'block' : 'none';
+    if (materialsEl) materialsEl.style.display = materials ? 'block' : 'none';
 
     if (stationEl && (map || list || isFullWidthView))
       stationEl.style.display = 'none';
 
-    // Hide the right toggle on all full-width views
-    if (rightToggleBtn) rightToggleBtn.style.display = isFullWidthView ? 'none' : '';
+    // Hide the right toggle on all full-width views
+    if (rightToggleBtn) rightToggleBtn.style.display = isFullWidthView ? 'none' : '';
 
-    // Suppress RHS while in full-width views; allow restore in other views
-    if (isFullWidthView) {
+    // Suppress RHS while in full-width views; allow restore in other views
+    if (isFullWidthView) {
       document.body.dataset.suppressRhs = '1';
       hideRightPanel();
     } else {
@@ -340,6 +342,33 @@
     safeEnableFullWidthMode();
     hideRightPanel();
     if (!document.getElementById('dashboardContentContainer')) showMapView();
+  }
+
+  async function showMaterialsManagerView() {
+    setActiveNav('navMaterials');
+    showViews({ map: false, list: false, docs: false, wizard: false, settings: false, materials: true });
+    safeEnableFullWidthMode();
+    hideRightPanel();
+    const rightToggleBtn = document.getElementById('toggleRight');
+    if (rightToggleBtn) rightToggleBtn.style.display = 'none';
+
+    const container = document.getElementById('materialsManagerContainer');
+    if (!container) return;
+
+    if (!container.dataset.loaded) {
+      try {
+        const resp = await fetch('materials_manager.html');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        container.innerHTML = await resp.text();
+        container.dataset.loaded = '1';
+        if (window.initMaterialsManagerView) requestAnimationFrame(() => window.initMaterialsManagerView());
+      } catch (e) {
+        console.error('[showMaterialsManagerView] failed to load materials_manager.html:', e);
+        container.innerHTML = '';
+      }
+    } else if (window.initMaterialsManagerView) {
+      window.initMaterialsManagerView();
+    }
   }
 
   async function showStatisticsView() {
@@ -1545,6 +1574,7 @@
     const navMap  = document.getElementById('navMap');
     const navList = document.getElementById('navList');
     const navOpt  = document.getElementById('navOpt');
+    const navMaterials = document.getElementById('navMaterials');
     const navDash = document.getElementById('navDash');
     const navSettings = document.getElementById('navSettings');
 
@@ -1559,6 +1589,10 @@
     if (navOpt && !navOpt.dataset.bound) {
       navOpt.addEventListener('click', (e) => { e.preventDefault(); showOptView(); });
       navOpt.dataset.bound = '1';
+    }
+    if (navMaterials && !navMaterials.dataset.bound) {
+      navMaterials.addEventListener('click', (e) => { e.preventDefault(); showMaterialsManagerView(); });
+      navMaterials.dataset.bound = '1';
     }
     if (navDash && !navDash.dataset.bound) {
       navDash.addEventListener('click', (e) => { e.preventDefault(); showStatisticsView(); });
@@ -1602,6 +1636,7 @@
   window.showMapView   = window.showMapView   || showMapView;
   window.showListView  = window.showListView  || showListView;
   window.showOptView  = window.showOptView  || showOptView;
+  window.showMaterialsManagerView = window.showMaterialsManagerView || showMaterialsManagerView;
   window.showStatisticsView = window.showStatisticsView || showStatisticsView;
   window.showSettingsView = window.showSettingsView || showSettingsView;
 
