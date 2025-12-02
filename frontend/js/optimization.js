@@ -1,4 +1,4 @@
-// frontend/js/optimization.js (UPDATED)
+// frontend/js/optimization.js
 document.addEventListener('DOMContentLoaded', () => {
 
   // ───────────────────────────────── Workflow mode state ─────────────────────────────────

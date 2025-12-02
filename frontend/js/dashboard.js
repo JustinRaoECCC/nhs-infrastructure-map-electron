@@ -1,4 +1,4 @@
-﻿// frontend/js/dashboard.js
+// frontend/js/dashboard.js
 (function () {
   'use strict';
 
@@ -11,21 +11,21 @@
   const hasStatsDOM = () => !!document.getElementById('statisticsPage');
 
   const getFieldValue = (row, fieldName) => {
-    // Finds "Inspection Frequency" or any "Section Inspection Frequency" etc., case-insensitive
-    const target = String(fieldName).toLowerCase();
-    for (const k of Object.keys(row || {})) {
-      if (!k) continue;
-      if (String(k).toLowerCase() === target) return row[k];
+    if (!row || !fieldName) return '';
+    
+    // 1. Try exact match first (fastest)
+    if (row[fieldName] !== undefined) return row[fieldName];
+
+    // 2. Normalization helper: remove everything except letters/numbers, lowercase it.
+    // This makes "Asset Type" == "assettype" and "asset_type" == "assettype"
+    const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const target = norm(fieldName);
+
+    // 3. Scan all keys in the row for a match
+    for (const k of Object.keys(row)) {
+      if (norm(k) === target) return row[k];
     }
-    // Fallback (safer): if target is multi-word, allow full-phrase suffix match.
-    // This covers "Inspection Frequency" vs "Section Inspection Frequency",
-    // but avoids single-word traps like "Type" matching "Infrastructure Type".
-    if (target.includes(' ')) {
-      for (const k of Object.keys(row || {})) {
-        const key = String(k).toLowerCase().trim();
-        if (key.endsWith(' ' + target)) return row[k];
-      }
-    }
+    
     return '';
   };
 
@@ -33,133 +33,143 @@
   const stationLocation = (s) => normStr(s.province || s.location || s.location_file);
   const stationAssetType = (s) => normStr(s.asset_type);
 
-  // Basic, dependency-free bar chart
-function renderBarChart(container, dataPairs, opts = {}) {
-    container.innerHTML = '';
-    // Tooltip element
-    const tip = document.createElement('div');
-    tip.className = 'chart-tooltip';
-    container.appendChild(tip);
+  // Haversine distance in km
+  function haversineKm(lat1, lon1, lat2, lon2) {
+    const toRad = (d) => (d * Math.PI) / 180;
+    const R = 6371;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+  }
 
-    const width = Math.max(0, container.clientWidth || 300);
-    const height = Math.max(0, container.clientHeight || width); // Safety check
-    const padL = 35, padR = 10, padT = 15, padB = 30; // Increased padding for aesthetics
+  // Basic, dependency-free bar chart
+  function renderBarChart(container, dataPairs, opts = {}) {
+    // dataPairs: [{ label, value }]
+    container.innerHTML = '';
+    const width = Math.max(320, container.clientWidth || 600);
+    const height = opts.height || 240;
+    const padL = 40, padR = 12, padT = 10, padB = 28;
 
     const W = width, H = height;
     const plotW = W - padL - padR;
     const plotH = H - padT - padB;
 
     const maxVal = Math.max(1, ...dataPairs.map(d => +d.value || 0));
-    // Round max up to nice number for grid
-    const niceMax = Math.ceil(maxVal / 10) * 10 || 10;
-    
+    const barGap = 8;
+    const n = dataPairs.length || 1;
+    const barW = Math.max(6, (plotW - (n - 1) * barGap) / n);
+
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('width', W);
     svg.setAttribute('height', H);
-    svg.style.overflow = 'visible';
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', esc(opts.ariaLabel || 'Bar chart'));
 
-    // 1. Grid Lines (Background)
-    const gridGroup = document.createElementNS(svg.namespaceURI, 'g');
-    const numGridLines = 5;
-    for (let i = 0; i <= numGridLines; i++) {
-      const yVal = padT + (plotH * (i / numGridLines));
-      const line = document.createElementNS(svg.namespaceURI, 'line');
-      line.setAttribute('x1', padL);
-      line.setAttribute('x2', W - padR);
-      line.setAttribute('y1', yVal);
-      line.setAttribute('y2', yVal);
-      line.setAttribute('stroke', 'currentColor');
-      line.setAttribute('stroke-opacity', '0.05');
-      line.setAttribute('stroke-dasharray', '4 2');
-      gridGroup.appendChild(line);
+    // Y axis line
+    const yAxis = document.createElementNS(svg.namespaceURI, 'line');
+    yAxis.setAttribute('x1', padL);
+    yAxis.setAttribute('x2', padL);
+    yAxis.setAttribute('y1', padT);
+    yAxis.setAttribute('y2', padT + plotH);
+    yAxis.setAttribute('stroke', 'currentColor');
+    yAxis.setAttribute('stroke-opacity', '0.35');
+    svg.appendChild(yAxis);
 
-      // Y-Axis label (Value)
-      const label = document.createElementNS(svg.namespaceURI, 'text');
-      const val = Math.round(niceMax - (niceMax * (i / numGridLines)));
-      label.setAttribute('x', padL - 8);
-      label.setAttribute('y', yVal + 4);
-      label.setAttribute('text-anchor', 'end');
-      label.setAttribute('font-size', '10');
-      label.setAttribute('fill', 'currentColor');
-      label.setAttribute('fill-opacity', '0.5');
-      label.textContent = val > 1000 ? (val/1000).toFixed(1) + 'k' : val;
-      gridGroup.appendChild(label);
-    }
-    svg.appendChild(gridGroup);
-
-    // 2. Bars
-    const barGap = 12;
-    const n = dataPairs.length || 1;
-    const barW = Math.max(6, Math.min(60, (plotW - (n - 1) * barGap) / n)); // Cap max width
-    const totalBarBlockW = n * barW + (n - 1) * barGap;
-    const startX = padL + (plotW - totalBarBlockW) / 2; // Center chart if few items
-
+    // Bars + labels
     dataPairs.forEach((d, i) => {
       const v = (+d.value || 0);
-      const h = Math.round((v / niceMax) * plotH);
-      const x = startX + i * (barW + barGap);
+      const h = Math.round((v / maxVal) * plotH);
+      const x = padL + i * (barW + barGap);
       const y = padT + (plotH - h);
 
-      // Bar Rect (Rounded Top)
       const rect = document.createElementNS(svg.namespaceURI, 'rect');
       rect.setAttribute('x', x);
       rect.setAttribute('y', y);
       rect.setAttribute('width', barW);
       rect.setAttribute('height', h);
-      rect.setAttribute('rx', 4); // Rounded corners
-      rect.setAttribute('fill', chartPalette[i % chartPalette.length]);
-      rect.setAttribute('fill-opacity', '0.85');
-      rect.style.transition = 'opacity 0.2s';
-      rect.style.cursor = 'pointer';
-
-      // Hover Effects
-      rect.addEventListener('mouseenter', () => {
-        rect.setAttribute('fill-opacity', '1');
-        tip.textContent = `${d.label}: ${d.value}`;
-        tip.style.left = `${x + barW/2}px`;
-        tip.style.top = `${y}px`;
-        tip.classList.add('visible');
-      });
-      rect.addEventListener('mouseleave', () => {
-        rect.setAttribute('fill-opacity', '0.85');
-        tip.classList.remove('visible');
-      });
-
+      rect.setAttribute('fill', 'currentColor');
+      rect.setAttribute('fill-opacity', '0.8');
       svg.appendChild(rect);
 
-      // X Label (Rotate if necessary, truncate if long)
+      // Value label
+      const tv = document.createElementNS(svg.namespaceURI, 'text');
+      tv.setAttribute('x', x + barW / 2);
+      tv.setAttribute('y', y - 4);
+      tv.setAttribute('text-anchor', 'middle');
+      tv.setAttribute('font-size', '10');
+      tv.textContent = String(v);
+      svg.appendChild(tv);
+
+      // X labels (rotate if long)
       const tl = document.createElementNS(svg.namespaceURI, 'text');
-      const tx = x + barW / 2;
-      const ty = padT + plotH + 16;
-      tl.setAttribute('x', tx);
-      tl.setAttribute('y', ty);
-      tl.setAttribute('text-anchor', 'middle');
-      tl.setAttribute('font-size', '11');
-      tl.setAttribute('fill', 'currentColor');
-      
-      let labelText = String(d.label);
-      if (labelText.length > 15) labelText = labelText.slice(0, 12) + '...';
-      tl.textContent = labelText;
-
-      // Rotate if crowded
-      if (dataPairs.length > 6) {
-        tl.setAttribute('text-anchor', 'end');
-        tl.setAttribute('transform', `rotate(-35, ${tx}, ${ty})`);
-        tl.setAttribute('dy', '6');
-      }
-
+      tl.setAttribute('x', x + barW / 2);
+      tl.setAttribute('y', padT + plotH + 14);
+      tl.setAttribute('text-anchor', 'end');
+      tl.setAttribute('transform', `rotate(-30, ${x + barW / 2}, ${padT + plotH + 14})`);
+      tl.setAttribute('font-size', '10');
+      tl.textContent = String(d.label);
       svg.appendChild(tl);
     });
 
     container.appendChild(svg);
   }
 
-  // ---- State ---------------------------------------------------------------
+  // Simple pie chart using SVG arcs
+  function renderPieChart(container, dataPairs, opts = {}) {
+    container.innerHTML = '';
+    const total = dataPairs.reduce((sum, d) => sum + Math.max(0, Number(d.value) || 0), 0);
+    if (!total) {
+      container.innerHTML = '<div class="empty">No data (adjust filters)</div>';
+      return;
+    }
+    const size = opts.size || Math.max(260, Math.min(container.clientWidth || 360, 420));
+    const radius = size / 2 - 12;
+    const cx = size / 2;
+    const cy = size / 2;
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', size);
+    svg.setAttribute('height', size);
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', esc(opts.ariaLabel || 'Pie chart'));
 
-  const chartPalette = [
-    '#2563eb', '#0ea5e9', '#22c55e', '#f59e0b', '#ef4444',
-    '#8b5cf6', '#10b981', '#f97316', '#e11d48', '#14b8a6'
-  ];
+    let angle = -Math.PI / 2;
+    const paletteLocal = opts.palette || palette;
+    dataPairs.forEach((d, i) => {
+      const value = Math.max(0, Number(d.value) || 0);
+      const slice = (value / total) * Math.PI * 2;
+      const x1 = cx + radius * Math.cos(angle);
+      const y1 = cy + radius * Math.sin(angle);
+      angle += slice;
+      const x2 = cx + radius * Math.cos(angle);
+      const y2 = cy + radius * Math.sin(angle);
+      const largeArc = slice > Math.PI ? 1 : 0;
+      const path = document.createElementNS(svg.namespaceURI, 'path');
+      path.setAttribute('d', `M ${cx} ${cy} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`);
+      path.setAttribute('fill', paletteLocal[i % paletteLocal.length]);
+      path.setAttribute('fill-opacity', '0.92');
+      svg.appendChild(path);
+    });
+
+    const legend = document.createElement('div');
+    legend.className = 'pie-legend';
+    dataPairs.slice(0, 12).forEach((d, i) => {
+      const row = document.createElement('div');
+      row.className = 'legend-row';
+      row.innerHTML = `<span class="dot" style="background:${paletteLocal[i % paletteLocal.length]}"></span><span>${esc(d.label)} — ${d.value}</span>`;
+      legend.appendChild(row);
+    });
+
+    const wrap = document.createElement('div');
+    wrap.className = 'pie-wrap';
+    wrap.appendChild(svg);
+    wrap.appendChild(legend);
+    container.appendChild(wrap);
+  }
+
+  // ---- State ---------------------------------------------------------------
 
   const state = {
     allStations: [],
@@ -168,50 +178,65 @@ function renderBarChart(container, dataPairs, opts = {}) {
     cards: [],
     initialized: false,
     fieldNames: [],
-    scopeCounts: null,
-    scopeIndex: null,
-    dataVersion: 0,
-    scopeDataCache: new Map(),
-    distributionCache: new Map()
+    filterOptions: {
+      companies: [],
+      locationsByCompany: {},
+      assetsByCompanyLocation: {},
+      assetsByLocation: {},
+      allLocations: [],
+      allAssetTypes: []
+    }
   };
 
-  const builderEls = {
+  const analyticsUI = {
     fieldInput: null,
     vizSelect: null,
-    valueInput: null,
-    valueCol: null,
-    scopeMode: null,
-    scopeCompany: null,
-    scopeLocation: null,
-    scopeAsset: null,
-    conditionBox: null,
-    conditionList: null,
-    addConditionBtn: null,
-    addCardBtn: null,
-    builderTotal: null
+    companySelect: null,
+    locationSelect: null,
+    assetSelect: null,
+    addBtn: null,
+    ratioWrap: null,
+    numeratorsHost: null,
+    addNumeratorBtn: null,
+    aggregateWrap: null,
+    aggregateSelect: null,
+    cardsHost: null
   };
 
-  const warn = (msg) => {
-    if (window.appAlert) window.appAlert(msg);
-    else alert(msg);
-  };
+  const palette = ['#2563eb', '#0ea5e9', '#22c55e', '#f59e0b', '#ef4444', '#7c3aed', '#14b8a6', '#f97316'];
 
-  const uniqCaseInsensitive = (arr) => {
-    const seen = new Set();
-    const out = [];
-    for (const val of arr || []) {
-      const key = String(val || '').toLowerCase();
-      if (!seen.has(key)) { seen.add(key); out.push(val); }
+  const renderQueue = new Set();
+  let rafHandle = 0;
+  const cardObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      const card = entry.target.__card;
+      if (!card) return;
+      card.isVisible = entry.isIntersecting;
+      if (card.isVisible && card.needsRender) {
+        renderQueue.add(card);
+        if (!rafHandle) rafHandle = requestAnimationFrame(flushRenderQueue);
+      }
+    });
+  }, { threshold: 0.05 });
+
+  function flushRenderQueue() {
+    rafHandle = 0;
+    const batch = Array.from(renderQueue);
+    renderQueue.clear();
+    batch.forEach(card => {
+      if (!card.isVisible || !card.needsRender) return;
+      card.needsRender = false;
+      try { card.render(); } catch (e) { console.error('[analytics] render failed', e); }
+    });
+  }
+
+  function markDirty(card) {
+    if (!card) return;
+    card.needsRender = true;
+    if (card.isVisible) {
+      renderQueue.add(card);
+      if (!rafHandle) rafHandle = requestAnimationFrame(flushRenderQueue);
     }
-    return out;
-  };
-
-  function resolveFieldValue(row, fieldName) {
-    if (!fieldName) return '';
-    const clean = String(fieldName).replace(/\s*\((?:Station Data|Repairs)\)$/i, '').trim();
-    const direct = getFieldValue(row, clean);
-    if (direct !== '') return direct;
-    return getFieldValue(row, fieldName);
   }
 
   // ---- Filters integration (Analytics only) --------------------------------
@@ -220,11 +245,13 @@ function renderBarChart(container, dataPairs, opts = {}) {
     const tree = $('#filterTree');
     if (!tree) return { locations: null, assetsByLocation: new Map() };
 
+    // Selected locations
     const locCbs = $$('input.location', tree);
     const checkedLocs = new Set(locCbs.filter(cb => cb.checked).map(cb => cb.value));
 
+    // Selected asset types per location (only if not all are selected)
     const assetsByLoc = new Map();
-    const locMap = new Map();
+    const locMap = new Map(); // quick map of location -> all asset type checkboxes under it
     $$('.ft-location', tree).forEach(locDetails => {
       const locCb = $('input.location', locDetails);
       if (!locCb) return;
@@ -243,727 +270,756 @@ function renderBarChart(container, dataPairs, opts = {}) {
     return { locations: checkedLocs, assetsByLocation: assetsByLoc };
   }
 
-  function clearCaches() {
-    state.scopeDataCache.clear();
-    state.distributionCache.clear();
-  }
-
   function applyAnalyticsFilters() {
     const { locations, assetsByLocation } = readActiveFilters();
 
     if (!locations || locations.size === 0) {
-      state.filteredStations = [];
-    } else {
-      const matches = (s) => {
-        const loc = stationLocation(s);
-        if (!loc || !locations.has(loc)) return false;
-        const set = assetsByLocation.get(loc);
-        if (!set || set.size === 0) return true;
-        return set.has(stationAssetType(s));
-      };
-      state.filteredStations = state.allStations.filter(matches);
-    }
-
-    state.dataVersion += 1;
-    clearCaches();
-    rebuildScopeCaches();
-    updateBuilderTotal();
-  }
-
-  function onFiltersChanged() {
-    applyAnalyticsFilters();
-    renderScopeSummary();
-    populateScopeSelectors();
-    scheduleCardUpdates();
-  }
-
-  // ---- Scope helpers -------------------------------------------------------
-
-  function scopeKey(scope) {
-    const mode = scope?.mode || 'all';
-    const parts = [mode];
-    if (scope?.company) parts.push(scope.company);
-    if (scope?.location) parts.push(scope.location);
-    if (scope?.assetType) parts.push(scope.assetType);
-    return parts.join('|');
-  }
-
-  function matchesScope(row, scope) {
-    if (!scope || scope.mode === 'all') return true;
-    const co = normStr(row.company);
-    const loc = stationLocation(row);
-    const at = stationAssetType(row);
-    switch (scope.mode) {
-      case 'company': return co && scope.company && co === scope.company;
-      case 'company-location': return co === scope.company && loc === scope.location;
-      case 'company-location-asset': return co === scope.company && loc === scope.location && at === scope.assetType;
-      case 'location': return loc && scope.location && loc === scope.location;
-      case 'location-asset': return loc === scope.location && at === scope.assetType;
-      case 'asset': return at && scope.assetType && at === scope.assetType;
-      default: return true;
-    }
-  }
-
-  function getScopedStations(scope) {
-    const key = `${state.dataVersion}:${scopeKey(scope)}`;
-    if (state.scopeDataCache.has(key)) return state.scopeDataCache.get(key);
-    const rows = state.filteredStations.filter(r => matchesScope(r, scope));
-    state.scopeDataCache.set(key, rows);
-    return rows;
-  }
-
-  function applyConditions(rows, conditions) {
-    const conds = (conditions || [])
-      .map(c => ({ field: normStr(c.field), value: normStr(c.value).toLowerCase() }))
-      .filter(c => c.field && c.value);
-    if (!conds.length) return rows;
-    return rows.filter(r => conds.every(c => normStr(resolveFieldValue(r, c.field)).toLowerCase() === c.value));
-  }
-
-  function rebuildScopeCaches() {
-    const counts = {
-      company: new Map(),
-      location: new Map(),
-      assetType: new Map(),
-      companyLocation: new Map(),
-      companyLocationAsset: new Map(),
-      locationAsset: new Map()
-    };
-
-    for (const s of state.filteredStations) {
-      const co = normStr(s.company);
-      const loc = stationLocation(s);
-      const at = stationAssetType(s);
-      if (co) counts.company.set(co, (counts.company.get(co) || 0) + 1);
-      if (loc) counts.location.set(loc, (counts.location.get(loc) || 0) + 1);
-      if (at) counts.assetType.set(at, (counts.assetType.get(at) || 0) + 1);
-      if (co && loc) counts.companyLocation.set(`${co}|||${loc}`, (counts.companyLocation.get(`${co}|||${loc}`) || 0) + 1);
-      if (loc && at) counts.locationAsset.set(`${loc}|||${at}`, (counts.locationAsset.get(`${loc}|||${at}`) || 0) + 1);
-      if (co && loc && at) counts.companyLocationAsset.set(`${co}|||${loc}|||${at}`, (counts.companyLocationAsset.get(`${co}|||${loc}|||${at}`) || 0) + 1);
-    }
-
-    const toList = (map, mapper) => Array.from(map.entries()).map(mapper).sort((a, b) => b.count - a.count || String(a.label || '').localeCompare(String(b.label || '')));
-
-    state.scopeCounts = counts;
-    state.scopeIndex = {
-      companies: toList(counts.company, ([company, count]) => ({ company, count })),
-      locations: toList(counts.location, ([location, count]) => ({ location, count })),
-      assetTypes: toList(counts.assetType, ([assetType, count]) => ({ assetType, count })),
-      companyLocations: toList(counts.companyLocation, ([key, count]) => {
-        const [company, location] = key.split('|||');
-        return { company, location, count };
-      }),
-      companyLocationAssets: toList(counts.companyLocationAsset, ([key, count]) => {
-        const [company, location, assetType] = key.split('|||');
-        return { company, location, assetType, count };
-      }),
-      locationAssets: toList(counts.locationAsset, ([key, count]) => {
-        const [location, assetType] = key.split('|||');
-        return { location, assetType, count };
-      })
-    };
-  }
-
-  function renderScopeSummary() {
-    const wrap = $('#scopeSummary');
-    if (!wrap) return;
-    wrap.innerHTML = '';
-    const idx = state.scopeIndex;
-    if (!idx) return;
-
-    const groups = [
-      { title: 'Company -> Location -> Asset Type', items: idx.companyLocationAssets },
-      { title: 'Company -> Location', items: idx.companyLocations },
-      { title: 'Company', items: idx.companies },
-      { title: 'Location -> Asset Type', items: idx.locationAssets },
-      { title: 'Location', items: idx.locations },
-      { title: 'Asset Type', items: idx.assetTypes }
-    ];
-
-    groups.forEach(group => {
-      if (!group.items || !group.items.length) return;
-      const chip = document.createElement('div');
-      chip.className = 'scope-chip';
-      chip.innerHTML = `<div class="chip-title">${esc(group.title)}</div>`;
-      const list = document.createElement('div');
-      list.className = 'chip-list';
-      group.items.slice(0, 4).forEach(item => {
-        const labelParts = [];
-        if (item.company) labelParts.push(item.company);
-        if (item.location) labelParts.push(item.location);
-        if (item.assetType) labelParts.push(item.assetType);
-        const label = labelParts.join(' -> ') || item.location || item.assetType || item.company;
-        const row = document.createElement('div');
-        row.className = 'tag';
-        row.innerHTML = `<span>${esc(label)}</span><span class="count">${item.count}</span>`;
-        list.appendChild(row);
-      });
-      chip.appendChild(list);
-      wrap.appendChild(chip);
-    });
-  }
-
-  // ---- Field catalog + value hints ----------------------------------------
-
-  async function loadAnalyticsFieldNames() {
-    try {
-      let names = [];
-      if (window.electronAPI?.getWorkbookFieldCatalog) {
-        const catalog = await window.electronAPI.getWorkbookFieldCatalog();
-        if (catalog?.sheets) {
-          Object.values(catalog.sheets).forEach(fields => {
-            (fields || []).forEach(f => names.push(f));
-          });
-        }
-      }
-
-      if (!names.length && state.allStations.length) {
-        const set = new Set();
-        state.allStations.forEach(row => Object.keys(row || {}).forEach(k => set.add(k)));
-        names = Array.from(set);
-      }
-
-      state.fieldNames = uniqCaseInsensitive(names).sort((a, b) => a.localeCompare(b));
-      renderFieldDatalist();
-    } catch (e) {
-      console.error('[analytics] Failed to load field names', e);
-    }
-  }
-
-  function renderFieldDatalist() {
-    const list = $('#analyticsFieldList');
-    if (!list) return;
-    list.innerHTML = '';
-    state.fieldNames.forEach(f => {
-      const opt = document.createElement('option');
-      opt.value = f;
-      list.appendChild(opt);
-    });
-  }
-
-  // ---- Scope selector wiring ----------------------------------------------
-
-  function populateScopeSelectors() {
-    const { scopeIndex } = state;
-    if (!scopeIndex) return;
-    const setOptions = (el, items, formatter) => {
-      if (!el) return;
-      const current = el.value;
-      el.innerHTML = '';
-      const placeholder = document.createElement('option');
-      placeholder.value = '';
-      placeholder.textContent = 'Choose...';
-      el.appendChild(placeholder);
-      items.forEach(item => {
-        const opt = document.createElement('option');
-        opt.value = item.value || item.company || item.location || item.assetType || '';
-        opt.textContent = formatter(item);
-        el.appendChild(opt);
-      });
-      if (current) el.value = current;
-    };
-
-    setOptions(builderEls.scopeCompany, scopeIndex.companies, (i) => `${i.company} (${i.count})`);
-    setOptions(builderEls.scopeLocation, scopeIndex.locations, (i) => `${i.location} (${i.count})`);
-    setOptions(builderEls.scopeAsset, scopeIndex.assetTypes, (i) => `${i.assetType} (${i.count})`);
-
-    onScopeCompanyChange();
-    onScopeLocationChange();
-    syncScopePickerVisibility();
-  }
-
-  function onScopeCompanyChange() {
-    const company = normStr(builderEls.scopeCompany?.value || '');
-    const locSel = builderEls.scopeLocation;
-    if (!locSel || !state.scopeIndex) return;
-    if (!company) return;
-    const locs = state.scopeIndex.companyLocations.filter(item => item.company === company);
-    locSel.innerHTML = '<option value="">' + 'Choose...' + '</option>';
-    locs.forEach(item => {
-      const opt = document.createElement('option');
-      opt.value = item.location;
-      opt.textContent = `${item.location} (${item.count})`;
-      locSel.appendChild(opt);
-    });
-    onScopeLocationChange();
-  }
-
-  function onScopeLocationChange() {
-    const loc = normStr(builderEls.scopeLocation?.value || '');
-    const co = normStr(builderEls.scopeCompany?.value || '');
-    const assetSel = builderEls.scopeAsset;
-    if (!assetSel || !state.scopeIndex) return;
-    const assets = [];
-    if (co && loc) {
-      state.scopeIndex.companyLocationAssets.forEach(item => {
-        if (item.company === co && item.location === loc) assets.push(item);
-      });
-    } else if (loc) {
-      state.scopeIndex.locationAssets.forEach(item => {
-        if (item.location === loc) assets.push(item);
-      });
-    } else {
-      assets.push(...state.scopeIndex.assetTypes);
-    }
-    assetSel.innerHTML = '<option value="">' + 'Choose...' + '</option>';
-    assets.forEach(item => {
-      const opt = document.createElement('option');
-      opt.value = item.assetType;
-      opt.textContent = `${item.assetType} (${item.count})`;
-      assetSel.appendChild(opt);
-    });
-  }
-
-  function syncScopePickerVisibility() {
-    const mode = builderEls.scopeMode?.value || 'all';
-    const companyWrap = builderEls.scopeCompany?.closest('.scope-picker');
-    const locationWrap = builderEls.scopeLocation?.closest('.scope-picker');
-    const assetWrap = builderEls.scopeAsset?.closest('.scope-picker');
-    if (companyWrap) companyWrap.classList.add('hidden');
-    if (locationWrap) locationWrap.classList.add('hidden');
-    if (assetWrap) assetWrap.classList.add('hidden');
-    if (mode.includes('company') && companyWrap) companyWrap.classList.remove('hidden');
-    if (mode.includes('location') && locationWrap) locationWrap.classList.remove('hidden');
-    if (mode.includes('asset') && assetWrap) assetWrap.classList.remove('hidden');
-  }
-
-  // ---- Condition rows ------------------------------------------------------
-
-  function addConditionRow(field = '', value = '') {
-    if (!builderEls.conditionList) return;
-    const row = document.createElement('div');
-    row.className = 'condition-row';
-    row.innerHTML = `
-      <input class="cond-field" list="analyticsFieldList" placeholder="Field" value="${esc(field)}" />
-      <input class="cond-value" placeholder="Value" value="${esc(value)}" />
-      <button type="button" class="remove">Remove</button>
-    `;
-    const fieldInput = $('.cond-field', row);
-    const valueInput = $('.cond-value', row);
-    if (fieldInput) {
-      fieldInput.dataset.autofill = field ? '0' : '1';
-      fieldInput.addEventListener('input', () => fieldInput.dataset.autofill = '0');
-    }
-    if (valueInput) {
-      valueInput.addEventListener('input', () => valueInput.dataset.autofill = '0');
-    }
-    $('.remove', row).addEventListener('click', () => row.remove());
-    builderEls.conditionList.appendChild(row);
-  }
-
-  function collectConditionRows() {
-    const rows = [];
-    (builderEls.conditionList ? $$('.condition-row', builderEls.conditionList) : []).forEach(row => {
-      const field = normStr($('.cond-field', row)?.value);
-      const value = normStr($('.cond-value', row)?.value);
-      if (field && value) {
-        rows.push({ field, value });
-      } else if (field || value) {
-        rows.push({ field, value, _incomplete: true });
-      }
-    });
-    return rows;
-  }
-
-  function syncPrimaryConditionField() {
-    if (builderEls.vizSelect?.value !== 'ratio') return;
-    const firstRow = builderEls.conditionList?.querySelector('.condition-row');
-    if (!firstRow) return;
-    const fieldInput = $('.cond-field', firstRow);
-    if (!fieldInput) return;
-    const shouldAutofill = !fieldInput.value || fieldInput.dataset.autofill === '1';
-    if (shouldAutofill) {
-      fieldInput.value = builderEls.fieldInput?.value || '';
-      fieldInput.dataset.autofill = '1';
-    }
-  }
-
-  function onVizChange() {
-    const isRatio = builderEls.vizSelect?.value === 'ratio';
-    if (builderEls.valueCol) builderEls.valueCol.style.display = isRatio ? '' : 'none';
-    if (builderEls.conditionBox) builderEls.conditionBox.style.display = isRatio ? '' : 'none';
-    if (!isRatio && builderEls.conditionList) builderEls.conditionList.innerHTML = '';
-    if (isRatio && builderEls.conditionList && builderEls.conditionList.childElementCount === 0) {
-      addConditionRow(builderEls.fieldInput?.value || '', '');
-    }
-    if (isRatio) syncPrimaryConditionField();
-  }
-
-  // ---- Analytics cards -----------------------------------------------------
-
-  function addCard(node, updater) {
-    const list = $('#statsCards');
-    const wrap = document.createElement('div');
-    wrap.className = 'stat-card';
-    const header = document.createElement('div');
-    header.className = 'stat-card-header';
-    const body = document.createElement('div');
-    body.className = 'stat-card-body';
-    const closeBtn = document.createElement('button');
-    closeBtn.className = 'btn btn-ghost stat-card-close';
-    closeBtn.textContent = '×';
-    closeBtn.title = 'Remove this analytic';
-    closeBtn.addEventListener('click', () => {
-      wrap.remove();
-      state.cards = state.cards.filter(c => c.wrap !== wrap);
-    });
-
-    header.appendChild(closeBtn);
-    wrap.appendChild(header);
-    body.appendChild(node);
-    wrap.appendChild(body);
-    list.appendChild(wrap);
-
-    const card = { wrap, update: updater };
-    state.cards.push(card);
-    updater();
-    return card;
-  }
-
-function renderPieChart(container, dataPairs, opts = {}) {
-    container.innerHTML = '';
-    // Tooltip
-    const tip = document.createElement('div');
-    tip.className = 'chart-tooltip';
-    container.appendChild(tip);
-
-    const boxW = container.clientWidth || 300;
-    const boxH = container.clientHeight || 300;
-    const size = Math.max(0, Math.min(boxW, boxH) - 10); // Safety check
-    const r = size / 2 - 10;
-    const cx = size / 2;
-    const cy = size / 2;
-    // Donut hole radius
-    const holeR = r * 0.55; 
-
-    const total = dataPairs.reduce((sum, d) => sum + (+d.value || 0), 0);
-    if (!total) {
-      container.innerHTML = '<div class="empty">No data</div>';
+      state.filteredStations = state.allStations.slice();
       return;
     }
 
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('width', size);
-    svg.setAttribute('height', size);
-    svg.setAttribute('viewBox', `0 0 ${size} ${size}`);
+    const matches = (s) => {
+      const loc = stationLocation(s);
+      if (!loc || !locations.has(loc)) return false;
+      const set = assetsByLocation.get(loc);
+      if (!set || set.size === 0) return true; // no AT filter for this location
+      return set.has(stationAssetType(s));
+    };
 
-    let angle = -Math.PI / 2;
-    
-    dataPairs.forEach((slice, idx) => {
-      const v = +slice.value || 0;
-      if (v <= 0) return;
-      const fraction = v / total;
-      const delta = fraction * Math.PI * 2;
-      const next = angle + delta;
-
-      // Calculate coordinates for outer circle
-      const x1 = cx + r * Math.cos(angle);
-      const y1 = cy + r * Math.sin(angle);
-      const x2 = cx + r * Math.cos(next);
-      const y2 = cy + r * Math.sin(next);
-
-      // Calculate coordinates for inner circle (donut hole)
-      const x3 = cx + holeR * Math.cos(next);
-      const y3 = cy + holeR * Math.sin(next);
-      const x4 = cx + holeR * Math.cos(angle);
-      const y4 = cy + holeR * Math.sin(angle);
-
-      const large = delta > Math.PI ? 1 : 0;
-      
-      // Draw Donut Slice
-      const path = document.createElementNS(svg.namespaceURI, 'path');
-      const d = [
-        'M', x1, y1,
-        'A', r, r, 0, large, 1, x2, y2,
-        'L', x3, y3,
-        'A', holeR, holeR, 0, large, 0, x4, y4,
-        'Z'
-      ].join(' ');
-
-      path.setAttribute('d', d);
-      const color = chartPalette[idx % chartPalette.length];
-      path.setAttribute('fill', color);
-      path.setAttribute('fill-opacity', '0.9');
-      path.setAttribute('stroke', '#fff');
-      path.setAttribute('stroke-width', '2');
-      path.style.cursor = 'pointer';
-      path.style.transition = 'fill-opacity 0.2s, transform 0.2s';
-      path.style.transformOrigin = `${cx}px ${cy}px`;
-
-      path.addEventListener('mouseenter', () => {
-        path.setAttribute('fill-opacity', '1');
-        path.style.transform = 'scale(1.03)'; // Mild pop effect
-        tip.textContent = `${slice.label}: ${slice.value} (${(fraction*100).toFixed(1)}%)`;
-        // Position tip roughly near mouse or center - simplifying to center of chart for stability
-        tip.style.left = `${cx}px`;
-        tip.style.top = `${cy - 10}px`; 
-        tip.classList.add('visible');
-      });
-
-      path.addEventListener('mouseleave', () => {
-        path.setAttribute('fill-opacity', '0.9');
-        path.style.transform = 'scale(1)';
-        tip.classList.remove('visible');
-      });
-
-      svg.appendChild(path);
-      angle = next;
-    });
-
-    // Donut Center Text
-    const centerText = document.createElementNS(svg.namespaceURI, 'text');
-    centerText.setAttribute('x', cx);
-    centerText.setAttribute('y', cy + 5);
-    centerText.setAttribute('text-anchor', 'middle');
-    centerText.setAttribute('font-weight', 'bold');
-    centerText.setAttribute('font-size', '14');
-    centerText.setAttribute('fill', 'currentColor');
-    centerText.style.pointerEvents = 'none';
-    centerText.textContent = total.toLocaleString();
-    svg.appendChild(centerText);
-
-    const centerLabel = document.createElementNS(svg.namespaceURI, 'text');
-    centerLabel.setAttribute('x', cx);
-    centerLabel.setAttribute('y', cy + 20);
-    centerLabel.setAttribute('text-anchor', 'middle');
-    centerLabel.setAttribute('font-size', '10');
-    centerLabel.setAttribute('fill', 'currentColor');
-    centerLabel.setAttribute('fill-opacity', '0.6');
-    centerLabel.style.pointerEvents = 'none';
-    centerLabel.textContent = 'Total';
-    svg.appendChild(centerLabel);
-
-    container.appendChild(svg);
+    state.filteredStations = state.allStations.filter(matches);
+  }
+  function onFiltersChanged() {
+    applyAnalyticsFilters();
+    state.cards.forEach(markDirty);
   }
 
-  function scopeLabel(scope) {
-    if (!scope || scope.mode === 'all') return 'All data (using current filters)';
+  // ---- Analytics data & UI -------------------------------------------------
+
+  const uniq = (arr = []) => Array.from(new Set(arr.filter(Boolean)));
+
+  function buildFieldCatalogFromRows(rows) {
+    const seen = new Map();
+    (rows || []).forEach(r => {
+      Object.keys(r || {}).forEach(k => {
+        const key = normStr(k);
+        if (!key) return;
+        const lower = key.toLowerCase();
+        if (!seen.has(lower)) seen.set(lower, key);
+      });
+    });
+    return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
+  }
+
+  async function loadAnalyticsFieldNames(rows) {
+    try {
+      let catalog = null;
+      if (window.electronAPI?.getWorkbookFieldCatalog) {
+        catalog = await window.electronAPI.getWorkbookFieldCatalog();
+      }
+      if (catalog && (Array.isArray(catalog.repairs) || catalog.sheets)) {
+        const fieldMap = new Map();
+        const addField = (field, source) => {
+          const key = String(field || '').trim();
+          if (!key) return;
+          const lower = key.toLowerCase();
+          if (!fieldMap.has(lower)) fieldMap.set(lower, { original: key, sources: new Set() });
+          fieldMap.get(lower).sources.add(source);
+        };
+        (catalog.repairs || []).forEach(f => addField(f, 'Repairs'));
+        Object.values(catalog.sheets || {}).forEach(fields => {
+          (fields || []).forEach(f => addField(f, 'Station Data'));
+        });
+        const qualified = [];
+        for (const { original, sources } of fieldMap.values()) {
+          const inRepairs = sources.has('Repairs');
+          const inStations = sources.has('Station Data');
+          if (inRepairs && inStations) {
+            qualified.push(`${original} (Repairs)`);
+            qualified.push(`${original} (Station Data)`);
+          } else if (inRepairs || inStations) {
+            qualified.push(original);
+          }
+        }
+        return qualified.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+      }
+    } catch (e) {
+      console.warn('[analytics] field catalog failed, using fallback', e);
+    }
+    return buildFieldCatalogFromRows(rows);
+  }
+
+  function updateFilterOptions() {
+    const tree = state.lookupTree || {};
+    const companies = uniq((tree.companies || []).map(c => c.name || c)).sort((a, b) => a.localeCompare(b));
+    const locationsByCompany = {};
+    const assetsByCompanyLocation = {};
+
+    companies.forEach(co => {
+      locationsByCompany[co] = uniq((tree.locationsByCompany?.[co] || [])).sort((a, b) => a.localeCompare(b));
+      assetsByCompanyLocation[co] = {};
+      const assets = tree.assetsByCompanyLocation?.[co] || {};
+      Object.keys(assets || {}).forEach(loc => {
+        assetsByCompanyLocation[co][loc] = uniq(assets[loc]).sort((a, b) => a.localeCompare(b));
+      });
+    });
+
+    const assetsByLocation = {};
+    const allLocationsSet = new Set();
+    const allAssetSet = new Set();
+    state.allStations.forEach(s => {
+      const loc = stationLocation(s);
+      const at = stationAssetType(s);
+      if (loc) allLocationsSet.add(loc);
+      if (loc && at) {
+        (assetsByLocation[loc] ||= new Set()).add(at);
+        allAssetSet.add(at);
+      }
+    });
+
+    Object.keys(assetsByLocation).forEach(loc => {
+      assetsByLocation[loc] = Array.from(assetsByLocation[loc]).sort((a, b) => a.localeCompare(b));
+    });
+
+    state.filterOptions = {
+      companies,
+      locationsByCompany,
+      assetsByCompanyLocation,
+      assetsByLocation,
+      allLocations: Array.from(allLocationsSet).sort((a, b) => a.localeCompare(b)),
+      allAssetTypes: Array.from(allAssetSet).sort((a, b) => a.localeCompare(b))
+    };
+  }
+
+  function getScopedStations(scope = {}) {
+    const base = state.filteredStations && state.filteredStations.length ? state.filteredStations : state.allStations;
+    return base.filter(s => {
+      if (scope.company && normStr(s.company) !== normStr(scope.company)) return false;
+      if (scope.location && stationLocation(s) !== scope.location) return false;
+      if (scope.assetType && stationAssetType(s) !== scope.assetType) return false;
+      return true;
+    });
+  }
+
+  function buildScopeLabel(scope = {}) {
     const parts = [];
     if (scope.company) parts.push(scope.company);
     if (scope.location) parts.push(scope.location);
     if (scope.assetType) parts.push(scope.assetType);
-    return parts.join(' -> ') || 'All data';
+    return parts.join(' -> ') || 'All stations (filtered)';
   }
 
-  function conditionSummary(conditions) {
-    if (!conditions || !conditions.length) return 'No extra filters';
-    return conditions.map(c => `${c.field} = ${c.value}`).join(' · ');
+  function getFieldCounts(fieldName, scope) {
+    const rows = getScopedStations(scope);
+    const counts = new Map();
+    rows.forEach(r => {
+      let v = normStr(getFieldValue(r, fieldName));
+      if (!v) v = 'Unknown';
+      counts.set(v, (counts.get(v) || 0) + 1);
+    });
+    const items = Array.from(counts.entries())
+      .map(([label, value]) => ({ label, value }))
+      .sort((a, b) => b.value - a.value);
+    if (items.length > 24) {
+      const head = items.slice(0, 23);
+      const tail = items.slice(23);
+      const other = tail.reduce((sum, item) => sum + (item.value || 0), 0);
+      head.push({ label: 'Other', value: other });
+      return head;
+    }
+    return items;
   }
 
-  function createDistributionCard(cfg) {
-    const root = document.createElement('div');
-    const title = esc(cfg.field || 'Unknown field');
-    root.innerHTML = `
-      <div class="stat-title">${title} (${cfg.viz === 'pie' ? 'Pie' : 'Bar'})</div>
-      <div class="meta-line">${esc(scopeLabel(cfg.scope))}</div>
-      <div class="chart" style="width:100%;" aria-label="${title} chart"></div>
-      <div class="chart-legend"></div>
-      ${cfg.conditions?.length ? `<div class="meta-line">${esc(conditionSummary(cfg.conditions))}</div>` : ''}
-    `;
-    const chart = $('.chart', root);
-    const legend = $('.chart-legend', root);
+  function collectValuesForField(fieldName, scope) {
+    if (!fieldName) return [];
+    const rows = getScopedStations(scope);
+    const seen = new Set();
+    for (const r of rows) {
+      let v = normStr(getFieldValue(r, fieldName));
+      if (!v) v = 'Unknown';
+      seen.add(v);
+      if (seen.size >= 80) break;
+    }
+    return Array.from(seen).sort((a, b) => a.localeCompare(b));
+  }
 
-    const lastRender = { key: null };
+  // ---- Autocomplete (matches Optimization tab) ----------------------------
 
-    const update = () => {
-      const cacheKey = `${state.dataVersion}:${scopeKey(cfg.scope)}:${(cfg.field || '').toLowerCase()}:${cfg.viz}:${conditionSummary(cfg.conditions)}`;
+  function _clearAutocompleteLists() {
+    document.querySelectorAll('.autocomplete-items').forEach(n => n.remove());
+  }
 
-      if (!state.distributionCache.has(cacheKey)) {
-        const scoped = getScopedStations(cfg.scope);
-        const filtered = applyConditions(scoped, cfg.conditions);
-        const counts = new Map();
-        filtered.forEach(row => {
-          const v = normStr(resolveFieldValue(row, cfg.field)) || 'Unknown';
-          counts.set(v, (counts.get(v) || 0) + 1);
-        });
-        let items = Array.from(counts.entries()).map(([label, value]) => ({ label, value }));
-        items.sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
-        const MAX_SLICES = 12;
-        if (items.length > MAX_SLICES) {
-          const head = items.slice(0, MAX_SLICES - 1);
-          const otherSum = items.slice(MAX_SLICES - 1).reduce((s, d) => s + d.value, 0);
-          head.push({ label: 'Other', value: otherSum });
-          items = head;
+  function _cloneInput(input) {
+    if (!input) return input;
+    const val = input.value;
+    const clone = input.cloneNode(true);
+    input.parentNode.replaceChild(clone, input);
+    clone.value = val;
+    return clone;
+  }
+
+  function applyAutocomplete(input, suggestions) {
+    if (!input) return input;
+    _clearAutocompleteLists();
+    const clone = _cloneInput(input);
+    let currentFocus = -1;
+    let listDiv = null;
+
+    const closeAllLists = () => {
+      document.querySelectorAll('.autocomplete-items').forEach(list => list.remove());
+      currentFocus = -1;
+    };
+
+    function buildList(filterVal) {
+      closeAllLists();
+      listDiv = document.createElement('div');
+      listDiv.setAttribute('class', 'autocomplete-items');
+      listDiv.style.position = 'absolute';
+      listDiv.style.top = '100%';
+      listDiv.style.left = '0';
+      listDiv.style.right = '0';
+      listDiv.style.maxHeight = '220px';
+      listDiv.style.overflowY = 'auto';
+      listDiv.style.background = '#fff';
+      listDiv.style.border = '1px solid #d4d4d4';
+      listDiv.style.borderTop = 'none';
+      listDiv.style.zIndex = '99';
+
+      clone.parentNode.classList.add('autocomplete-wrapper');
+      clone.parentNode.style.position = 'relative';
+      clone.parentNode.appendChild(listDiv);
+
+      const val = (filterVal || '').toLowerCase();
+      suggestions.forEach(suggestion => {
+        const s = String(suggestion ?? '');
+        const sLower = s.toLowerCase();
+        if (val && !sLower.includes(val)) return;
+        const item = document.createElement('div');
+        item.style.padding = '10px';
+        item.style.cursor = 'pointer';
+        item.style.backgroundColor = '#fafafa';
+        if (val) {
+          const idx = sLower.indexOf(val);
+          const before = s.slice(0, idx);
+          const match = s.slice(idx, idx + val.length);
+          const after = s.slice(idx + val.length);
+          item.innerHTML = `${before}<strong>${match}</strong>${after}`;
+        } else {
+          item.textContent = s;
         }
-        state.distributionCache.set(cacheKey, items);
+        item.addEventListener('mousedown', (e) => e.preventDefault());
+        item.addEventListener('click', () => {
+          clone.value = s;
+          closeAllLists();
+          clone.dispatchEvent(new Event('input', { bubbles: true }));
+          clone.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        listDiv.appendChild(item);
+      });
+      currentFocus = -1;
+    }
+
+    clone.addEventListener('focus', () => buildList(clone.value));
+    clone.addEventListener('click', () => {
+      const open = clone.parentNode.querySelector('.autocomplete-items');
+      if (!open) buildList(clone.value);
+    });
+    clone.addEventListener('input', () => buildList(clone.value));
+    clone.addEventListener('blur', () => setTimeout(() => closeAllLists(), 120));
+    clone.addEventListener('keydown', (e) => {
+      let items = clone.parentNode.querySelector('.autocomplete-items');
+      if (items) items = items.getElementsByTagName('div');
+      if (e.keyCode === 40) { // down
+        currentFocus++; addActive(items); e.preventDefault();
+      } else if (e.keyCode === 38) { // up
+        currentFocus--; addActive(items); e.preventDefault();
+      } else if (e.keyCode === 13) { // enter
+        e.preventDefault();
+        if (currentFocus > -1 && items && items[currentFocus]) items[currentFocus].click();
       }
+    });
 
-      const items = state.distributionCache.get(cacheKey);
+    function addActive(items) {
+      if (!items || !items.length) return;
+      removeActive(items);
+      if (currentFocus >= items.length) currentFocus = 0;
+      if (currentFocus < 0) currentFocus = items.length - 1;
+      items[currentFocus].classList.add('autocomplete-active');
+    }
+    function removeActive(items) {
+      Array.from(items || []).forEach(it => it.classList.remove('autocomplete-active'));
+    }
 
-      // 1. Clear containers
-      chart.innerHTML = '';
-      legend.innerHTML = '';
+    return clone;
+  }
 
-      if (!items.length) {
-        chart.innerHTML = '<div class="empty">No data (adjust filters)</div>';
-        lastRender.key = cacheKey;
+  (function installAutocompleteCloserOnce() {
+    if (window.__acCloserInstalled) return;
+    window.__acCloserInstalled = true;
+    document.addEventListener('mousedown', (e) => {
+      if (e.target.closest('.autocomplete-wrapper') || e.target.closest('.autocomplete-items')) return;
+      _clearAutocompleteLists();
+    }, true);
+  })();
+
+  // ---- Builder wiring ------------------------------------------------------
+
+  function fillSelect(select, options, placeholder = 'All') {
+    if (!select) return;
+    const placeholderText = select.dataset.placeholder || placeholder;
+    select.innerHTML = `<option value="">${placeholderText}</option>` + (options || []).map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('');
+  }
+
+  function rebuildScopeDropdowns() {
+    const opts = state.filterOptions;
+    fillSelect(analyticsUI.companySelect, opts.companies, 'All companies');
+    const locs = analyticsUI.companySelect?.value
+      ? (opts.locationsByCompany[analyticsUI.companySelect.value] || opts.allLocations)
+      : opts.allLocations;
+    fillSelect(analyticsUI.locationSelect, locs, 'All locations');
+
+    const assets = (() => {
+      const co = analyticsUI.companySelect?.value;
+      const loc = analyticsUI.locationSelect?.value;
+      if (co && loc && opts.assetsByCompanyLocation[co]?.[loc]) return opts.assetsByCompanyLocation[co][loc];
+      if (loc && opts.assetsByLocation[loc]) return opts.assetsByLocation[loc];
+      return opts.allAssetTypes;
+    })();
+    fillSelect(analyticsUI.assetSelect, assets, 'All asset types');
+  }
+
+  function rebuildAggregateOptions() {
+    if (!analyticsUI.aggregateSelect) return;
+    const hasCompany = state.filterOptions.companies.length > 0;
+    const hasLocation = state.filterOptions.allLocations.length > 0;
+    const hasAsset = state.filterOptions.allAssetTypes.length > 0;
+    const levels = [];
+    if (hasCompany) levels.push('Company');
+    if (hasLocation) levels.push('Location');
+    if (hasAsset) levels.push('Asset Type');
+    const combos = [];
+    for (let i = 0; i < levels.length; i++) {
+      for (let j = i; j < levels.length; j++) {
+        const slice = levels.slice(i, j + 1);
+        if (slice.join(' ') === 'Company Asset Type') continue;
+        combos.push(slice);
+      }
+    }
+    const valid = combos.filter(c => ['Company', 'Company,Location', 'Company,Location,Asset Type', 'Location', 'Location,Asset Type', 'Asset Type'].includes(c.join(',')));
+    analyticsUI.aggregateSelect.innerHTML = '';
+    valid.forEach(path => {
+      const val = path.join('|');
+      const label = path.join(' -> ');
+      const opt = document.createElement('option');
+      opt.value = val;
+      opt.textContent = label;
+      analyticsUI.aggregateSelect.appendChild(opt);
+    });
+  }
+
+  function attachFieldAutocomplete(input) {
+    if (!input) return input;
+    return applyAutocomplete(input, state.fieldNames);
+  }
+
+function createNumeratorRow(initial = {}) {
+    const row = document.createElement('div');
+    row.className = 'numerator-row';
+    row.innerHTML = `
+      <div class="search-select">
+        <input type="text" class="num-field" placeholder="Field" autocomplete="off" />
+      </div>
+      <select class="num-value">
+        <option value="">Pick a value</option>
+      </select>
+      <button class="btn btn-ghost num-remove" title="Remove">\u00d7</button>
+    `;
+    const fieldInput = row.querySelector('.num-field');
+    const valueSelect = row.querySelector('.num-value');
+    const removeBtn = row.querySelector('.num-remove');
+    const scoped = () => getScopeFromUI();
+
+    const refreshValues = () => {
+      const fieldName = fieldInput.value.trim();
+      if (!fieldName) {
+        valueSelect.innerHTML = '<option value="">Pick a value</option>';
         return;
       }
-
-      // 2. RENDER LEGEND FIRST (So it takes up space)
-      const total = items.reduce((s, d) => s + (+d.value || 0), 0) || 1;
-      items.forEach((item, idx) => {
-        const row = document.createElement('div');
-        row.className = 'legend-row';
-        row.innerHTML = `
-          <span class="dot" style="background:${chartPalette[idx % chartPalette.length]};"></span>
-          <span>${esc(item.label)}</span>
-          <span class="legend-value">${item.value} (${((item.value / total) * 100).toFixed(1)}%)</span>
-        `;
-        legend.appendChild(row);
-      });
-
-      // 3. RENDER CHART SECOND (Calculates remaining height correctly)
-      // Use a micro-task to ensure DOM has updated heights from the legend insertion
-      requestAnimationFrame(() => {
-        if (cfg.viz === 'pie') {
-          renderPieChart(chart, items, { ariaLabel: `${cfg.field} pie chart` });
-        } else {
-          renderBarChart(chart, items, { ariaLabel: `${cfg.field} bar chart` });
-        }
-      });
-
-      lastRender.key = cacheKey;
-      // lastRender.width check removed as it's less reliable with flex resizing
-    };
-
-    return addCard(root, update);
-  }
-
-  function createRatioCard(cfg) {
-    const root = document.createElement('div');
-    const title = esc(cfg.field || 'Ratio');
-    root.innerHTML = `
-      <div class="stat-title">${title} ratio</div>
-      <div class="meta-line">${esc(scopeLabel(cfg.scope))}</div>
-      <div class="ratio-block">
-        <div class="ratio-fraction">
-          <span class="num" data-role="num"></span>
-          <span class="den">/ <span data-role="den"></span></span>
-        </div>
-        <div class="ratio-bar"><div class="fill"></div></div>
-        <div class="ratio-pct" data-role="pct"></div>
-        <div class="meta-line" data-role="detail"></div>
-      </div>
-    `;
-    const numEl = root.querySelector('[data-role="num"]');
-    const denEl = root.querySelector('[data-role="den"]');
-    const pctEl = root.querySelector('[data-role="pct"]');
-    const detailEl = root.querySelector('[data-role="detail"]');
-    const fillEl = root.querySelector('.ratio-bar .fill');
-
-    const lastRender = { key: null };
-
-    const update = () => {
-      const key = `${state.dataVersion}:${scopeKey(cfg.scope)}:${conditionSummary(cfg.conditions)}`;
-      if (lastRender.key === key) return;
-      const scoped = getScopedStations(cfg.scope);
-      const denom = scoped.length;
-      const numerator = applyConditions(scoped, cfg.conditions).length;
-      const pct = denom ? (numerator / denom) * 100 : 0;
-      numEl.textContent = numerator;
-      denEl.textContent = denom;
-      pctEl.textContent = `${pct.toFixed(1)}%`;
-      fillEl.style.width = `${Math.min(100, pct).toFixed(1)}%`;
-      detailEl.textContent = conditionSummary(cfg.conditions);
-      lastRender.key = key;
-    };
-
-    return addCard(root, update);
-  }
-
-  function createAnalyticsCard(cfg) {
-    if (cfg.viz === 'ratio') return createRatioCard(cfg);
-    return createDistributionCard(cfg);
-  }
-
-  // ---- Builder form --------------------------------------------------------
-
-  let pendingCardsUpdate = null;
-  function scheduleCardUpdates() {
-    if (pendingCardsUpdate) return;
-    pendingCardsUpdate = requestAnimationFrame(() => {
-      pendingCardsUpdate = null;
-      state.cards.forEach(c => c.update());
-    });
-  }
-
-  function readScopeFromForm() {
-    const mode = builderEls.scopeMode?.value || 'all';
-    const scope = { mode };
-    if (mode.includes('company')) scope.company = normStr(builderEls.scopeCompany?.value);
-    if (mode.includes('location')) scope.location = normStr(builderEls.scopeLocation?.value);
-    if (mode.includes('asset')) scope.assetType = normStr(builderEls.scopeAsset?.value);
-
-    if (mode === 'company' && !scope.company) { warn('Pick a company for this scope'); return null; }
-    if (mode === 'company-location' && (!scope.company || !scope.location)) { warn('Pick a company and location'); return null; }
-    if (mode === 'company-location-asset' && (!scope.company || !scope.location || !scope.assetType)) { warn('Pick company, location, and asset type'); return null; }
-    if (mode === 'location' && !scope.location) { warn('Pick a location'); return null; }
-    if (mode === 'location-asset' && (!scope.location || !scope.assetType)) { warn('Pick a location and asset type'); return null; }
-    if (mode === 'asset' && !scope.assetType) { warn('Pick an asset type'); return null; }
-    return scope;
-  }
-
-  function readCardConfig() {
-    const field = normStr(builderEls.fieldInput?.value);
-    if (!field) { warn('Pick a field to analyze'); return null; }
-    const viz = builderEls.vizSelect?.value || 'pie';
-    const scope = readScopeFromForm();
-    if (!scope) return null;
-
-    if (viz === 'ratio') {
-      const value = normStr(builderEls.valueInput?.value);
-      if (!value) { warn('Enter the value you want to count'); return null; }
-      const extraConds = collectConditionRows();
-      if (extraConds.some(c => c._incomplete)) {
-        warn('Fill every numerator condition field or remove the row.');
-        return null;
+      
+      // Use the smarter getFieldValue logic via collectValuesForField
+      const vals = collectValuesForField(fieldName, scoped());
+      
+      const currentVal = valueSelect.value;
+      
+      if (vals.length === 0) {
+         valueSelect.innerHTML = '<option value="">No values found</option>';
+      } else {
+         valueSelect.innerHTML = `<option value="">Pick a value</option>` + 
+           vals.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
       }
-      const conditions = [{ field, value }, ...extraConds];
-      return { field, viz, scope, conditions };
-    }
 
-    const conditions = collectConditionRows().filter(c => !c._incomplete);
-    return { field, viz, scope, conditions };
-  }
+      if (currentVal && vals.includes(currentVal)) {
+        valueSelect.value = currentVal;
+      }
+    };
 
-  function updateBuilderTotal() {
-    if (builderEls.builderTotal) {
-      builderEls.builderTotal.textContent = `${state.filteredStations.length} stations in current filters`;
-    }
-  }
+    // 1. Attach autocomplete
+    row._fieldInput = attachFieldAutocomplete(fieldInput);
+    
+    // 2. Refresh when text changes
+    row._fieldInput.addEventListener('change', refreshValues);
+    
+    // 3. Refresh ON CLICK/FOCUS (This fixes the blank dropdown issue)
+    // We use setTimeout to let the autocomplete finish setting the value first
+    valueSelect.addEventListener('focus', () => setTimeout(refreshValues, 50));
+    valueSelect.addEventListener('mousedown', () => setTimeout(refreshValues, 50));
 
-  function wireBuilder() {
-    builderEls.fieldInput = $('#fieldInput');
-    builderEls.vizSelect = $('#vizType');
-    builderEls.valueInput = $('#valueInput');
-    builderEls.valueCol = $('#valueCol');
-    builderEls.scopeMode = $('#scopeMode');
-    builderEls.scopeCompany = $('#scopeCompany');
-    builderEls.scopeLocation = $('#scopeLocation');
-    builderEls.scopeAsset = $('#scopeAsset');
-    builderEls.conditionBox = $('#conditionBox');
-    builderEls.conditionList = $('#conditionList');
-    builderEls.addConditionBtn = $('#btnAddCondition');
-    builderEls.addCardBtn = $('#btnAddCard');
-    builderEls.builderTotal = $('#builderTotal');
-
-    builderEls.vizSelect?.addEventListener('change', onVizChange);
-    builderEls.fieldInput?.addEventListener('input', () => {
-      syncPrimaryConditionField();
-    });
-    builderEls.scopeMode?.addEventListener('change', syncScopePickerVisibility);
-    builderEls.scopeCompany?.addEventListener('change', onScopeCompanyChange);
-    builderEls.scopeLocation?.addEventListener('change', onScopeLocationChange);
-    builderEls.addConditionBtn?.addEventListener('click', () => addConditionRow());
-    builderEls.addCardBtn?.addEventListener('click', () => {
-      const cfg = readCardConfig();
-      if (cfg) createAnalyticsCard(cfg);
+    // 4. Clear if input is emptied
+    row._fieldInput.addEventListener('input', () => { 
+        if (!row._fieldInput.value) valueSelect.innerHTML = '<option value="">Pick a value</option>'; 
     });
 
-    onVizChange();
-    syncScopePickerVisibility();
+    removeBtn.addEventListener('click', () => row.remove());
+
+    if (initial.field) row._fieldInput.value = initial.field;
+    
+    // If we are loading a saved card, populate immediately
+    if (initial.field) refreshValues();
+    if (initial.value) valueSelect.value = initial.value;
+
+    return row;
   }
+
+  function ensureAtLeastOneNumerator() {
+    if (!analyticsUI.numeratorsHost) return;
+    if (!analyticsUI.numeratorsHost.children.length) {
+      analyticsUI.numeratorsHost.appendChild(createNumeratorRow());
+    }
+  }
+
+  function pruneEmptyNumerators() {
+    if (!analyticsUI.numeratorsHost) return;
+    analyticsUI.numeratorsHost.querySelectorAll('.numerator-row').forEach(row => {
+      const field = row._fieldInput ? row._fieldInput.value.trim() : (row.querySelector('.num-field')?.value.trim() || '');
+      const val = row.querySelector('.num-value')?.value.trim() || '';
+      if (!field && !val && analyticsUI.numeratorsHost.children.length > 1) {
+        row.remove();
+      }
+    });
+  }
+
+  function getScopeFromUI() {
+    return {
+      company: analyticsUI.companySelect?.value || '',
+      location: analyticsUI.locationSelect?.value || '',
+      assetType: analyticsUI.assetSelect?.value || ''
+    };
+  }
+
+  function collectNumerators() {
+    if (!analyticsUI.numeratorsHost) return [];
+    const rows = Array.from(analyticsUI.numeratorsHost.querySelectorAll('.numerator-row'));
+    return rows.map(r => ({
+      field: r._fieldInput ? r._fieldInput.value.trim() : (r.querySelector('.num-field')?.value.trim() || ''),
+      value: r.querySelector('.num-value')?.value.trim() || ''
+    })).filter(r => r.field && r.value);
+  }
+
+// In frontend/js/dashboard.js
+
+  function syncBuilderVisibility() {
+    const mode = analyticsUI.vizSelect?.value;
+    
+    // 1. Toggle the advanced panels
+    if (analyticsUI.ratioWrap) analyticsUI.ratioWrap.style.display = (mode === 'ratio') ? '' : 'none';
+    if (analyticsUI.aggregateWrap) analyticsUI.aggregateWrap.style.display = (mode === 'aggregate') ? '' : 'none';
+
+    // 2. Logic for the Main Field Input
+    if (analyticsUI.fieldInput) {
+      // It is NOT needed for Aggregate OR Ratio
+      const isNotNeeded = (mode === 'aggregate' || mode === 'ratio');
+      
+      analyticsUI.fieldInput.disabled = isNotNeeded;
+      
+      if (mode === 'aggregate') {
+        analyticsUI.fieldInput.placeholder = 'Field not needed for aggregate counts';
+      } else if (mode === 'ratio') {
+        analyticsUI.fieldInput.placeholder = 'Field not needed (use Numerator filters below)';
+        analyticsUI.fieldInput.value = ''; // Clear it so it looks clean
+      } else {
+        analyticsUI.fieldInput.placeholder = 'Search any field';
+      }
+    }
+  }
+
+  function wireAnalyticsBuilder() {
+    analyticsUI.fieldInput = $('#anaField');
+    analyticsUI.vizSelect = $('#anaVizType');
+    analyticsUI.companySelect = $('#anaCompany');
+    analyticsUI.locationSelect = $('#anaLocation');
+    analyticsUI.assetSelect = $('#anaAsset');
+    analyticsUI.addBtn = $('#btnAddAnalytic');
+    analyticsUI.ratioWrap = $('#ratioBuilder');
+    analyticsUI.numeratorsHost = $('#ratioNumerators');
+    analyticsUI.addNumeratorBtn = $('#btnAddNumerator');
+    analyticsUI.aggregateWrap = $('#aggregateBuilder');
+    analyticsUI.aggregateSelect = $('#aggGrouping');
+    analyticsUI.cardsHost = $('#analyticsGrid');
+
+    if (analyticsUI.addNumeratorBtn) {
+      analyticsUI.addNumeratorBtn.addEventListener('click', () => {
+        analyticsUI.numeratorsHost.appendChild(createNumeratorRow());
+      });
+    }
+
+    if (analyticsUI.vizSelect) {
+      analyticsUI.vizSelect.addEventListener('change', syncBuilderVisibility);
+    }
+    if (analyticsUI.companySelect) {
+      analyticsUI.companySelect.addEventListener('change', () => {
+        rebuildScopeDropdowns();
+        analyticsUI.numeratorsHost?.querySelectorAll('.numerator-row').forEach(row => {
+          const select = row.querySelector('.num-value');
+          if (select) select.innerHTML = '<option value="">Pick a value</option>';
+        });
+      });
+    }
+    if (analyticsUI.locationSelect) {
+      analyticsUI.locationSelect.addEventListener('change', () => {
+        rebuildScopeDropdowns();
+        const scope = getScopeFromUI();
+        analyticsUI.numeratorsHost?.querySelectorAll('.numerator-row').forEach(row => {
+          const field = row._fieldInput ? row._fieldInput.value : '';
+          const valSel = row.querySelector('.num-value');
+          if (!valSel) return;
+          if (!field) {
+            valSel.innerHTML = '<option value="">Pick a value</option>';
+            return;
+          }
+          const vals = collectValuesForField(field, scope);
+          valSel.innerHTML = `<option value="">Pick a value</option>` + vals.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+        });
+      });
+    }
+    if (analyticsUI.assetSelect) {
+      analyticsUI.assetSelect.addEventListener('change', () => {
+        const scope = getScopeFromUI();
+        analyticsUI.numeratorsHost?.querySelectorAll('.numerator-row').forEach(row => {
+          const field = row._fieldInput ? row._fieldInput.value : '';
+          const valSel = row.querySelector('.num-value');
+          if (!valSel || !field) return;
+          const vals = collectValuesForField(field, scope);
+          valSel.innerHTML = `<option value="">Pick a value</option>` + vals.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+        });
+      });
+    }
+
+    if (analyticsUI.addBtn) {
+      analyticsUI.addBtn.addEventListener('click', addAnalyticsCardFromUI);
+    }
+
+    rebuildScopeDropdowns();
+    rebuildAggregateOptions();
+    ensureAtLeastOneNumerator();
+    syncBuilderVisibility();
+  }
+
+  function refreshAnalyticsBuilderSources() {
+    if (!analyticsUI.fieldInput) return;
+    analyticsUI.fieldInput = attachFieldAutocomplete(analyticsUI.fieldInput);
+    analyticsUI.numeratorsHost?.querySelectorAll('.numerator-row .num-field').forEach(inp => {
+      const row = inp.closest('.numerator-row');
+      const newInput = attachFieldAutocomplete(inp);
+      if (row) row._fieldInput = newInput;
+    });
+    rebuildScopeDropdowns();
+    rebuildAggregateOptions();
+    const scope = getScopeFromUI();
+    analyticsUI.numeratorsHost?.querySelectorAll('.numerator-row').forEach(row => {
+      const field = row._fieldInput ? row._fieldInput.value : '';
+      const valSel = row.querySelector('.num-value');
+      if (!valSel) return;
+      if (!field) {
+        valSel.innerHTML = '<option value="">Pick a value</option>';
+        return;
+      }
+      const vals = collectValuesForField(field, scope);
+      valSel.innerHTML = `<option value="">Pick a value</option>` + vals.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+    });
+  }
+
+  // ---- Analytics cards -----------------------------------------------------
+
+  function buildCardShell(config) {
+    const wrap = document.createElement('div');
+    wrap.className = 'stat-card analytics-card';
+    const header = document.createElement('div');
+    header.className = 'stat-card-header';
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'btn btn-ghost stat-card-close';
+    closeBtn.textContent = '\u00d7';
+    closeBtn.title = 'Remove';
+    header.appendChild(closeBtn);
+
+    const body = document.createElement('div');
+    body.className = 'stat-card-body';
+    const title = document.createElement('div');
+    title.className = 'stat-title';
+    const meta = document.createElement('div');
+    meta.className = 'stat-meta';
+    const chart = document.createElement('div');
+    chart.className = 'chart';
+
+    body.appendChild(title);
+    body.appendChild(meta);
+    body.appendChild(chart);
+    wrap.appendChild(header);
+    wrap.appendChild(body);
+
+    const card = {
+      config,
+      wrap,
+      titleEl: title,
+      metaEl: meta,
+      chartEl: chart,
+      closeBtn,
+      isVisible: false,
+      needsRender: true,
+      render() {}
+    };
+    wrap.__card = card;
+
+    closeBtn.addEventListener('click', () => {
+      wrap.remove();
+      state.cards = state.cards.filter(c => c !== card);
+      refreshFeaturedCard();
+    });
+
+    analyticsUI.cardsHost?.appendChild(wrap);
+    cardObserver.observe(wrap);
+    return card;
+  }
+
+  function renderChartCard(card) {
+    const { field, chartType, scope } = card.config;
+    card.titleEl.textContent = `${field} (${chartType === 'pie' ? 'Pie' : 'Bar'})`;
+    card.metaEl.innerHTML = `<span class="pill">${esc(buildScopeLabel(scope))}</span>`;
+    const data = getFieldCounts(field, scope);
+    card.chartEl.innerHTML = '';
+    if (!data.length) {
+      card.chartEl.innerHTML = '<div class="empty">No data (adjust filters)</div>';
+      return;
+    }
+    if (chartType === 'pie') {
+      renderPieChart(card.chartEl, data, { palette });
+    } else {
+      renderBarChart(card.chartEl, data, { ariaLabel: `${field} bar chart` });
+    }
+  }
+
+  function renderRatioCard(card) {
+    const { numerators, scope } = card.config;
+    card.titleEl.textContent = 'Ratio';
+    const scopedRows = getScopedStations(scope);
+    const denom = scopedRows.length;
+    const hits = scopedRows.filter(r => numerators.every(n => normStr(getFieldValue(r, n.field)).toLowerCase() === normStr(n.value).toLowerCase())).length;
+    const pct = denom ? Math.round((hits / denom) * 1000) / 10 : 0;
+    const ratioText = denom ? `${hits} / ${denom} (${pct}%)` : '0 / 0';
+    const filtersText = numerators.map(n => `${n.field}: ${n.value}`).join(' | ');
+    card.metaEl.innerHTML = `
+      <span class="pill">${esc(buildScopeLabel(scope))}</span>
+      <span class="pill pill-ghost">${esc(filtersText)}</span>
+    `;
+    card.chartEl.innerHTML = `
+      <div class="ratio-value">${esc(ratioText)}</div>
+      <div class="ratio-bar"><div style="width:${Math.min(100, pct)}%;"></div></div>
+    `;
+    if (!denom) {
+      card.chartEl.innerHTML += `<div class="empty">No denominator data found for this scope.</div>`;
+    }
+  }
+
+  function renderAggregateCard(card) {
+    const { groupPath, scope } = card.config;
+    const labels = (groupPath || []).join(' -> ');
+    card.titleEl.textContent = `Aggregate: ${labels}`;
+    card.metaEl.innerHTML = `<span class="pill">${esc(buildScopeLabel(scope))}</span>`;
+    const rows = getScopedStations(scope);
+    const counts = new Map();
+    rows.forEach(r => {
+      const bits = [];
+      groupPath.forEach(level => {
+        if (level === 'Company') bits.push(normStr(r.company) || 'Unknown');
+        else if (level === 'Location') bits.push(stationLocation(r) || 'Unknown');
+        else if (level === 'Asset Type') bits.push(stationAssetType(r) || 'Unknown');
+      });
+      const key = bits.join(' -> ') || 'Unknown';
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    const data = Array.from(counts.entries()).map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+    if (!data.length) {
+      card.chartEl.innerHTML = '<div class="empty">No data (adjust filters)</div>';
+      return;
+    }
+    renderBarChart(card.chartEl, data.slice(0, 30), { ariaLabel: `Aggregate ${labels}` });
+  }
+
+  function createAnalyticCard(config) {
+    const card = buildCardShell(config);
+    card.render = () => {
+      if (config.type === 'ratio') return renderRatioCard(card);
+      if (config.type === 'aggregate') return renderAggregateCard(card);
+      return renderChartCard(card);
+    };
+    state.cards.push(card);
+    markDirty(card);
+    refreshFeaturedCard();
+    return card;
+  }
+
+  function refreshFeaturedCard() {
+    const cards = state.cards || [];
+    cards.forEach((c, idx) => {
+      if (!c.wrap) return;
+      c.wrap.classList.toggle('featured', idx === 0);
+    });
+  }
+
+  function addAnalyticsCardFromUI() {
+    const mode = analyticsUI.vizSelect?.value || 'bar';
+    const field = analyticsUI.fieldInput?.value.trim() || '';
+    const scope = getScopeFromUI();
+
+    if (mode !== 'aggregate' && !field) {
+      appAlert('Pick a field to analyze.');
+      return;
+    }
+
+    if (mode === 'ratio') {
+      pruneEmptyNumerators();
+      const nums = collectNumerators();
+      if (!nums.length) {
+        appAlert('Numerator filters cannot be empty.');
+        ensureAtLeastOneNumerator();
+        return;
+      }
+      createAnalyticCard({ type: 'ratio', numerators: nums, scope });
+      return;
+    }
+
+    if (mode === 'aggregate') {
+      const val = analyticsUI.aggregateSelect?.value || '';
+      if (!val) {
+        appAlert('Choose how to group aggregate counts.');
+        return;
+      }
+      const path = val.split('|');
+      createAnalyticCard({ type: 'aggregate', groupPath: path, scope });
+      return;
+    }
+
+    createAnalyticCard({ type: 'chart', chartType: mode, field, scope });
+  }
+
 
   // ---- Repairs and Maintenance Tab ---------------------------------------
   
@@ -2283,24 +2339,21 @@ function renderPieChart(container, dataPairs, opts = {}) {
     const paneAnalytics = $('#analyticsTab');
     const paneRepairs = $('#repairsTab');
 
-    if (tabAnalytics) {
-      tabAnalytics.addEventListener('click', () => {
-        tabAnalytics.classList.add('active');
-        tabRepairs?.classList.remove('active');
-        if (paneAnalytics) paneAnalytics.style.display = '';
-        if (paneRepairs) paneRepairs.style.display = 'none';
-      });
-    }
+    tabAnalytics.addEventListener('click', () => {
+      tabAnalytics.classList.add('active');
+      tabRepairs.classList.remove('active');
+      paneAnalytics.style.display = '';
+      paneRepairs.style.display = 'none';
+    });
 
-    if (tabRepairs) {
-      tabRepairs.addEventListener('click', async () => {
-        tabRepairs.classList.add('active');
-        tabAnalytics?.classList.remove('active');
-        if (paneRepairs) paneRepairs.style.display = '';
-        if (paneAnalytics) paneAnalytics.style.display = 'none';
-        await loadRepairsData();
-      });
-    }
+    tabRepairs.addEventListener('click', async () => {
+      tabRepairs.classList.add('active');
+      tabAnalytics.classList.remove('active');
+      paneRepairs.style.display = '';
+      paneAnalytics.style.display = 'none';
+      await loadRepairsData();
+    });
+
   }
 
   // ---- Initialization -------------------------------------------------------
@@ -2320,11 +2373,11 @@ function renderPieChart(container, dataPairs, opts = {}) {
       state.allStations = [];
       state.lookupTree = { companies: [], locationsByCompany: {} };
     }
-    await loadAnalyticsFieldNames();
+    state.fieldNames = await loadAnalyticsFieldNames(state.allStations);
+    updateFilterOptions();
     applyAnalyticsFilters();
-    renderScopeSummary();
-    populateScopeSelectors();
-    scheduleCardUpdates();
+    refreshAnalyticsBuilderSources();
+    state.cards.forEach(markDirty);
   }
   // Expose globally so other flows can poke it after imports/adds
   window.refreshStatisticsView = refreshStatisticsView;
@@ -2338,7 +2391,7 @@ function renderPieChart(container, dataPairs, opts = {}) {
     state.initialized = true;
 
     bindTabs();
-    wireBuilder();
+    wireAnalyticsBuilder();
 
     // Wire up repairs buttons
     const btnAddRepair = $('#btnAddGlobalRepair');
@@ -2380,7 +2433,7 @@ function renderPieChart(container, dataPairs, opts = {}) {
 
     // Recompute on resize (charts)
     window.addEventListener('resize', () => {
-      scheduleCardUpdates();
+      state.cards.forEach(markDirty);
     });
   }
 
