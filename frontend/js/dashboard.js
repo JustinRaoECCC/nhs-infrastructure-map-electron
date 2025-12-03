@@ -621,7 +621,7 @@
     return applyAutocomplete(input, state.fieldNames);
   }
 
-function createNumeratorRow(initial = {}) {
+  function createNumeratorRow(initial = {}) {
     const row = document.createElement('div');
     row.className = 'numerator-row';
     row.innerHTML = `
@@ -633,57 +633,66 @@ function createNumeratorRow(initial = {}) {
       </select>
       <button class="btn btn-ghost num-remove" title="Remove">\u00d7</button>
     `;
-    const fieldInput = row.querySelector('.num-field');
+    
+    // We grab these initially, but 'fieldInput' might get replaced by autocomplete later
+    let fieldInput = row.querySelector('.num-field');
     const valueSelect = row.querySelector('.num-value');
     const removeBtn = row.querySelector('.num-remove');
     const scoped = () => getScopeFromUI();
 
     const refreshValues = () => {
-      const fieldName = fieldInput.value.trim();
+      // FIX: Always query the DOM for the 'live' input, because autocomplete clones/replaces it
+      const currentInput = row.querySelector('.num-field');
+      const fieldName = currentInput ? currentInput.value.trim() : '';
+      
       if (!fieldName) {
         valueSelect.innerHTML = '<option value="">Pick a value</option>';
         return;
       }
-      
-      // Use the smarter getFieldValue logic via collectValuesForField
+
+      // Use the smarter getFieldValue logic (fuzzy match) via collectValuesForField
       const vals = collectValuesForField(fieldName, scoped());
-      
       const currentVal = valueSelect.value;
       
       if (vals.length === 0) {
+         // If we found the key but all values are empty, this might show 'Unknown'
+         // If we didn't find the key at all, it returns empty.
          valueSelect.innerHTML = '<option value="">No values found</option>';
       } else {
          valueSelect.innerHTML = `<option value="">Pick a value</option>` + 
            vals.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
       }
 
+      // Restore selection if it still exists in the new list
       if (currentVal && vals.includes(currentVal)) {
         valueSelect.value = currentVal;
       }
     };
 
-    // 1. Attach autocomplete
+    // 1. Attach Autocomplete (This replaces the input element in the DOM)
+    // We store the new reference in row._fieldInput for safety
     row._fieldInput = attachFieldAutocomplete(fieldInput);
     
-    // 2. Refresh when text changes
+    // 2. Refresh when the text changes (using the NEW input)
     row._fieldInput.addEventListener('change', refreshValues);
     
-    // 3. Refresh ON CLICK/FOCUS (This fixes the blank dropdown issue)
-    // We use setTimeout to let the autocomplete finish setting the value first
+    // 3. Refresh ON CLICK/FOCUS (Fixes the "blank on first click" issue)
+    // We use a tiny timeout to let the autocomplete click finish writing the value
     valueSelect.addEventListener('focus', () => setTimeout(refreshValues, 50));
     valueSelect.addEventListener('mousedown', () => setTimeout(refreshValues, 50));
 
-    // 4. Clear if input is emptied
+    // 4. Clear dropdown if input is emptied
     row._fieldInput.addEventListener('input', () => { 
         if (!row._fieldInput.value) valueSelect.innerHTML = '<option value="">Pick a value</option>'; 
     });
 
     removeBtn.addEventListener('click', () => row.remove());
 
-    if (initial.field) row._fieldInput.value = initial.field;
-    
-    // If we are loading a saved card, populate immediately
-    if (initial.field) refreshValues();
+    // Initial load (if editing or loading saved state)
+    if (initial.field) {
+        row._fieldInput.value = initial.field;
+        refreshValues();
+    }
     if (initial.value) valueSelect.value = initial.value;
 
     return row;
@@ -989,10 +998,13 @@ function createNumeratorRow(initial = {}) {
     const field = analyticsUI.fieldInput?.value.trim() || '';
     const scope = getScopeFromUI();
 
-    if (mode !== 'aggregate' && !field) {
+    // --- CHANGE THIS BLOCK ---
+    // Allow both 'aggregate' AND 'ratio' to proceed without a main field
+    if (mode !== 'aggregate' && mode !== 'ratio' && !field) {
       appAlert('Pick a field to analyze.');
       return;
     }
+    // -------------------------
 
     if (mode === 'ratio') {
       pruneEmptyNumerators();
@@ -1019,7 +1031,6 @@ function createNumeratorRow(initial = {}) {
 
     createAnalyticCard({ type: 'chart', chartType: mode, field, scope });
   }
-
 
   // ---- Repairs and Maintenance Tab ---------------------------------------
   
