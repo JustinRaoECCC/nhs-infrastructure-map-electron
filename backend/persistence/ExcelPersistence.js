@@ -278,6 +278,11 @@ class ExcelPersistence extends IPersistence {
     return await excel.updateStationInLocationFile(company, locationName, stationId, updatedRowData, schema);
   }
 
+  async deleteStation(company, locationName, stationId) {
+    const excel = getExcel();
+    return await excel.deleteStation(company, locationName, stationId);
+  }
+
   // ════════════════════════════════════════════════════════════════════════════
   // REPAIRS
   // ════════════════════════════════════════════════════════════════════════════

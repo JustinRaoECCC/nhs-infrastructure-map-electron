@@ -212,4 +212,6 @@ module.exports = {
     call('deleteAssetTypeFromLookups', companyName, locationName, assetTypeName),
   deleteAssetTypeFromLocation: (companyName, locationName, assetTypeName) =>
     call('deleteAssetTypeFromLocation', companyName, locationName, assetTypeName),
+  deleteStation: (company, location, stationId) => 
+    call('deleteStation', company, location, stationId),
 };

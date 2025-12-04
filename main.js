@@ -401,6 +401,17 @@ ipcMain.handle('photos:getRecent', async (_evt, { siteName, stationId, limit }) 
 
 ipcMain.handle('stations:update', async (_evt, stationData, schema) => backend.updateStationData(stationData, schema));
 
+// Delete Station Handler
+ipcMain.handle('stations:delete', async (_evt, company, location, stationId) => {
+  const persistence = await getPersistence();
+  const result = await persistence.deleteStation(company, location, stationId);
+  if (result.success) {
+    // Invalidate cache so map updates
+    await backend.invalidateStationCache();
+  }
+  return result;
+});
+
 // Schema synchronization handlers
 ipcMain.handle('schema:sync', async (_evt, assetType, schema, excludeStationId) => {
   const schemaSync = require('./backend/schema_sync');

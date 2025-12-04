@@ -206,6 +206,71 @@ function setupStationDetailUI(container, stn) {
 
   // Back button
   setupBackButton(container);
+
+  // Setup Delete Button (Inject below Save Changes)
+  setupDeleteButton(container, stn);
+}
+
+function setupDeleteButton(container, stn) {
+  const saveBtn = container.querySelector('#saveChangesBtn');
+  if (!saveBtn) return;
+
+  // Create wrapper for spacing if needed, or just insert after
+  const btnContainer = document.createElement('div');
+  btnContainer.style.marginTop = '15px';
+  btnContainer.style.textAlign = 'center'; // Align with the save button usually
+
+  const delBtn = document.createElement('button');
+  delBtn.className = 'btn btn-outline btn-danger';
+  delBtn.textContent = 'Delete Station';
+  delBtn.type = 'button';
+  delBtn.style.width = '100%'; 
+   
+  delBtn.addEventListener('click', async () => {
+    const confirmed = await window.appConfirm(
+      `Are you sure you want to permanently delete station ${stn.station_id}?\n\nThis action cannot be undone.`,
+      { title: 'Delete Station', okText: 'Delete', okClass: 'btn-danger' }
+    );
+
+    if (confirmed) {
+      try {
+        delBtn.disabled = true;
+        delBtn.textContent = 'Deleting...';
+        
+        const company = stn.company;
+        const location = stn.location_file || stn.province;
+        
+        const result = await window.electronAPI.deleteStation(company, location, stn.station_id);
+        
+        if (result.success) {
+          // Reset unsaved changes flag so back button works immediately
+          hasUnsavedChanges = false;
+          // Return to map
+          if (typeof window.showMapView === 'function') {
+            window.showMapView();
+          } else {
+            window.location.reload(); // Fallback
+          }
+          window.appAlert('Station deleted successfully.');
+        } else {
+          window.appAlert('Failed to delete station: ' + (result.message || 'Unknown error'));
+          delBtn.disabled = false;
+          delBtn.textContent = 'Delete Station';
+        }
+      } catch (err) {
+        console.error(err);
+        window.appAlert('An error occurred while deleting.');
+        delBtn.disabled = false;
+        delBtn.textContent = 'Delete Station';
+      }
+    }
+  });
+
+  // Insert after the parent container of the save button, or inside the same sidebar
+  // Assuming saveBtn is inside a sidebar-section
+  const sidebarSection = saveBtn.closest('.sidebar-section') || saveBtn.parentElement;
+  sidebarSection.appendChild(btnContainer);
+  btnContainer.appendChild(delBtn);
 }
 
 function renderExtraGIFields(container, stn) {

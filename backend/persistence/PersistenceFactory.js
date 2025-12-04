@@ -235,6 +235,10 @@ class DualWritePersistence {
   async updateStationInLocationFile(company, locationName, stationId, updatedRowData, schema) {
     return await this._writeToAll('updateStationInLocationFile', company, locationName, stationId, updatedRowData, schema);
   }
+
+  async deleteStation(company, locationName, stationId) {
+    return await this._writeToAll('deleteStation', company, locationName, stationId);
+  }
   
   async updateAssetTypeSchema(assetType, schema, excludeStationId) {
      return await this._writeToAll('updateAssetTypeSchema', assetType, schema, excludeStationId);

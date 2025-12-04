@@ -1113,6 +1113,39 @@ class MongoPersistence extends IPersistence {
     }
   }
 
+  async deleteStation(company, locationName, stationId) {
+    try {
+      const db = mongoClient.getDatabase();
+      const collections = await mongoClient.listCollections();
+      
+      const normalize = (str) => String(str || '').trim().replace(/[^a-zA-Z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+      const prefix = `${normalize(company)}_${normalize(locationName)}_`;
+      
+      // Find potential collections
+      const targets = collections.filter(name => name.startsWith(prefix) && name.endsWith('_stationData'));
+      
+      let deleted = false;
+
+      for (const collName of targets) {
+        const collection = db.collection(collName);
+        const result = await collection.deleteOne({ station_id: stationId });
+        
+        if (result.deletedCount > 0) {
+          deleted = true;
+          // Optionally: also delete repairs associated with this station?
+          // For now, adhering strictly to "Delete Station" requirements.
+          break;
+        }
+      }
+
+      if (deleted) return { success: true };
+      return { success: false, message: 'Station not found' };
+    } catch (error) {
+      console.error('[MongoPersistence] deleteStation failed:', error.message);
+      return { success: false, message: error.message };
+    }
+  }
+
   // ════════════════════════════════════════════════════════════════════════════
   // REPAIRS
   // ════════════════════════════════════════════════════════════════════════════

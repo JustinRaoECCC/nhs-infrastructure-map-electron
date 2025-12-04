@@ -357,6 +357,17 @@ class IPersistence {
     throw new Error('Method "updateStationInLocationFile()" must be implemented');
   }
 
+  /**
+   * Delete a station and its associated data
+   * @param {string} company - Company name
+   * @param {string} locationName - Location name
+   * @param {string} stationId - Station ID
+   * @returns {Promise<Object>} - { success: boolean, message?: string }
+   */
+  async deleteStation(company, locationName, stationId) {
+    throw new Error('Method "deleteStation()" must be implemented');
+  }
+
   // ════════════════════════════════════════════════════════════════════════════
   // REPAIRS
   // ════════════════════════════════════════════════════════════════════════════

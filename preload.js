@@ -59,6 +59,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ─── Station Updates ─────────────────────────────────────────────────────
   updateStationData: (stationData, schema) => ipcRenderer.invoke('stations:update', stationData, schema),
 
+  deleteStation: (company, location, stationId) => 
+    ipcRenderer.invoke('stations:delete', company, location, stationId),
+
   // ─── Schema synchronization ──────────────────────────────────────────────
   syncAssetTypeSchema: (assetType, schema, excludeStationId) =>
     ipcRenderer.invoke('schema:sync', assetType, schema, excludeStationId),

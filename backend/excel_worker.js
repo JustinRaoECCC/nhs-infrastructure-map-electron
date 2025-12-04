@@ -3564,6 +3564,69 @@ async function setRepairColorForCompanyLocation(assetType, company, location, co
   return { success: true };
 }
 
+// Delete a specific station row from the location workbook
+async function deleteStation(company, location, stationId) {
+  await ensureLookupsReady();
+  const filePath = getLocationFilePath(company, location);
+  
+  if (!fs.existsSync(filePath)) {
+    return { success: false, message: 'Location file not found' };
+  }
+
+  const _ExcelJS = getExcel();
+  const wb = new _ExcelJS.Workbook();
+  await wb.xlsx.readFile(filePath);
+
+  let deleted = false;
+  let sheetNameFound = '';
+
+  // Iterate all sheets to find the station
+  for (const ws of wb.worksheets) {
+    if (!ws || ws.rowCount < 2) continue;
+    
+    // Skip Repairs sheet
+    if (ws.name && ws.name.toLowerCase().includes('repairs')) continue;
+
+    // Find Station ID column (handle 1 or 2 row headers)
+    const twoRowHeader = (ws.getRow(2)?.actualCellCount || 0) > 0;
+    const headerRowNum = twoRowHeader ? 2 : 1;
+    const headerRow = ws.getRow(headerRowNum);
+    const maxCol = ws.actualColumnCount || headerRow.cellCount || 0;
+    
+    let sidCol = -1;
+      for (let c = 1; c <= maxCol; c++) {
+      const txt = takeText(headerRow.getCell(c)).toLowerCase();
+      if (txt === 'station id' || txt === 'stationid' || txt === 'id') {
+        sidCol = c;
+        break;
+      }
+    }
+
+    if (sidCol === -1) continue;
+
+    // Find the row
+    const lastRow = ws.actualRowCount || ws.rowCount || headerRowNum;
+    for (let r = headerRowNum + 1; r <= lastRow; r++) {
+      const val = takeText(ws.getRow(r).getCell(sidCol));
+      if (String(val).trim() === String(stationId).trim()) {
+        ws.spliceRows(r, 1);
+        deleted = true;
+        sheetNameFound = ws.name;
+        break; 
+      }
+    }
+
+    if (deleted) break;
+  }
+
+  if (deleted) {
+    await wb.xlsx.writeFile(filePath);
+    return { success: true, sheet: sheetNameFound };
+  }
+
+  return { success: false, message: 'Station ID not found in workbook' };
+}
+
 // ─── RPC shim ─────────────────────────────────────────────────────────────
 const handlers = {
   ping: async () => 'pong',
@@ -3625,6 +3688,7 @@ const handlers = {
   deleteLocationFromLookups,
   deleteAssetTypeFromLookups,
   deleteAssetTypeFromLocation,
+  deleteStation
 };
 
 parentPort.on('message', async (msg) => {
