@@ -957,23 +957,92 @@ class MongoPersistence extends IPersistence {
         if (existing) {
           // Prepare update
           const { _id, _createdAt, ...rest } = updatedRowData;
-          
-          // Ensure core fields are updated too if they are in updatedRowData
-          const updatePayload = {
-            ...rest,
-            _updatedAt: new Date()
-          };
-          
-          // Sync core fields if present in the update
-          if (rest['Site Name']) updatePayload.name = rest['Site Name'];
-          if (rest['Latitude']) updatePayload.lat = rest['Latitude'];
-          if (rest['Longitude']) updatePayload.lon = rest['Longitude'];
-          if (rest['Status']) updatePayload.status = rest['Status'];
+          const doc = existing;
+          const updatedData = rest;
 
-          await collection.updateOne(
-            { station_id: stationId },
-            { $set: updatePayload }
-          );
+          if (schema && schema.sections && schema.fields && schema.sections.length > 0) {
+            
+            // ═══════════════════════════════════════════════════════════════════
+            // FIX: Proper deletion sync - Clear and rebuild non-GI fields
+            // ═══════════════════════════════════════════════════════════════════
+            
+            const GI_FIELDS = [
+              'station_id', 'asset_type', 'name', 'province', 'lat', 'lon', 'status',
+              'company', 'location_file', '_updatedAt', '_createdAt', '_source'
+            ];
+            
+            // 1. Preserve GI and internal fields from current document
+            const preserved = {};
+            Object.keys(doc).forEach(key => {
+              if (GI_FIELDS.includes(key) || key.startsWith('_')) {
+                preserved[key] = doc[key];
+              }
+            });
+            
+            // 2. Check for values in updatedData (for GI fields that might have changed)
+            ['station_id', 'asset_type', 'name', 'province', 'lat', 'lon', 'status'].forEach(field => {
+              if (updatedData[field] !== undefined) {
+                preserved[field] = updatedData[field];
+              }
+              // Also check composite GI keys
+              const giComposite = `General Information – ${field.charAt(0).toUpperCase() + field.slice(1)}`;
+              if (updatedData[giComposite] !== undefined) {
+                preserved[field] = updatedData[giComposite];
+              }
+            });
+            
+            // 3. Build new document with ONLY schema fields (deletions respected)
+            const newDoc = { ...preserved };
+            
+            schema.fields.forEach((field, idx) => {
+              const section = schema.sections[idx];
+              
+              // Skip GI fields - already handled
+              if (section && section.toLowerCase() === 'general information') return;
+              
+              const composite = `${section} – ${field}`;
+              
+              // Try to find value in updatedData first, then fall back to existing doc
+              let value = '';
+              
+              if (updatedData[composite] !== undefined) {
+                value = updatedData[composite];
+              } else if (updatedData[field] !== undefined) {
+                value = updatedData[field];
+              } else if (doc[composite] !== undefined) {
+                value = doc[composite];
+              } else if (doc[field] !== undefined) {
+                value = doc[field];
+              }
+              
+              newDoc[composite] = value;
+            });
+            
+            // 4. Use replaceOne to completely replace document (implicit deletion)
+            await collection.replaceOne(
+              { _id: doc._id },
+              newDoc
+            );
+
+          } else {
+            // No schema: fallback to old append-at-end behavior
+            // Ensure core fields are updated too if they are in updatedRowData
+            const updatePayload = {
+              ...rest,
+              _updatedAt: new Date()
+            };
+            
+            // Sync core fields if present in the update
+            if (rest['Site Name']) updatePayload.name = rest['Site Name'];
+            if (rest['Latitude']) updatePayload.lat = rest['Latitude'];
+            if (rest['Longitude']) updatePayload.lon = rest['Longitude'];
+            if (rest['Status']) updatePayload.status = rest['Status'];
+
+            await collection.updateOne(
+              { station_id: stationId },
+              { $set: updatePayload }
+            );
+          }
           found = true;
           break;
         }
@@ -1324,7 +1393,6 @@ class MongoPersistence extends IPersistence {
       const collections = await mongoClient.listCollections();
       
       // Find all collections that might match this asset type
-      // Logic mirrors Excel: matches asset type name in collection name
       const targets = collections.filter(c => 
         c.endsWith('_stationData') && c.toLowerCase().includes(assetType.toLowerCase())
       );
@@ -1332,53 +1400,85 @@ class MongoPersistence extends IPersistence {
       let totalUpdated = 0;
       const results = [];
 
+      // ═══════════════════════════════════════════════════════════════════
+      // FIX: Proper deletion sync - Clear and rebuild non-GI fields
+      // ═══════════════════════════════════════════════════════════════════
+      
+      // Define General Information fields to preserve
+      const GI_FIELDS = [
+        'station_id', 'asset_type', 'name', 'province', 'lat', 'lon', 'status',
+        'company', 'location_file', '_updatedAt', '_createdAt', '_source'
+      ];
+      
       for (const collName of targets) {
         const collection = db.collection(collName);
         
-        // 1. Identify new fields from schema
-        const newFields = {};
+        // Build schema field map for quick lookup
+        const schemaFields = new Map();
         schema.fields.forEach((field, idx) => {
           const section = schema.sections[idx];
-          // In Mongo we store flat or specific keys. 
-          // We ensure the field exists. If usage expects "Section - Field", ensures that key.
-          // If usage expects plain "Field", ensures that key.
-          // Based on writeLocationRows, we primarily use plain keys or composite if collision.
-          // For schema sync, we simply ensure the key exists in the document.
           const composite = section ? `${section} – ${field}` : field;
-          newFields[composite] = ""; // Default value for new fields
+          schemaFields.set(composite, true);
         });
-
-        // 2. Update all documents in this collection
-        // We use $set to add missing fields without overwriting existing data
-        // Note: MongoDB allows dynamic schema, so strictly "adding columns" isn't necessary,
-        // but putting empty strings ensures they appear in UI grids.
         
-        // Filter out the excluded station
+        // Filter: exclude the specific station that triggered this sync
         const filter = excludeStationId ? { station_id: { $ne: excludeStationId } } : {};
         
-        // We iterate to perform smart updates (only set if missing)
-        // Or use updateMany with pipeline if Mongo 4.2+
         const cursor = collection.find(filter);
+        const bulkOps = [];
         
         while(await cursor.hasNext()) {
           const doc = await cursor.next();
-          const updates = {};
-          let hasUpdate = false;
-
-          for (const key of Object.keys(newFields)) {
-            // If key missing, add it
-            if (doc[key] === undefined) {
-              updates[key] = "";
-              hasUpdate = true;
+          
+          // 1. Preserve GI fields and existing values
+          const preserved = {};
+          const existingValues = {};
+          
+          Object.keys(doc).forEach(key => {
+            if (GI_FIELDS.includes(key) || key.startsWith('_')) {
+              preserved[key] = doc[key];
+            } else {
+              // Store for potential reuse if field still exists in schema
+              existingValues[key.toLowerCase()] = doc[key];
             }
-          }
-
-          if (hasUpdate) {
-            await collection.updateOne({ _id: doc._id }, { $set: updates });
-            totalUpdated++;
-          }
+          });
+          
+          // 2. Build updates object with ONLY schema fields
+          const updates = { ...preserved };
+          
+          schema.fields.forEach((field, idx) => {
+            const section = schema.sections[idx];
+            const composite = section ? `${section} – ${field}` : field;
+            
+            // Try to find existing value
+            let value = '';
+            const compositeLower = composite.toLowerCase();
+            const fieldLower = field.toLowerCase();
+            
+            if (existingValues[compositeLower] !== undefined) {
+              value = existingValues[compositeLower];
+            } else if (existingValues[fieldLower] !== undefined) {
+              value = existingValues[fieldLower];
+            }
+            
+            updates[composite] = value;
+          });
+          
+          // 3. Use $set to update with ONLY the fields we want (implicit deletion of others)
+          bulkOps.push({
+            replaceOne: {
+              filter: { _id: doc._id },
+              replacement: updates
+            }
+          });
+          
+          totalUpdated++;
         }
-        results.push({ collection: collName, updated: true });
+        
+        if (bulkOps.length > 0) {
+          await collection.bulkWrite(bulkOps);
+          results.push({ collection: collName, updated: true });
+        }
       }
 
       return { 

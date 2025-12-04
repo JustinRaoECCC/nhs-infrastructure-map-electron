@@ -793,19 +793,30 @@ async function saveStationChanges(assetType) {
       saveBtn.disabled = true;
     }
 
-    // Validate: no blank field names allowed (except funding section which is locked)
+    // ═══════════════════════════════════════════════════════════════════
+    // FIX: Enhanced validation - blank fields and empty sections
+    // ═══════════════════════════════════════════════════════════════════
+    
     const sectionsWithBlankFields = new Set();
+    const emptySections = new Set();
     const sections = container.querySelectorAll('.editable-section');
     
     sections.forEach(sectionDiv => {
       const isFunding = sectionDiv?.dataset.locked === 'funding' || 
                         String(sectionDiv?.dataset.sectionName || '').trim() === FUNDING_SECTION_NAME;
-      if (isFunding) return; // Funding fields are locked, can't be blank
+      if (isFunding) return; // Funding fields are locked
       
       const titleEl = sectionDiv.querySelector('.section-title-input');
       const sectionTitle = (titleEl?.value || '').trim();
       const fieldRows = sectionDiv.querySelectorAll('.field-row');
       
+      // Check for empty sections
+      if (fieldRows.length === 0) {
+        emptySections.add(sectionTitle || 'Unnamed Section');
+        return;
+      }
+      
+      // Check for blank field names
       fieldRows.forEach(fieldRow => {
         const labelEl = fieldRow.querySelector('.field-label-input');
         const fieldName = (labelEl?.value || '').trim();
@@ -816,7 +827,23 @@ async function saveStationChanges(assetType) {
       });
     });
     
+    // Validate: no empty sections
+    if (emptySections.size > 0) {
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save Changes';
+      }
+      appAlert('Cannot save sections with no fields. Please add at least one field or delete these sections:\n\n• ' + 
+               Array.from(emptySections).join('\n• '));
+      return;
+    }
+    
+    // Validate: no blank field names
     if (sectionsWithBlankFields.size > 0) {
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save Changes';
+      }
       appAlert('Please provide names for all fields or delete them.\n\nSections with blank field names:\n• ' + 
                Array.from(sectionsWithBlankFields).join('\n• '));
       return;
@@ -841,7 +868,7 @@ async function saveStationChanges(assetType) {
       updatedData.status = getValue('giStatus');
     }
 
-    // NEW: Read the current Excel structure to get complete column order
+    // Read existing Excel structure for column order
     let existingSchema = null;
     try {
       const company = updatedData.company || currentStationData.company;
@@ -859,18 +886,22 @@ async function saveStationChanges(assetType) {
       console.warn('[saveStationChanges] Could not read existing schema:', e);
     }
 
-    // Dynamic sections data - clear old ones first
+    // ═══════════════════════════════════════════════════════════════════
+    // FIX: Clear old section data properly to prevent value copying
+    // ═══════════════════════════════════════════════════════════════════
+    
+    // Clear ALL non-GI composite keys from updatedData
     Object.keys(updatedData).forEach(key => {
       if (key.includes(' – ')) {
-        // Keep "General Information – ..." keys; other sections will be rebuilt
         const [sec] = key.split(' – ');
+        // Keep GI fields, remove everything else
         if (String(sec).trim().toLowerCase() !== 'general information') {
           delete updatedData[key];
         }
       }
     });
 
-    // Validate and auto-populate Funding Overrides based on per-station Funding Split
+    // Validate and auto-populate Funding Overrides
     try {
       const foSec = Array.from(container.querySelectorAll('.station-section'))
         .find(sec => String(sec.dataset.sectionName || '').trim() === 'Funding Type Override Settings');
@@ -881,7 +912,7 @@ async function saveStationChanges(assetType) {
         const makeDefault = () => {
           const n = tokens.length;
           if (!n) return '';
-          const base = Math.round((1000 / n)) / 10; // one decimal place
+          const base = Math.round((1000 / n)) / 10;
           const parts = new Array(n).fill(base);
           const sum = parts.reduce((a,b)=>a+b,0);
           parts[n-1] = Math.round((100 - (sum - parts[n-1])) * 10) / 10;
@@ -919,18 +950,24 @@ async function saveStationChanges(assetType) {
         }
       }
     } catch (e) {
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save Changes';
+      }
       throw e;
     }
 
-    // Collect new section data
-    const uiSections = new Map(); // Map of section name -> array of field names in UI order
+    // ═══════════════════════════════════════════════════════════════════
+    // FIX: Strict key matching to prevent accidental value copying
+    // ═══════════════════════════════════════════════════════════════════
+    
+    const uiSections = new Map();
 
     sections.forEach(sectionDiv => {
       const titleEl = sectionDiv.querySelector('.section-title-input');
       const rawTitle = (titleEl?.value || '').trim();
       const isFunding = sectionDiv?.dataset.locked === 'funding' || rawTitle === FUNDING_SECTION_NAME;
 
-      // FUNDING LOCK: use original title (or canonical) regardless of UI text
       const sectionTitle = isFunding
         ? (titleEl?.dataset.originalTitle || FUNDING_SECTION_NAME)
         : rawTitle;
@@ -950,33 +987,26 @@ async function saveStationChanges(assetType) {
         const rawFieldName = (labelEl?.value || '').trim();
         const originalFieldName = labelEl?.dataset.originalLabel || rawFieldName;
 
-        // FUNDING LOCK: enforce original field names only; ignore any extras
-        if (isFunding) {
-          if (allowed && !allowed.has(originalFieldName)) {
-            return; // skip unauthorized new field
-          }
+        if (isFunding && allowed && !allowed.has(originalFieldName)) {
+          return;
         }
 
         const fieldName = isFunding ? originalFieldName : rawFieldName;
-
         const valueEl = fieldRow.querySelector('.field-value-input');
         const fieldValue = (valueEl?.value || '').trim();
 
         if (sectionTitle && fieldName) {
+          // Use EXACT composite key only - no fallbacks to prevent copying
           const compositeKey = `${sectionTitle} – ${fieldName}`;
           updatedData[compositeKey] = fieldValue;
-
-          // Track UI field order
           uiSections.get(sectionTitle).push(fieldName);
         }
       });
     });
 
-
-    // Build schema STRICTLY from what's in the UI (deletions included).
+    // Build schema from UI
     let schemaData;
     (function buildSchemaFromUI() {
-      // Flatten UI into ordered [section, field] pairs
       const uiPairs = [];
       uiSections.forEach((fieldsList, sectionName) => {
         fieldsList.forEach(fieldName => {
@@ -984,27 +1014,20 @@ async function saveStationChanges(assetType) {
         });
       });
 
-      // If we have an existing schema, keep prior order for existing fields
-      // and INSERT any new field right after the last field of the *same section*.
       if (existingSchema && Array.isArray(existingSchema.fields) && Array.isArray(existingSchema.sections)) {
         const keyOf = (s, f) => `${String(s).toLowerCase()}|||${String(f).toLowerCase()}`;
         const isGI  = (s) => String(s).trim().toLowerCase() === 'general information';
-
-        // 1) Seed "ordered" with existing schema pairs that are still present in the UI (non-GI only)
         const present = new Set(uiPairs.map(([s, f]) => keyOf(s, f)));
         const ordered = [];
+        
         for (let i = 0; i < existingSchema.fields.length; i++) {
           const s = existingSchema.sections[i];
           const f = existingSchema.fields[i];
-          if (!s || !f) continue;
-          if (isGI(s)) continue;
+          if (!s || !f || isGI(s)) continue;
           const k = keyOf(s, f);
           if (present.has(k)) ordered.push([s, f]);
         }
 
-        // 2) Insert any remaining UI pairs "next to their section":
-        //    - If that section already exists in `ordered`, place right after the last field of that section
-        //    - Otherwise, append to the end (subsequent fields of the same new section will group together)
         const orderedKeys = new Set(ordered.map(([s, f]) => keyOf(s, f)));
         const insertAfterLastOfSection = (arr, section, pair) => {
           const want = String(section).toLowerCase();
@@ -1018,7 +1041,7 @@ async function saveStationChanges(assetType) {
 
         for (const [s, f] of uiPairs) {
           const k = keyOf(s, f);
-          if (orderedKeys.has(k)) continue; // already present from existing schema
+          if (orderedKeys.has(k)) continue;
           insertAfterLastOfSection(ordered, s, [s, f]);
           orderedKeys.add(k);
         }
@@ -1028,8 +1051,6 @@ async function saveStationChanges(assetType) {
           fields:   ordered.map(p => p[1])
         };
       } else {
-        // No existing schema: keep UI order but ensure fields of the same section stay grouped.
-        // (uiSections already preserves per-section UI order.)
         const grouped = [];
         uiSections.forEach((fieldsList, sectionName) => {
           fieldsList.forEach(fieldName => grouped.push([sectionName, fieldName]));
@@ -1041,7 +1062,7 @@ async function saveStationChanges(assetType) {
       }
     })();
 
-    // If GI is unlocked, also persist any edited extra GI fields
+    // If GI is unlocked, persist extra GI fields
     if (generalInfoUnlocked) {
       container.querySelectorAll('.gi-extra-input').forEach(inp => {
         const label = (inp.dataset.fieldKey || '').trim();
@@ -1051,14 +1072,14 @@ async function saveStationChanges(assetType) {
       });
     }
 
-   // Save to this station's Excel file with schema information
-   const result = await window.electronAPI.updateStationData(updatedData, {
-     sections: schemaData.sections,
-     fields: schemaData.fields
-   });
+    // Save to Excel with schema
+    const result = await window.electronAPI.updateStationData(updatedData, {
+      sections: schemaData.sections,
+      fields: schemaData.fields
+    });
     
     if (result.success) {
-      // Now sync schema to all other stations of same asset type
+      // Sync schema to all other stations
       if (assetType && schemaData.sections.length > 0) {
         saveBtn.textContent = 'Syncing schema...';
         

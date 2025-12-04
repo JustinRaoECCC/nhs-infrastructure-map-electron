@@ -85,10 +85,15 @@ async function syncAssetTypeSchema(assetType, updatedSchema, sourceStationId) {
 
 /**
  * Apply a schema to a station, preserving values but updating structure
+ * Prevents accidental value copying by using exact key matching
  */
 function applySchemaToStation(stationData, schema) {
   const updated = {};
   const SEP = ' – ';
+  
+  // ═══════════════════════════════════════════════════════════════════
+  // FIX: Strict key matching to prevent value copying
+  // ═══════════════════════════════════════════════════════════════════
   
   // First, copy all non-section fields and General Information fields
   Object.keys(stationData).forEach(key => {
@@ -109,27 +114,29 @@ function applySchemaToStation(stationData, schema) {
     const field = schema.fields[index];
     const compositeKey = `${section}${SEP}${field}`;
     
-    // Try to find existing value for this field
+    // Try to find existing value for this field using EXACT matching only
     let value = '';
     
-    // First, check if we have the exact composite key
+    // 1. Check exact composite key match
     if (stationData[compositeKey] !== undefined) {
       value = stationData[compositeKey];
-    } else {
-      // Look for the field under any section
-      Object.keys(stationData).forEach(key => {
+    } 
+    // 2. Check if field exists under ANY section (but still exact field name match)
+    else {
+      const fieldLower = field.toLowerCase();
+      for (const key of Object.keys(stationData)) {
         if (key.includes(SEP)) {
           const [, existingField] = key.split(SEP, 2);
-          if (existingField === field && value === '') {
+          if (existingField.toLowerCase() === fieldLower) {
             value = stationData[key];
+            break; // Take first match only
           }
         }
-      });
-      
-      // Also check if the field exists without a section
-      if (value === '' && stationData[field] !== undefined) {
-        value = stationData[field];
       }
+    }
+    // 3. Last resort: check plain field name (but only if no section match found)
+    if (value === '' && stationData[field] !== undefined) {
+      value = stationData[field];
     }
     
     updated[compositeKey] = value;
@@ -200,8 +207,9 @@ async function getExistingSchemaForAssetType(assetType, stationIdsToExclude = []
 }
 
 /**
- * Sync schema to newly imported stations AFTER they've been written to Excel
+ * Sync schema to newly imported stations AFTER they've been written
  * This is for Functionality B - when importing new data
+ * Works for both Excel and MongoDB persistence layers
  */
 async function syncNewlyImportedStations(assetType, company, locationName, existingSchema, importedStationIds) {
   const persistence = await getPersistence();
@@ -214,13 +222,14 @@ async function syncNewlyImportedStations(assetType, company, locationName, exist
   console.log(`[syncNewlyImportedStations] Syncing ${importedStationIds.length} imported stations to existing schema`);
   
   try {
-    // Build the sheet name where the new stations were imported
-    // Use the standard naming convention: "AssetType Location"
+    // ═══════════════════════════════════════════════════════════════════
+    // FIX: MongoDB-compatible sync using persistence layer methods
+    // ═══════════════════════════════════════════════════════════════════
+    
+    // Read the just-imported data using persistence API
     const sheetName = `${assetType} ${locationName}`;
+    console.log(`[syncNewlyImportedStations] Reading from sheet/collection: ${sheetName}`);
     
-    console.log(`[syncNewlyImportedStations] Reading from sheet: ${sheetName}`);
-    
-    // Read the just-imported data
     const sheetData = await persistence.readSheetData(company, locationName, sheetName);
     if (!sheetData.success || !sheetData.rows || sheetData.rows.length === 0) {
       return { 
@@ -229,24 +238,26 @@ async function syncNewlyImportedStations(assetType, company, locationName, exist
       };
     }
     
-    console.log(`[syncNewlyImportedStations] Found ${sheetData.rows.length} stations in sheet`);
+    console.log(`[syncNewlyImportedStations] Found ${sheetData.rows.length} stations in data`);
+    
+    // Create a Set for O(1) lookup
+    const importedIdSet = new Set(importedStationIds.map(String));
     
     // Update each imported station to match the existing schema
     for (const station of sheetData.rows) {
       const stationId = station['Station ID'] || station['station_id'] || station['StationID'] || station['ID'];
       
       // Only update the stations we just imported
-      if (!importedStationIds.includes(String(stationId))) {
-        console.log(`[syncNewlyImportedStations] Skipping non-imported station: ${stationId}`);
+      if (!importedIdSet.has(String(stationId))) {
         continue;
       }
       
       console.log(`[syncNewlyImportedStations] Updating imported station: ${stationId}`);
       
-      // Apply the existing schema while preserving values
+      // Apply the existing schema while preserving imported values
       const updatedStation = applySchemaToStation(station, existingSchema);
       
-      // Write back to Excel
+      // Write back using persistence layer
       const updateResult = await persistence.updateStationInLocationFile(
         company,
         locationName,

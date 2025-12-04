@@ -2309,73 +2309,12 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
   
   let maxCol = worksheet.actualColumnCount || headerRow.cellCount || 0;
   
-  // Build a map of current values from this row - USE ONLY COMPOSITE KEYS
-  const currentValues = new Map();
-  for (let c = 1; c <= maxCol; c++) {
-    const section = sectionRow ? takeText(sectionRow.getCell(c)) : '';
-    const field = takeText(headerRow.getCell(c));
-    if (!field) continue;
-    
-    const compositeKey = section ? `${section} – ${field}`.toLowerCase() : field.toLowerCase();
-    const value = row.getCell(c).value;
-    
-    currentValues.set(compositeKey, value);
-  }
-
-  // DEBUG: Log for station 08HB023 (second in sync)
-  const stationIdCell = row.getCell(1);
-  let debugStationId = null;
-  for (let c = 1; c <= 5; c++) {
-    const cellVal = String(row.getCell(c).value || '').trim();
-    if (cellVal && cellVal.match(/^\d+[A-Z]+\d+$/)) {
-      debugStationId = cellVal;
-      break;
-    }
-  }
-  if (debugStationId === '08HB023') {
-    console.log('[DEBUG 08HB023] === BEFORE SCHEMA APPLY ===');
-    console.log('[DEBUG 08HB023] currentValues map (first 10):', 
-      Array.from(currentValues.entries()).slice(0, 10));
-    console.log('[DEBUG 08HB023] Current header row values (first 15):', 
-      Array.from({length: 15}, (_, i) => takeText(headerRow.getCell(i + 1))));
-    console.log('[DEBUG 08HB023] Current section row values (first 15):', 
-      sectionRow ? Array.from({length: 15}, (_, i) => takeText(sectionRow.getCell(i + 1))) : 'N/A');
-    console.log('[DEBUG 08HB023] schema exists?:', !!schema);
-    console.log('[DEBUG 08HB023] schema.sections exists?:', !!(schema && schema.sections));
-    console.log('[DEBUG 08HB023] schema.fields exists?:', !!(schema && schema.fields));
-  }
-
-
   if (schema && schema.sections && schema.fields && schema.sections.length > 0) {
-
-    if (debugStationId === '08HB023') {
-      console.log('[DEBUG 08HB023] === ENTERED SCHEMA BLOCK ===');
-    }
-
-    // Schema-based reconstruction: rebuild the ENTIRE row in schema order
     
-    // Find the last GI column
-    const giFields = ['station id', 'stationid', 'id', 'category', 'site name', 
-                      'station name', 'name', 'province', 'location', 'latitude', 
-                      'lat', 'longitude', 'lon', 'status'];
+    // ═══════════════════════════════════════════════════════════════════
+    // FIX: Proper deletion handling - Clear and rebuild with schema
+    // ═══════════════════════════════════════════════════════════════════
     
-    let lastGICol = 0;
-    for (let c = 1; c <= maxCol; c++) {
-      const section = sectionRow ? takeText(sectionRow.getCell(c)).toLowerCase() : '';
-      const field = takeText(headerRow.getCell(c)).toLowerCase();
-      
-      if (section === 'general information' || giFields.includes(field)) {
-        lastGICol = c;
-      }
-    }
-    
-    if (debugStationId === '08HB023') {
-      console.log('[DEBUG 08HB023] lastGICol calculated as:', lastGICol);
-      console.log('[DEBUG 08HB023] maxCol:', maxCol);
-      console.log('[DEBUG 08HB023] Field at lastGICol:', takeText(headerRow.getCell(lastGICol)));
-      console.log('[DEBUG 08HB023] Section at lastGICol:', takeText(sectionRow.getCell(lastGICol)));
-    }
-
     // Define field synonym mappings for GI fields
     const fieldSynonyms = {
       'station id': ['stationid', 'id', 'station id'],
@@ -2400,7 +2339,6 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
       // Try synonyms
       for (const [canonical, synonyms] of Object.entries(fieldSynonyms)) {
         if (synonyms.includes(fieldLower)) {
-          // Try all synonyms with and without section prefix
           for (const syn of synonyms) {
             const synComposite = section ? `${section} – ${syn}` : syn;
             const synCapitalized = syn.charAt(0).toUpperCase() + syn.slice(1);
@@ -2410,7 +2348,6 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
                     updatedData[synCompositeCapitalized] || updatedData[synCapitalized];
             if (value !== undefined) return value;
           }
-          // Try canonical form
           const canonicalCapitalized = canonical.split(' ').map(w => 
             w.charAt(0).toUpperCase() + w.slice(1)
           ).join(' ');
@@ -2422,6 +2359,21 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
       }
       
       return undefined;
+    }
+    
+    // Identify GI columns
+    const giFields = ['station id', 'stationid', 'id', 'category', 'site name', 
+                      'station name', 'name', 'province', 'location', 'latitude', 
+                      'lat', 'longitude', 'lon', 'status'];
+    
+    let lastGICol = 0;
+    for (let c = 1; c <= maxCol; c++) {
+      const section = sectionRow ? takeText(sectionRow.getCell(c)).toLowerCase() : '';
+      const field = takeText(headerRow.getCell(c)).toLowerCase();
+      
+      if (section === 'general information' || giFields.includes(field)) {
+        lastGICol = c;
+      }
     }
     
     // Update GI fields from updatedData if they exist
@@ -2436,8 +2388,14 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
       }
     }
 
-    // --- SNAPSHOT OLD POST-GI HEADER (for remapping all rows) -------------
-    const oldSecs = []; const oldFlds = []; const oldKeys = [];
+    // ═══════════════════════════════════════════════════════════════════
+    // FIX: Snapshot old post-GI data for ALL rows (not just current)
+    // ═══════════════════════════════════════════════════════════════════
+    
+    const oldSecs = []; 
+    const oldFlds = []; 
+    const oldKeys = [];
+    
     for (let c = lastGICol + 1; c <= maxCol; c++) {
       const s = sectionRow ? takeText(sectionRow.getCell(c)) : '';
       const f = takeText(headerRow.getCell(c));
@@ -2445,6 +2403,7 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
       oldFlds.push(f);
       oldKeys.push(s ? `${s} – ${f}` : f);
     }
+    
     function buildRowMap(r) {
       const m = new Map();
       const targetRow = worksheet.getRow(r);
@@ -2454,7 +2413,6 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
         const val = targetRow.getCell(lastGICol + 1 + i).value;
         if (val !== undefined && val !== null && String(val) !== '') {
           m.set(key, val);
-          // also index by field-only to be forgiving
           const fldOnly = (oldFlds[i] || '').toLowerCase();
           if (fldOnly) m.set(fldOnly, val);
         }
@@ -2462,32 +2420,30 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
       return m;
     }
     
-    // CRITICAL FIX: Build new structure in arrays FIRST, then apply to Excel
-    // This prevents ExcelJS cell reference issues when modifying while reading
+    // Build new structure arrays FIRST
     const newSections = [];
     const newFields = [];
     const newValues = [];
     
-    // Build new column structure from schema
     for (let i = 0; i < schema.fields.length; i++) {
       const section = schema.sections[i];
       const field = schema.fields[i];
       
-      // Skip General Information fields - they're already handled above
+      // Skip GI fields - already handled
       if (section.toLowerCase() === 'general information') continue;
       
-      // CRITICAL: Use ONLY composite key for lookup to avoid collisions
+      // STRICT key matching - use ONLY composite key
       const compositeKey = `${section} – ${field}`.toLowerCase();
       
-      // Get value: first from updatedData (try various forms), then from currentValues
-      // CRITICAL: Use explicit undefined checks to preserve intentional blank values ('')
+      // Get value: first from updatedData (exact match only), then from current row
       let value = updatedData[`${section} – ${field}`];
       if (value === undefined) {
         value = updatedData[field];
       }
       if (value === undefined) {
-        // ONLY use composite key to avoid getting wrong field's value
-        value = currentValues.get(compositeKey) || '';
+        // Build map of current row's values
+        const currentMap = buildRowMap(rowNumber);
+        value = currentMap.get(compositeKey) || '';
       }
       
       newSections.push(section);
@@ -2495,17 +2451,6 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
       newValues.push(value);
     }
 
-    // DEBUG: Log what we're about to write
-    if (debugStationId === '08HB023') {
-      console.log('[DEBUG 08HB023] === ABOUT TO WRITE ===');
-      console.log('[DEBUG 08HB023] lastGICol:', lastGICol);
-      console.log('[DEBUG 08HB023] newFields (first 10):', newFields.slice(0, 10));
-      console.log('[DEBUG 08HB023] newValues (first 10):', newValues.slice(0, 10));
-      console.log('[DEBUG 08HB023] Schema fields (first 10):', schema.fields.slice(0, 10));
-      console.log('[DEBUG 08HB023] Writing to columns starting at:', lastGICol + 1);
-    }  
-
-    // Now apply everything at once - clear old columns and write new structure
     // Clear everything AFTER GI (headers + current row)
     for (let c = lastGICol + 1; c <= maxCol; c++) {
       if (sectionRow) sectionRow.getCell(c).value = null;
@@ -2513,7 +2458,7 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
       row.getCell(c).value = null;
     }
     
-    // Write new structure starting after GI (headers + current row)
+    // Write new structure (headers + current row)
     for (let i = 0; i < newFields.length; i++) {
       const colIndex = lastGICol + 1 + i;
       if (sectionRow) sectionRow.getCell(colIndex).value = newSections[i];
@@ -2521,13 +2466,15 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
       row.getCell(colIndex).value = newValues[i];
     }
 
-    // --- REMAP **ALL** DATA ROWS TO THE NEW HEADER ORDER -------------------
+    // ═══════════════════════════════════════════════════════════════════
+    // FIX: Remap ALL data rows to new header order
+    // ═══════════════════════════════════════════════════════════════════
+    
     const dataStart = headerRowNum + 1;
     const lastRow   = worksheet.actualRowCount || worksheet.rowCount || headerRowNum;
     const newSpan   = newFields.length;
     const newMax    = lastGICol + newSpan;
 
-    // make sure we blank any extra trailing columns for all rows
     function clearAfterGi(targetRow) {
       for (let c = lastGICol + 1; c <= Math.max(maxCol, newMax); c++) {
         targetRow.getCell(c).value = null;
@@ -2535,35 +2482,25 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
     }
 
     for (let r = dataStart; r <= lastRow; r++) {
+      // Skip the row we just updated
+      if (r === rowNumber) continue;
+      
       const targetRow = worksheet.getRow(r);
-
-      //     Do NOT remap the row we just rebuilt from `updatedData`.
-      //     If we remap it using only the "old" column snapshot, we'd wipe
-      //     brand-new values (e.g., a freshly added field like "testField: testValue").
-      if (r === rowNumber) {
-        continue;
-      }
       const map = buildRowMap(r);
+      
       clearAfterGi(targetRow);
+      
       for (let i = 0; i < newFields.length; i++) {
         const sec = newSections[i] || '';
         const fld = newFields[i] || '';
         const composite = (sec ? `${sec} – ${fld}` : fld).toLowerCase();
+        
         let v = map.get(composite);
-        if (v === undefined) v = map.get(String(fld).toLowerCase()); // field-only fallback
+        if (v === undefined) v = map.get(String(fld).toLowerCase());
         targetRow.getCell(lastGICol + 1 + i).value = v ?? '';
       }
     }
     
-    // DEBUG: Log after writing
-    if (debugStationId === '08HB023') {
-      console.log('[DEBUG 08HB023] === AFTER WRITE ===');
-      console.log('[DEBUG 08HB023] Row data values (first 20 cols):', 
-        Array.from({length: 20}, (_, i) => row.getCell(i + 1).value));
-      console.log('[DEBUG 08HB023] Header row values (first 20):', 
-        Array.from({length: 20}, (_, i) => takeText(headerRow.getCell(i + 1))));
-    }
-
   } else {
     // No schema: fallback to old append-at-end behavior
     const columnMap = new Map();
@@ -2576,7 +2513,6 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
       columnMap.set(compositeKey.toLowerCase(), c);
       columnMap.set(field.toLowerCase(), c);
 
-      // Alias GI name and category synonyms to the same column index
       const f = field.toLowerCase();
       if (['station name','site name','name'].includes(f)) {
         ['station name','site name','name'].forEach(k => columnMap.set(k, c));
@@ -2584,7 +2520,6 @@ async function updateStationRow(worksheet, row, rowNumber, updatedData, twoRowHe
       if (['category','asset type','type'].includes(f)) {
         ['category','asset type','type'].forEach(k => columnMap.set(k, c));
       }
-
     }
 
     const newColumns = [];
@@ -2827,87 +2762,78 @@ async function applySchemaToRow(worksheet, row, rowNumber, schema, twoRowHeader)
   
   let maxCol = worksheet.actualColumnCount || headerRow.cellCount || 0;
   
-  // Build current column structure
-  const existingColumns = new Map(); // Map of "section – field" or "field" to column index
-  const giColumns = new Set(); // Track General Information columns to preserve them
+  // ═══════════════════════════════════════════════════════════════════
+  // FIX: Proper deletion sync - Clear and rebuild non-GI columns
+  // ═══════════════════════════════════════════════════════════════════
   
+  // 1. Identify General Information columns (to preserve)
+  const giColumns = new Set();
+  const giFields = ['station id', 'stationid', 'id', 'category', 'asset type', 'type',
+                    'site name', 'station name', 'name', 'province', 'location',
+                    'latitude', 'lat', 'longitude', 'lon', 'long', 'status'];
+  
+  let lastGICol = 0;
   for (let c = 1; c <= maxCol; c++) {
-    const header = takeText(headerRow.getCell(c));
-    const section = sectionRow ? takeText(sectionRow.getCell(c)) : '';
+    const section = sectionRow ? takeText(sectionRow.getCell(c)).toLowerCase() : '';
+    const field = takeText(headerRow.getCell(c)).toLowerCase();
     
-    if (!header) continue;
-    
-    const key = section ? `${section} – ${header}` : header;
-    existingColumns.set(key, c);
-    
-    // Track General Information columns
-    if (section.toLowerCase() === 'general information') {
+    if (section === 'general information' || giFields.includes(field)) {
       giColumns.add(c);
+      lastGICol = Math.max(lastGICol, c);
     }
   }
   
-  // Preserve General Information and other standard fields
-  const preservedData = new Map();
-  for (let c = 1; c <= maxCol; c++) {
-    if (giColumns.has(c)) {
-      // Preserve General Information fields
-      preservedData.set(c, row.getCell(c).value);
-    } else {
-      // Check if it's a standard field we should preserve
-      const header = takeText(headerRow.getCell(c)).toLowerCase();
-      if (['station id', 'stationid', 'id', 'category', 'asset type', 'type',
-           'site name', 'station name', 'name', 'province', 'location',
-           'latitude', 'lat', 'longitude', 'lon', 'long', 'status'].includes(header)) {
-        preservedData.set(c, row.getCell(c).value);
-      }
-    }
+  // 2. Collect existing values from non-GI columns for this row
+  const existingValues = new Map();
+  for (let c = lastGICol + 1; c <= maxCol; c++) {
+    const section = sectionRow ? takeText(sectionRow.getCell(c)) : '';
+    const field = takeText(headerRow.getCell(c));
+    if (!field) continue;
+    
+    const compositeKey = section ? `${section} – ${field}` : field;
+    const value = row.getCell(c).value;
+    
+    // Store both composite and plain field for lookup flexibility
+    existingValues.set(compositeKey.toLowerCase(), value);
+    existingValues.set(field.toLowerCase(), value);
   }
   
-  // Clear non-preserved cells in the row
-  for (let c = 1; c <= maxCol; c++) {
-    if (!preservedData.has(c)) {
-      row.getCell(c).value = '';
-    }
+  // 3. CLEAR all non-GI columns in this row (THIS IS THE KEY FIX)
+  for (let c = lastGICol + 1; c <= maxCol; c++) {
+    row.getCell(c).value = '';
   }
   
-  // Apply new schema
-  let nextCol = maxCol + 1;
+  // 4. Rebuild columns based ONLY on schema (deletions are now respected)
+  let targetCol = lastGICol + 1;
   
   for (let i = 0; i < schema.sections.length; i++) {
     const section = schema.sections[i];
     const field = schema.fields[i];
-    const compositeKey = section ? `${section} – ${field}` : field;
     
     // Skip General Information fields
     if (section.toLowerCase() === 'general information') continue;
     
-    let targetCol = existingColumns.get(compositeKey);
+    const compositeKey = section ? `${section} – ${field}` : field;
     
-    if (!targetCol) {
-      // Need to add a new column
-      targetCol = nextCol++;
-      
-      // Add headers for the new column
-      const secOut = String(section || '').trim() || 'Extra Information';
-      // Always two-row here after upgrade
-      worksheet.getRow(1).getCell(targetCol).value = secOut;
-      worksheet.getRow(2).getCell(targetCol).value = field;
+    // Update headers for this column
+    if (sectionRow) sectionRow.getCell(targetCol).value = section || 'Extra Information';
+    headerRow.getCell(targetCol).value = field;
+    
+    // Try to find existing value for this field
+    let value = existingValues.get(compositeKey.toLowerCase());
+    if (value === undefined) {
+      value = existingValues.get(field.toLowerCase()) || '';
     }
     
-    // Preserve existing value if any (look for it in original data)
-    // This handles the case where a field moved to a different section
-    let value = '';
-    for (const [key, colIdx] of existingColumns.entries()) {
-      if (key.endsWith(` – ${field}`) || key === field) {
-        const existingValue = row.getCell(colIdx).value;
-        if (existingValue) {
-          value = existingValue;
-          break;
-        }
-      }
-    }
-    
-    row.getCell(targetCol).value = value;
+    row.getCell(targetCol).value = value || '';
+    targetCol++;
+  }
+  
+  // 5. Clear any remaining columns beyond what schema defines
+  for (let c = targetCol; c <= maxCol; c++) {
+    if (sectionRow) sectionRow.getCell(c).value = '';
+    headerRow.getCell(c).value = '';
+    row.getCell(c).value = '';
   }
 }
 
