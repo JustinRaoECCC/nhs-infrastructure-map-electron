@@ -21,26 +21,31 @@ function normLoc(s) {
 
 const debounceMap = new Map();
 
+// Coalesce rapid callers: everyone waits for the latest timer and shares its result.
 function debounce(key, fn, delay = 100) {
   return new Promise((resolve, reject) => {
     const existing = debounceMap.get(key);
-    if (existing) {
-      clearTimeout(existing.timer);
-      // Reject the previous promise
-      existing.reject(new Error('Debounced'));
-    }
-    
-    const timer = setTimeout(async () => {
+    const entry = existing || { timer: null, resolvers: [] };
+
+    // Always use the latest fn; earlier callers will share its result.
+    entry.fn = fn;
+    entry.resolvers.push({ resolve, reject });
+
+    if (entry.timer) clearTimeout(entry.timer);
+
+    entry.timer = setTimeout(async () => {
       debounceMap.delete(key);
+      let result;
       try {
-        const result = await fn();
-        resolve(result);
-      } catch (e) {
-        reject(e);
+        result = await entry.fn();
+      } catch (err) {
+        entry.resolvers.forEach(({ reject: r }) => r(err));
+        return;
       }
+      entry.resolvers.forEach(({ resolve: r }) => r(result));
     }, delay);
-    
-    debounceMap.set(key, { timer, reject });
+
+    debounceMap.set(key, entry);
   });
 }
 
