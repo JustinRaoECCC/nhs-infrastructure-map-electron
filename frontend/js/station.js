@@ -651,62 +651,64 @@ function setupTabs(container) {
 }
 
 function setupEventHandlers(container, stn) {
-  // Remove any existing delegated listeners to prevent duplicates
-  if (container.dataset.handlersAttached) {
-    return; // Already attached, don't duplicate
+  // Re-wire handlers every time the station view is rendered.
+  // Remove any previous delegated listeners to avoid double-toggles when revisiting.
+  if (container._stationClickHandler) {
+    container.removeEventListener('click', container._stationClickHandler, true);
   }
-  
-  const addSectionBtn = container.querySelector('#addSectionBtn');
-  if (addSectionBtn) {
-    addSectionBtn.addEventListener('click', addNewSection);
-  }
-
-  const saveBtn = container.querySelector('#saveChangesBtn');
-  if (saveBtn) {
-    saveBtn.addEventListener('click', () => saveStationChanges(stn.asset_type));
+  if (container._stationInputHandler) {
+    container.removeEventListener('input', container._stationInputHandler, true);
   }
 
-  const unlockBtn = container.querySelector('#unlockEditing');
-  if (unlockBtn) {
-    unlockBtn.addEventListener('click', showPasswordModal);
-  }
-
-  setupPasswordModal(container);
-
-  // Built-in GI inputs + any extra GI inputs we render into the table
-  const generalInputs = container.querySelectorAll(
-    '#giStationId, #giCategory, #giSiteName, #giProvince, #giLatitude, #giLongitude, #giStatus, .gi-extra-input'
-  );
-  generalInputs.forEach(input => {
-    input.addEventListener('input', () => {
-      if (!input.disabled) markUnsavedChanges();
-    });
-  });
-
-  // IMPROVED: More robust event delegation for edit toggle
-  // Use capturing phase to ensure we get the event first
-  container.addEventListener('click', function editSectionHandler(e) {
+  const clickHandler = (e) => {
     const toggle = e.target.closest('.js-section-edit');
-    if (!toggle) return;
-    
-    // Prevent default to ensure button doesn't submit forms
-    e.preventDefault();
-    e.stopPropagation();
-    
-    const section = toggle.closest('.station-section');
-    if (!section) {
-      console.warn('[Edit Section] Could not find parent section for button:', toggle);
+    if (toggle) {
+      e.preventDefault();
+      e.stopPropagation();
+      const section = toggle.closest('.station-section');
+      if (!section) {
+        console.warn('[Edit Section] Could not find parent section for button:', toggle);
+        return;
+      }
+      const isEditing = isSectionEditing(section);
+      console.log('[Edit Section] Toggling section:', section.dataset.sectionName, 'from', isEditing, 'to', !isEditing);
+      setSectionEditing(section, !isEditing);
       return;
     }
-    
-    // Toggle the editing state
-    const isEditing = isSectionEditing(section);
-    console.log('[Edit Section] Toggling section:', section.dataset.sectionName, 'from', isEditing, 'to', !isEditing);
-    setSectionEditing(section, !isEditing);
-  }, true); // Use capturing phase
-  
-  // Mark that handlers are attached to prevent duplicates
-  container.dataset.handlersAttached = 'true';
+
+    const addBtn = e.target.closest('#addSectionBtn');
+    if (addBtn) {
+      e.preventDefault();
+      addNewSection();
+      return;
+    }
+
+    const saveBtn = e.target.closest('#saveChangesBtn');
+    if (saveBtn) {
+      e.preventDefault();
+      saveStationChanges(stn.asset_type);
+      return;
+    }
+
+    const unlockBtn = e.target.closest('#unlockEditing');
+    if (unlockBtn) {
+      e.preventDefault();
+      showPasswordModal();
+    }
+  };
+  container._stationClickHandler = clickHandler;
+  container.addEventListener('click', clickHandler, true);
+
+  // Built-in GI inputs + any extra GI inputs we render into the table
+  const generalSelector = '#giStationId, #giCategory, #giSiteName, #giProvince, #giLatitude, #giLongitude, #giStatus, .gi-extra-input';
+  const inputHandler = (e) => {
+    if (!e.target.matches(generalSelector)) return;
+    if (!e.target.disabled) markUnsavedChanges();
+  };
+  container._stationInputHandler = inputHandler;
+  container.addEventListener('input', inputHandler, true);
+
+  setupPasswordModal(container);
 }
 
 function setupPasswordModal(container) {
@@ -1134,8 +1136,15 @@ async function saveStationChanges(assetType) {
 function cleanupStationPage() {
   const container = document.getElementById('stationContentContainer');
   if (container) {
-    // Remove the handlers attached flag so they can be re-attached next time
-    delete container.dataset.handlersAttached;
+    // Detach delegated handlers when leaving the page
+    if (container._stationClickHandler) {
+      container.removeEventListener('click', container._stationClickHandler, true);
+      delete container._stationClickHandler;
+    }
+    if (container._stationInputHandler) {
+      container.removeEventListener('input', container._stationInputHandler, true);
+      delete container._stationInputHandler;
+    }
   }
   
   // Reset state variables

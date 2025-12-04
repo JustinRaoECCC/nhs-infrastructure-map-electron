@@ -797,17 +797,71 @@ class MongoPersistence extends IPersistence {
       if (sheetName.toLowerCase() === 'repairs') {
         collectionName = mongoClient.getRepairsCollectionName(company, locationName);
       } else {
-        // Assume it is an Asset Type sheet
-        collectionName = mongoClient.getStationCollectionName(company, locationName, sheetName);
+        // ═══════════════════════════════════════════════════════════════════
+        // FIX: Parse sheet name to extract asset type properly
+        // Sheet names come in as "AssetType Location" format from readLocationWorkbook
+        // But we need just the asset type part for the collection name
+        // ═══════════════════════════════════════════════════════════════════
+        
+        let assetType = sheetName;
+        
+        // Remove location suffix if present (e.g., "Cableway BC" -> "Cableway")
+        const locationLower = locationName.toLowerCase();
+        const sheetLower = sheetName.toLowerCase();
+        
+        if (sheetLower.endsWith(' ' + locationLower)) {
+          assetType = sheetName.substring(0, sheetName.length - locationName.length - 1).trim();
+        }
+        
+        collectionName = mongoClient.getStationCollectionName(company, locationName, assetType);
       }
 
       const collection = mongoClient.getCollection(collectionName);
       const rows = await collection.find({}).toArray();
 
-      return { success: true, rows };
+      // ═══════════════════════════════════════════════════════════════════
+      // FIX: Return schema metadata (sections/fields) for import compatibility
+      // Extract sections and fields from the first document's composite keys
+      // ═══════════════════════════════════════════════════════════════════
+      
+      const sections = [];
+      const fields = [];
+      
+      if (rows.length > 0) {
+        const sampleDoc = rows[0];
+        const SEP = ' – ';
+        const GI_FIELDS = ['station_id', 'asset_type', 'name', 'province', 'lat', 'lon', 'status', 'company', 'location_file'];
+        
+        // Build sections/fields from composite keys (excluding GI and metadata)
+        Object.keys(sampleDoc).forEach(key => {
+          // Skip internal fields
+          if (key.startsWith('_')) return;
+          // Skip core GI fields
+          if (GI_FIELDS.includes(key)) return;
+          
+          // Check if it's a composite key
+          if (key.includes(SEP)) {
+            const [section, field] = key.split(SEP, 2);
+            sections.push(section.trim());
+            fields.push(field.trim());
+          } else {
+            // Plain field - treat as "Extra Information" section
+            sections.push('');
+            fields.push(key);
+          }
+        });
+      }
+
+      return { 
+        success: true, 
+        rows,
+        sections,
+        fields
+      };
     } catch (error) {
+      console.error('[MongoPersistence] readSheetData failed:', error);
       // Collection might not exist yet, which is fine
-      return { success: true, rows: [] };
+      return { success: true, rows: [], sections: [], fields: [] };
     }
   }
 
@@ -1493,14 +1547,26 @@ class MongoPersistence extends IPersistence {
     }
   }
 
-async getWorkbookFieldCatalog(company, locationName) {
+  async getWorkbookFieldCatalog(company, locationName) {
     try {
       const db = mongoClient.getDatabase();
       const collections = await mongoClient.listCollections();
       const result = { repairs: [], sheets: {} };
       
-      // Helper to get clean keys from a doc
-      const getKeys = (doc) => Object.keys(doc || {}).filter(k => !k.startsWith('_') && k !== 'station_id');
+      // ═══════════════════════════════════════════════════════════════════
+      // FIX: Return full composite keys (with sections) for proper import mapping
+      // Helper to get ALL keys from a doc (including composite "Section – Field" keys)
+      // ═══════════════════════════════════════════════════════════════════
+      const getKeys = (doc) => {
+        if (!doc) return [];
+        return Object.keys(doc).filter(k => {
+          // Exclude internal metadata
+          if (k.startsWith('_')) return false;
+          // Exclude core GI fields that are always present
+          if (['station_id', 'asset_type', 'name', 'province', 'lat', 'lon', 'status', 'company', 'location_file'].includes(k)) return false;
+          return true;
+        });
+      };
 
       // MODE 1: GLOBAL SCAN (No arguments provided) - Used for Autocomplete
       if (!company && !locationName) {
@@ -1515,11 +1581,10 @@ async getWorkbookFieldCatalog(company, locationName) {
             const doc = await db.collection(collName).findOne({});
             if (doc) {
               // Use asset_type field if available, otherwise fallback to collection name parsing
-              // Collection format: Company_Location_AssetType_stationData
-              // We accept multiple sheets might map to same AssetType, we merge their fields.
               let assetType = doc.asset_type;
               if (!assetType) {
                 // Fallback parsing if field missing
+                // Collection format: Company_Location_AssetType_stationData
                 const parts = collName.replace('_stationData', '').split('_');
                 assetType = parts.slice(2).join(' '); 
               }
@@ -1540,11 +1605,11 @@ async getWorkbookFieldCatalog(company, locationName) {
         return result;
       }
 
-      // MODE 2: SPECIFIC LOCATION SCAN (Existing logic)
+      // MODE 2: SPECIFIC LOCATION SCAN
       const normalize = (str) => String(str || '').trim().replace(/[^a-zA-Z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
       const prefix = `${normalize(company)}_${normalize(locationName)}_`;
 
-      // 1. Get Repairs Fields
+      // 1. Get Repairs Fields (with composite keys)
       const repairsCollName = mongoClient.getRepairsCollectionName(company, locationName);
       if (collections.includes(repairsCollName)) {
         const sample = await db.collection(repairsCollName).findOne({});
@@ -1553,7 +1618,7 @@ async getWorkbookFieldCatalog(company, locationName) {
         }
       }
 
-      // 2. Get Station Sheets Fields
+      // 2. Get Station Sheets Fields (with composite keys)
       const stationColls = collections.filter(c => c.startsWith(prefix) && c.endsWith('_stationData'));
       
       for (const collName of stationColls) {
@@ -1574,7 +1639,7 @@ async getWorkbookFieldCatalog(company, locationName) {
       return { repairs: [], sheets: {} };
     }
   }
-  
+
   // ════════════════════════════════════════════════════════════════════════════
   // AUTHENTICATION SYSTEM (NEW)
   // ════════════════════════════════════════════════════════════════════════════
