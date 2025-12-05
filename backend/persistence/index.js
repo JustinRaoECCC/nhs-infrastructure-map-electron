@@ -1,6 +1,7 @@
 // backend/persistence/index.js
 // Main entry point for persistence layer
 
+require('dotenv').config();
 const PersistenceFactory = require('./PersistenceFactory');
 const path = require('path');
 

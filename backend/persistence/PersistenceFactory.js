@@ -3,6 +3,8 @@
 // Factory to create and manage persistence layer instances
 
 const mongoClient = require('../db/mongoClient');
+require('dotenv').config();
+const DEFAULT_MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/nhs-infrastructure';
 
 // Lazy-load persistence implementations to avoid loading Excel worker unnecessarily
 let ExcelPersistence = null;
@@ -321,6 +323,7 @@ class PersistenceFactory {
 
     const readSource = config.read?.source || 'excel';
     const writeTargets = config.write?.targets || ['excel'];
+    const connectionString = config.database?.connectionString || DEFAULT_MONGODB_URI;
 
     console.log(`[PersistenceFactory] Creating persistence layer: read=${readSource}, write=[${writeTargets.join(', ')}]`);
 
@@ -329,7 +332,7 @@ class PersistenceFactory {
     if (readSource === 'mongodb') {
       // Connect to MongoDB if needed
       if (!mongoClient.connected()) {
-        const connected = await mongoClient.connect(config.database.connectionString);
+        const connected = await mongoClient.connect(connectionString);
         if (!connected) {
           throw new Error('Failed to connect to MongoDB');
         }
@@ -347,7 +350,7 @@ class PersistenceFactory {
       if (target === 'mongodb') {
         // Connect to MongoDB if needed
         if (!mongoClient.connected()) {
-          const connected = await mongoClient.connect(config.database.connectionString);
+          const connected = await mongoClient.connect(connectionString);
           if (!connected) {
             console.warn('[PersistenceFactory] Failed to connect to MongoDB for write');
             continue;
@@ -407,6 +410,19 @@ class PersistenceFactory {
 
     const configContent = fs.readFileSync(fullPath, 'utf8');
     const config = JSON.parse(configContent);
+
+    const envMongoUri = process.env.MONGODB_URI;
+    if (envMongoUri) {
+      config.database = {
+        ...(config.database || {}),
+        connectionString: envMongoUri
+      };
+    } else if (!config.database?.connectionString) {
+      config.database = {
+        ...(config.database || { type: 'mongodb' }),
+        connectionString: DEFAULT_MONGODB_URI
+      };
+    }
 
     return await this.create(config);
   }

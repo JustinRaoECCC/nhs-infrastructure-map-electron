@@ -3,6 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
+require('dotenv').config();
 
 // BC - saved to easily copy paste into the application
 // const DEFAULT_PHOTOS_BASE = '\\Ecbcv6cwvfsp001.ncr.int.ec.gc.ca\msc$\401\WSCConstruction\Stations';
@@ -14,6 +15,7 @@ const path = require('path');
 const DEFAULT_PHOTOS_BASE = 'C:\Users\nitsu\OneDrive\Documents\Stations';
 
 const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tif', '.tiff'];
+const DEFAULT_MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/nhs-infrastructure';
 
 // Database configuration path
 const DB_CONFIG_PATH = path.join(__dirname, 'db-config.json');
@@ -29,7 +31,7 @@ function getDbConfig() {
       return {
         database: {
           type: 'mongodb',
-          connectionString: 'mongodb://localhost:27017/nhs-infrastructure'
+          connectionString: DEFAULT_MONGODB_URI
         },
         read: {
           source: 'excel'
@@ -64,14 +66,23 @@ function getDbConfig() {
     }
 
     console.log('[config] Loaded db-config.json successfully');
-    return config;
+    const connectionString = process.env.MONGODB_URI || config.database?.connectionString || DEFAULT_MONGODB_URI;
+
+    return {
+      ...config,
+      database: {
+        type: config.database?.type || 'mongodb',
+        ...config.database,
+        connectionString
+      }
+    };
   } catch (error) {
     console.error('[config] Error loading db-config.json:', error.message);
     // Return default Excel configuration on error
     return {
       database: {
         type: 'mongodb',
-        connectionString: 'mongodb://localhost:27017/nhs-infrastructure'
+        connectionString: DEFAULT_MONGODB_URI
       },
       read: {
         source: 'excel'

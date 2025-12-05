@@ -1,12 +1,12 @@
 {
   "database": {
     "type": "mongodb",
-    "connectionString": "mongodb+srv://justinrao:1234@cluster0.krikxm1.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+    "connectionString": "mongodb+srv://username:password@host/dbname?retryWrites=true&w=majority&appName=Cluster0"
   },
   "read": {
-    "source": "mongodb"
+    "source": "excel"
   },
   "write": {
-    "targets": ["mongodb"]
+    "targets": ["excel"]
   }
 }
