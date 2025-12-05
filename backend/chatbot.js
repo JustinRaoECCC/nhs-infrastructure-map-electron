@@ -1,6 +1,7 @@
 const { ipcMain } = require('electron');
 const path = require('path');
 require('dotenv').config();
+const { getFeatureFlags } = require('./feature_flags');
 
 // Use your existing Excel infrastructure
 const lookups = require('./lookups_repo');
@@ -11,7 +12,7 @@ class ChatbotService {
         this.apiKey = process.env.OPENAI_API_KEY;
         this.model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
         this.temperature = parseFloat(process.env.OPENAI_TEMPERATURE) || 0.7;
-        this.disabled = String(process.env.CHATBOT_DISABLED).toLowerCase() === 'true';
+        this.disabled = getFeatureFlags().chatbotDisabled;
     }
 
     async initialize() {

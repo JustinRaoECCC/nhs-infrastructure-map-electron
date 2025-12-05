@@ -1,11 +1,11 @@
 // backend/auth.js
 const crypto = require('crypto');
 const { getPersistence } = require('./persistence');
+const { getFeatureFlags } = require('./feature_flags');
 
-// Toggle to enable/disable authentication logic.
-// false means NO LOGIN
-// true means YES LOGIN
-const AUTH_ENABLED = false;
+// Toggle to enable/disable authentication logic via feature-flags.json.
+// false means NO LOGIN; true means YES LOGIN
+const AUTH_ENABLED = getFeatureFlags().authEnabled;
 
 let currentUser = null;
 let sessionToken = null;

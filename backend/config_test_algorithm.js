@@ -15,7 +15,8 @@
  *
  * Set to false in production to hide TEST functionality from end users.
  */
-const TEST_TAB_ENABLED = true;
+const { getFeatureFlags } = require('./feature_flags');
+const TEST_TAB_ENABLED = getFeatureFlags().testTabEnabled;
 
 module.exports = {
   TEST_TAB_ENABLED
