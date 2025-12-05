@@ -57,9 +57,23 @@
         const total = rows.length;
         const bodyH = Math.max(0, total) * rowHeight;
         const needed = headH + bodyH;                     // exact content height
-        const target = Math.max(minViewport, Math.min(maxViewport, needed));
-        // If data is short, we shrink; if long, we cap at maxViewport for scrolling.
+        const pad = 24;
+        const footer = scroller.closest('.panel-form')?.querySelector('.wizard-footer')
+                      || scroller.closest('.wizard-container')?.querySelector('.wizard-footer');
+        const footerH = footer ? footer.offsetHeight || 0 : 0;
+        const rect = scroller.getBoundingClientRect();
+        const host = scroller.closest('.panel-form') || scroller.closest('#addInfraPage');
+        const hostRect = host ? host.getBoundingClientRect() : null;
+        const availViewport = (window.innerHeight || document.documentElement.clientHeight || 0) - rect.top - footerH - pad;
+        const availHost = hostRect ? (hostRect.height - (rect.top - hostRect.top) - footerH - pad) : null;
+        const caps = [maxViewport, availViewport, availHost]
+          .filter(v => Number.isFinite(v) && v > 0);
+        const cap = caps.length ? Math.max(...caps) : maxViewport;
+        const target = Math.max(minViewport, Math.min(needed, cap));
+        // Allow the panel to extend downward while keeping a sane upper bound.
+        scroller.style.minHeight = '0px';
         scroller.style.height = target + 'px';
+        scroller.style.maxHeight = cap + 'px';
         scroller.style.overflowY = 'auto';
         scroller.style.position = scroller.style.position || 'relative';
       }
