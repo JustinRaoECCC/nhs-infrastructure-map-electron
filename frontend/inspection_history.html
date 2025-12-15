@@ -83,25 +83,34 @@
         <div class="ih-repairs-addGrid">
           <div class="form-row">
             <label for="ihRepName">Repair Name *</label>
-            <input id="ihRepName" type="text" placeholder="Replace anchor bolts, regrout pedestal, etc." />
+            <input id="ihRepName" type="text" />
           </div>
           <div class="form-row">
             <label for="ihRepSeverity">Severity</label>
-            <input id="ihRepSeverity" type="text" placeholder="Low / Medium / High" />
+            <input id="ihRepSeverity" type="text" placeholder="1-5" />
           </div>
           <div class="form-row">
             <label for="ihRepPriority">Priority</label>
-            <input id="ihRepPriority" type="text" placeholder="P1 / P2 / P3 or text" />
+            <input id="ihRepPriority" type="text" placeholder="1-5" />
           </div>
           <div class="form-row">
             <label for="ihRepCost">Cost</label>
-            <input id="ihRepCost" type="text" placeholder="e.g. 15000" />
+            <input id="ihRepCost" type="text" />
+          </div>
+          <div class="form-row">
+            <label for="ihRepType">Type / Scope Type</label>
+            <input id="ihRepType" type="text" />
+          </div>
+          <div class="form-row">
+            <label for="ihRepDays">Days</label>
+            <input id="ihRepDays" type="text" />
           </div>
           <div class="form-row">
             <label for="ihRepCategory">Category</label>
             <select id="ihRepCategory">
               <option value="Capital">Capital</option>
               <option value="O&M">O&amp;M</option>
+              <option value="Decommission">Decommission</option>
             </select>
           </div>
           <div class="form-row form-row--button">
@@ -118,13 +127,15 @@
                 <th>Severity</th>
                 <th>Priority</th>
                 <th>Cost</th>
+                <th>Type / Scope Type</th>
+                <th>Days</th>
                 <th>Category</th>
                 <th style="width:54px;">&nbsp;</th>
               </tr>
             </thead>
             <tbody id="ihRepairsTbody">
               <tr class="ih-repairs-empty">
-                <td colspan="6" style="text-align:center;color:#6b7280;">No repairs added</td>
+                <td colspan="8" style="text-align:center;color:#6b7280;">No repairs added</td>
               </tr>
             </tbody>
           </table>

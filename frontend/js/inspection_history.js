@@ -392,6 +392,8 @@
     const ihRepSeverity = document.querySelector('#ihRepSeverity');
     const ihRepPriority = document.querySelector('#ihRepPriority');
     const ihRepCost     = document.querySelector('#ihRepCost');
+    const ihRepType     = document.querySelector('#ihRepType');
+    const ihRepDays     = document.querySelector('#ihRepDays');
     const ihRepCategory = document.querySelector('#ihRepCategory');
     const ihAddRepairBtn= document.querySelector('#ihAddRepairBtn');
     const ihRepairsTbody= document.querySelector('#ihRepairsTbody');
@@ -399,7 +401,7 @@
 
     let selectedPhotos = [];
     let selectedReport = null;
-    let pendingRepairs = []; // {name,severity,priority,cost,category}
+    let pendingRepairs = []; // {name,severity,priority,cost,category,type,days}
 
     // ---- helpers ----
     function primeYearField() {
@@ -452,14 +454,18 @@
       const severity = String(ihRepSeverity?.value || '').trim();
       const priority = String(ihRepPriority?.value || '').trim();
       const rawCost = String(ihRepCost?.value || '').trim();
+      const rawDays = String(ihRepDays?.value || '').trim();
       const category = (ihRepCategory?.value || 'Capital');
+      const type = String(ihRepType?.value || '').trim() || 'Repair';
       let cost = rawCost ? Number(rawCost.replace(/[, ]/g, '')) : '';
       if (!Number.isFinite(cost)) cost = rawCost;
-      return { name, severity, priority, cost, category };
+      let days = rawDays ? Number(rawDays.replace(/[, ]/g, '')) : '';
+      if (!Number.isFinite(days)) days = rawDays;
+      return { name, severity, priority, cost, category, type, days };
     }
     function validateRepair(it) {
       if (!it.name) return 'Repair Name is required.';
-      if (!/^Capital$|^O&?M$/i.test(it.category)) return 'Select a valid Category.';
+      if (!/^Capital$|^O&?M$|^Decomm/i.test(it.category)) return 'Select a valid Category.';
       return null;
     }
     function clearRepairForm() {
@@ -467,6 +473,8 @@
       if (ihRepSeverity) ihRepSeverity.value = '';
       if (ihRepPriority) ihRepPriority.value = '';
       if (ihRepCost) ihRepCost.value = '';
+      if (ihRepType) ihRepType.value = '';
+      if (ihRepDays) ihRepDays.value = '';
       if (ihRepCategory) ihRepCategory.value = 'Capital';
     }
     function renderPendingRepairs() {
@@ -476,7 +484,7 @@
         const tr = document.createElement('tr');
         tr.className = 'ih-repairs-empty';
         const td = document.createElement('td');
-        td.colSpan = 6; td.style.textAlign = 'center'; td.style.color = '#6b7280';
+        td.colSpan = 8; td.style.textAlign = 'center'; td.style.color = '#6b7280';
         td.textContent = 'No repairs added';
         tr.appendChild(td);
         ihRepairsTbody.appendChild(tr);
@@ -484,22 +492,24 @@
       }
       pendingRepairs.forEach((it, idx) => {
         const tr = document.createElement('tr');
-        const c1 = document.createElement('td'); c1.textContent = it.name || '—';
-        const c2 = document.createElement('td'); c2.textContent = it.severity || '—';
-        const c3 = document.createElement('td'); c3.textContent = it.priority || '—';
+        const c1 = document.createElement('td'); c1.textContent = it.name || '??"';
+        const c2 = document.createElement('td'); c2.textContent = it.severity || '??"';
+        const c3 = document.createElement('td'); c3.textContent = it.priority || '??"';
         const c4 = document.createElement('td'); c4.textContent = fmtCostCell(it.cost);
-        const c5 = document.createElement('td'); c5.textContent = it.category || '—';
-        const c6 = document.createElement('td');
+        const c5 = document.createElement('td'); c5.textContent = it.type || '??"';
+        const c6 = document.createElement('td'); c6.textContent = (it.days === 0 ? 0 : it.days || '??"');
+        const c7 = document.createElement('td'); c7.textContent = it.category || '??"';
+        const c8 = document.createElement('td');
         const del = document.createElement('button');
         del.className = 'btn btn-ghost btn-sm btn-danger';
-        del.textContent = '✕';
+        del.textContent = '?o';
         del.title = 'Remove';
         del.addEventListener('click', () => {
           pendingRepairs.splice(idx, 1);
           renderPendingRepairs();
         });
-        c6.appendChild(del);
-        tr.appendChild(c1); tr.appendChild(c2); tr.appendChild(c3); tr.appendChild(c4); tr.appendChild(c5); tr.appendChild(c6);
+        c8.appendChild(del);
+        tr.appendChild(c1); tr.appendChild(c2); tr.appendChild(c3); tr.appendChild(c4); tr.appendChild(c5); tr.appendChild(c6); tr.appendChild(c7); tr.appendChild(c8);
         ihRepairsTbody.appendChild(tr);
       });
     }

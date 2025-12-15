@@ -1,6 +1,6 @@
 // frontend/js/repairs.js
 (() => {
-  const CATS = ['Capital', 'O&M'];
+  const CATS = ['Capital', 'O&M', 'Decommission'];
   const AT_REQUIRED_MSG = 'Asset Type is required.';
 
   function fmtCost(v) {

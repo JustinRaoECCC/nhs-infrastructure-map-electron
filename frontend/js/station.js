@@ -176,7 +176,14 @@ function setupStationDetailUI(container, stn) {
   setVal('giLongitude', stn.lon);
   
   const statusSel = container.querySelector('#giStatus');
-  if (statusSel) statusSel.value = stn.status || 'Unknown';
+  if (statusSel) {
+    const rawStatus = String(stn.status ?? '').trim();
+    const match = Array.from(statusSel.options).find(opt =>
+      opt.value.trim().toLowerCase() === rawStatus.toLowerCase() ||
+      opt.textContent.trim().toLowerCase() === rawStatus.toLowerCase()
+    );
+    statusSel.value = match ? match.value : 'Unknown';
+  }
 
   // Status + Type pills
   setHeaderPills(container, stn);

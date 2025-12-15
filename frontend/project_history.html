@@ -82,25 +82,34 @@
         <div class="ph-repairs-addGrid">
           <div class="form-row">
             <label for="phRepName">Repair Name *</label>
-            <input id="phRepName" type="text" placeholder="Replace anchor bolts, regrout pedestal, etc." />
+            <input id="phRepName" type="text" />
           </div>
           <div class="form-row">
             <label for="phRepSeverity">Severity</label>
-            <input id="phRepSeverity" type="text" placeholder="Low / Medium / High" />
+            <input id="phRepSeverity" type="text" placeholder="1-5" />
           </div>
           <div class="form-row">
             <label for="phRepPriority">Priority</label>
-            <input id="phRepPriority" type="text" placeholder="P1 / P2 / P3 or text" />
+            <input id="phRepPriority" type="text" placeholder="1-5" />
           </div>
           <div class="form-row">
             <label for="phRepCost">Cost</label>
-            <input id="phRepCost" type="text" placeholder="e.g. 15000" />
+            <input id="phRepCost" type="text" />
+          </div>
+          <div class="form-row">
+            <label for="phRepType">Type / Scope Type</label>
+            <input id="phRepType" type="text" />
+          </div>
+          <div class="form-row">
+            <label for="phRepDays">Days</label>
+            <input id="phRepDays" type="text" />
           </div>
           <div class="form-row">
             <label for="phRepCategory">Category</label>
             <select id="phRepCategory">
               <option value="Capital">Capital</option>
               <option value="O&M">O&amp;M</option>
+              <option value="Decommission">Decommission</option>
             </select>
           </div>
           <div class="form-row form-row--button">
@@ -117,13 +126,15 @@
                 <th>Severity</th>
                 <th>Priority</th>
                 <th>Cost</th>
+                <th>Type / Scope Type</th>
+                <th>Days</th>
                 <th>Category</th>
                 <th style="width:54px;">&nbsp;</th>
               </tr>
             </thead>
             <tbody id="phRepairsTbody">
               <tr class="ph-repairs-empty">
-                <td colspan="6" style="text-align:center;color:#6b7280;">No repairs added</td>
+                <td colspan="8" style="text-align:center;color:#6b7280;">No repairs added</td>
               </tr>
             </tbody>
           </table>

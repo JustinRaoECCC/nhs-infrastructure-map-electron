@@ -21,14 +21,14 @@
 <div id="repAddModal" class="modal" style="display:none;">
   <div class="modal-content" style="max-width:680px;width:92%;">
     <h3 style="margin-top:0;">Add Item</h3>
-    <div class="form-grid ih-repairs-addGrid" style="display:grid;grid-template-columns:1.4fr 0.9fr 0.9fr 0.9fr 0.8fr 0.8fr 0.8fr auto;gap:10px;">
+    <div class="form-grid ih-repairs-addGrid">
       <div class="form-row" style="grid-column: 1 / 9;">
         <label for="repName">Name *</label>
-        <input id="repName" type="text" placeholder="Replace anchor bolts, regrout pedestal, etc." />
+        <input id="repName" type="text" />
       </div>
       <div class="form-row">
         <label for="repSeverity">Severity</label>
-        <input id="repSeverity" type="text" placeholder="Low / Medium / High" />
+        <input id="repSeverity" type="text" placeholder="1-5" />
       </div>
       <div class="form-row">
         <label for="repPriority">Priority</label>
@@ -36,22 +36,23 @@
       </div>
       <div class="form-row">
         <label for="repCost">Cost</label>
-        <input id="repCost" type="text" placeholder="e.g. 15000" />
+        <input id="repCost" type="text" />
       </div>
       <div class="form-row">
         <label for="repDays">Days</label>
-        <input id="repDays" type="text" placeholder="e.g. 5" />
+        <input id="repDays" type="text" />
       </div>
       <div class="form-row">
         <label for="repCategory">Category</label>
         <select id="repCategory">
           <option value="Capital">Capital</option>
           <option value="O&M">O&M</option>
+          <option value="Decommission">Decommission</option>
         </select>
       </div>
       <div class="form-row">
         <label for="repType">Type / Scope Type</label>
-        <input id="repType" type="text" placeholder="e.g. Repair, Monitoring, Coating, Anchoring…" />
+        <input id="repType" type="text" />
       </div>
     </div>
     <div id="repFormError" class="ih-error" style="display:none;margin-top:6px;"></div>

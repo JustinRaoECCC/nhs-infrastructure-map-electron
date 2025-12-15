@@ -1383,7 +1383,7 @@
           </div>
           <div class="form-row">
             <label>Severity</label>
-            <input id="grSeverity" type="text" placeholder="Low/Medium/High" />
+            <input id="grSeverity" type="text" placeholder="1-5" />
           </div>
           <div class="form-row">
             <label>Priority</label>
@@ -1494,16 +1494,18 @@
       const searchTerm = stationInput.value.toLowerCase().trim();
       stationDropdown.innerHTML = '';
       
-      if (!searchTerm || availableStations.length === 0) {
+      if (availableStations.length === 0) {
         stationDropdown.style.display = 'none';
         return;
       }
       
-      const filtered = availableStations.filter(st => {
-        const stationId = String(st.station_id).toLowerCase();
-        const stationName = String(st.name || '').toLowerCase();
-        return stationId.includes(searchTerm) || stationName.includes(searchTerm);
-      });
+      const filtered = searchTerm
+        ? availableStations.filter(st => {
+            const stationId = String(st.station_id).toLowerCase();
+            const stationName = String(st.name || '').toLowerCase();
+            return stationId.includes(searchTerm) || stationName.includes(searchTerm);
+          })
+        : availableStations;
       
       if (filtered.length === 0) {
         stationDropdown.innerHTML = '<div style="padding:8px;color:#666;">No matching stations</div>';

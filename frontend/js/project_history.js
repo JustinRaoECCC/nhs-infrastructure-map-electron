@@ -476,13 +476,15 @@
     const phRepSeverity = document.querySelector('#phRepSeverity');
     const phRepPriority = document.querySelector('#phRepPriority');
     const phRepCost     = document.querySelector('#phRepCost');
+    const phRepType     = document.querySelector('#phRepType');
+    const phRepDays     = document.querySelector('#phRepDays');
     const phRepCategory = document.querySelector('#phRepCategory');
     const phAddRepairBtn= document.querySelector('#phAddRepairBtn');
     const phRepairsTbody= document.querySelector('#phRepairsTbody');
 
     let selectedPhotos = [];
     let selectedReport = null;
-    let pendingRepairs = []; // {name,severity,priority,cost,category}
+    let pendingRepairs = []; // {name,severity,priority,cost,category,type,days}
 
     // ---- helpers ----
     function primeYearField() {
@@ -534,14 +536,18 @@
       const severity = String(phRepSeverity?.value || '').trim();
       const priority = String(phRepPriority?.value || '').trim();
       const rawCost = String(phRepCost?.value || '').trim();
+      const rawDays = String(phRepDays?.value || '').trim();
       const category = (phRepCategory?.value || 'Capital');
+      const type = String(phRepType?.value || '').trim() || 'Repair';
       let cost = rawCost ? Number(rawCost.replace(/[, ]/g, '')) : '';
       if (!Number.isFinite(cost)) cost = rawCost;
-      return { name, severity, priority, cost, category };
+      let days = rawDays ? Number(rawDays.replace(/[, ]/g, '')) : '';
+      if (!Number.isFinite(days)) days = rawDays;
+      return { name, severity, priority, cost, category, type, days };
     }
     function validateRepair(it) {
       if (!it.name) return 'Repair Name is required.';
-      if (!/^Capital$|^O&?M$/i.test(it.category)) return 'Select a valid Category.';
+      if (!/^Capital$|^O&?M$|^Decomm/i.test(it.category)) return 'Select a valid Category.';
       return null;
     }
     function clearRepairForm() {
@@ -549,6 +555,8 @@
       if (phRepSeverity) phRepSeverity.value = '';
       if (phRepPriority) phRepPriority.value = '';
       if (phRepCost) phRepCost.value = '';
+      if (phRepType) phRepType.value = '';
+      if (phRepDays) phRepDays.value = '';
       if (phRepCategory) phRepCategory.value = 'Capital';
     }
     function renderPendingRepairs() {
@@ -558,7 +566,7 @@
         const tr = document.createElement('tr');
         tr.className = 'ph-repairs-empty';
         const td = document.createElement('td');
-        td.colSpan = 6; td.style.textAlign = 'center'; td.style.color = '#6b7280';
+        td.colSpan = 8; td.style.textAlign = 'center'; td.style.color = '#6b7280';
         td.textContent = 'No repairs added';
         tr.appendChild(td);
         phRepairsTbody.appendChild(tr);
@@ -566,22 +574,24 @@
       }
       pendingRepairs.forEach((it, idx) => {
         const tr = document.createElement('tr');
-        const c1 = document.createElement('td'); c1.textContent = it.name || '—';
-        const c2 = document.createElement('td'); c2.textContent = it.severity || '—';
-        const c3 = document.createElement('td'); c3.textContent = it.priority || '—';
+        const c1 = document.createElement('td'); c1.textContent = it.name || '??"';
+        const c2 = document.createElement('td'); c2.textContent = it.severity || '??"';
+        const c3 = document.createElement('td'); c3.textContent = it.priority || '??"';
         const c4 = document.createElement('td'); c4.textContent = fmtCostCell(it.cost);
-        const c5 = document.createElement('td'); c5.textContent = it.category || '—';
-        const c6 = document.createElement('td');
+        const c5 = document.createElement('td'); c5.textContent = it.type || '??"';
+        const c6 = document.createElement('td'); c6.textContent = (it.days === 0 ? 0 : it.days || '??"');
+        const c7 = document.createElement('td'); c7.textContent = it.category || '??"';
+        const c8 = document.createElement('td');
         const del = document.createElement('button');
         del.className = 'btn btn-ghost btn-sm btn-danger';
-        del.textContent = '✕';
+        del.textContent = '?o';
         del.title = 'Remove';
         del.addEventListener('click', () => {
           pendingRepairs.splice(idx, 1);
           renderPendingRepairs();
         });
-        c6.appendChild(del);
-        tr.appendChild(c1); tr.appendChild(c2); tr.appendChild(c3); tr.appendChild(c4); tr.appendChild(c5); tr.appendChild(c6);
+        c8.appendChild(del);
+        tr.appendChild(c1); tr.appendChild(c2); tr.appendChild(c3); tr.appendChild(c4); tr.appendChild(c5); tr.appendChild(c6); tr.appendChild(c7); tr.appendChild(c8);
         phRepairsTbody.appendChild(tr);
       });
     }

@@ -2284,8 +2284,8 @@ html.modal-open, body.modal-open { overflow: hidden; }
 /* Repairs add-row grid */
 .ih-repairs-addGrid{
   display: grid;
-  /* Updated to include the new "Type" select before the button column */
-  grid-template-columns: 1.4fr 0.9fr 0.9fr 0.9fr 0.8fr 0.8fr auto;
+  /* Updated to include Type and Days fields */
+  grid-template-columns: 1.4fr 0.8fr 0.8fr 0.9fr 0.8fr 0.9fr 0.8fr auto;
   gap: 10px;
   align-items: end;
   margin-bottom: 10px;
@@ -2485,7 +2485,7 @@ html.modal-open, body.modal-open { overflow: hidden; }
 /* Repairs add-row grid */
 .ph-repairs-addGrid{
   display: grid;
-  grid-template-columns: 1.4fr 0.9fr 0.9fr 0.9fr 0.8fr 0.8fr auto;
+  grid-template-columns: 1.4fr 0.8fr 0.8fr 0.9fr 0.8fr 0.9fr 0.8fr auto;
   gap: 10px;
   align-items: end;
   margin-bottom: 10px;
