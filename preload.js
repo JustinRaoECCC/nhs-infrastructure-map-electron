@@ -253,6 +253,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('deleteDocumentFolder', siteName, stationId, folderPath),
 
   chatbotQuery: (message) => ipcRenderer.invoke('chatbot:query', message),
+  getChatbotStatus: () => ipcRenderer.invoke('chatbot:status'),
   getAvailableData: () => ipcRenderer.invoke('chatbot:get-available-data'),
 });
 

@@ -742,8 +742,39 @@ class MongoPersistence extends IPersistence {
       for (const collName of stationCollections) {
         const collection = db.collection(collName);
         const stations = await collection.find({}).toArray();
-        // The documents already contain company, location_file, asset_type, etc.
-        allStations.push(...stations);
+        
+        // ══════════════════════════════════════════════════════════════════════
+        // FIX: Flatten Composite Keys for Algorithm Compatibility
+        // The Optimization Algorithm expects plain keys (e.g. "City of Travel"),
+        // but the DB stores "General Information – City of Travel".
+        // We also polyfill "Access Type" from the core "asset_type" field.
+        // ══════════════════════════════════════════════════════════════════════
+        const flattened = stations.map(st => {
+          const flat = { ...st };
+          
+          Object.keys(st).forEach(key => {
+            if (key.includes(' – ')) {
+              const parts = key.split(' – ');
+              // parts[0] is Section, parts[1] is Field Name
+              if (parts.length === 2) {
+                const fieldName = parts[1].trim();
+                // Only set if not already present (prefer explicit core fields)
+                if (flat[fieldName] === undefined) {
+                  flat[fieldName] = st[key];
+                }
+              }
+            }
+          });
+
+          // Ensure Algorithm-critical fields exist
+          if (!flat['Access Type']) flat['Access Type'] = st.asset_type;
+          if (!flat['Category']) flat['Category'] = st.asset_type;
+          if (!flat['Station ID']) flat['Station ID'] = st.station_id;
+          
+          return flat;
+        });
+
+        allStations.push(...flattened);
       }
 
       console.log(`[MongoPersistence] Read ${allStations.length} total stations from MongoDB`);
@@ -989,114 +1020,29 @@ class MongoPersistence extends IPersistence {
 
   async updateStationInLocationFile(company, locationName, stationId, updatedRowData, schema) {
     try {
-      // We need to find WHICH collection this station is in.
-      // It matches {Company}_{Location}_*_{stationData}
-      
       const db = mongoClient.getDatabase();
       const collections = await mongoClient.listCollections();
 
       const normalize = (str) => String(str || '').trim().replace(/[^a-zA-Z0-9]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
       const prefix = `${normalize(company)}_${normalize(locationName)}_`;
 
+      // 1. Find the EXISTING station
       const candidates = collections.filter(name => 
         name.startsWith(prefix) && name.endsWith('_stationData')
       );
 
       let found = false;
-      
+      let existingDoc = null;
+      let sourceCollectionName = null;
+      let sourceCollection = null;
+
       for (const collName of candidates) {
         const collection = db.collection(collName);
         const existing = await collection.findOne({ station_id: stationId });
-
         if (existing) {
-          // Prepare update
-          const { _id, _createdAt, ...rest } = updatedRowData;
-          const doc = existing;
-          const updatedData = rest;
-
-          if (schema && schema.sections && schema.fields && schema.sections.length > 0) {
-            
-            // ═══════════════════════════════════════════════════════════════════
-            // FIX: Proper deletion sync - Clear and rebuild non-GI fields
-            // ═══════════════════════════════════════════════════════════════════
-            
-            const GI_FIELDS = [
-              'station_id', 'asset_type', 'name', 'province', 'lat', 'lon', 'status',
-              'company', 'location_file', '_updatedAt', '_createdAt', '_source'
-            ];
-            
-            // 1. Preserve GI and internal fields from current document
-            const preserved = {};
-            Object.keys(doc).forEach(key => {
-              if (GI_FIELDS.includes(key) || key.startsWith('_')) {
-                preserved[key] = doc[key];
-              }
-            });
-            
-            // 2. Check for values in updatedData (for GI fields that might have changed)
-            ['station_id', 'asset_type', 'name', 'province', 'lat', 'lon', 'status'].forEach(field => {
-              if (updatedData[field] !== undefined) {
-                preserved[field] = updatedData[field];
-              }
-              // Also check composite GI keys
-              const giComposite = `General Information – ${field.charAt(0).toUpperCase() + field.slice(1)}`;
-              if (updatedData[giComposite] !== undefined) {
-                preserved[field] = updatedData[giComposite];
-              }
-            });
-            
-            // 3. Build new document with ONLY schema fields (deletions respected)
-            const newDoc = { ...preserved };
-            
-            schema.fields.forEach((field, idx) => {
-              const section = schema.sections[idx];
-              
-              // Skip GI fields - already handled
-              if (section && section.toLowerCase() === 'general information') return;
-              
-              const composite = `${section} – ${field}`;
-              
-              // Try to find value in updatedData first, then fall back to existing doc
-              let value = '';
-              
-              if (updatedData[composite] !== undefined) {
-                value = updatedData[composite];
-              } else if (updatedData[field] !== undefined) {
-                value = updatedData[field];
-              } else if (doc[composite] !== undefined) {
-                value = doc[composite];
-              } else if (doc[field] !== undefined) {
-                value = doc[field];
-              }
-              
-              newDoc[composite] = value;
-            });
-            
-            // 4. Use replaceOne to completely replace document (implicit deletion)
-            await collection.replaceOne(
-              { _id: doc._id },
-              newDoc
-            );
-
-          } else {
-            // No schema: fallback to old append-at-end behavior
-            // Ensure core fields are updated too if they are in updatedRowData
-            const updatePayload = {
-              ...rest,
-              _updatedAt: new Date()
-            };
-            
-            // Sync core fields if present in the update
-            if (rest['Site Name']) updatePayload.name = rest['Site Name'];
-            if (rest['Latitude']) updatePayload.lat = rest['Latitude'];
-            if (rest['Longitude']) updatePayload.lon = rest['Longitude'];
-            if (rest['Status']) updatePayload.status = rest['Status'];
-
-            await collection.updateOne(
-              { station_id: stationId },
-              { $set: updatePayload }
-            );
-          }
+          existingDoc = existing;
+          sourceCollectionName = collName;
+          sourceCollection = collection;
           found = true;
           break;
         }
@@ -1106,7 +1052,124 @@ class MongoPersistence extends IPersistence {
         return { success: false, message: 'Station not found in any asset collection for this location' };
       }
 
-      return { success: true };
+      // 2. Prepare the Updated Data (Merge existing with updates)
+      const { _id, _createdAt, ...rest } = updatedRowData;
+      const updatedData = { ...rest }; // Copy so we don't mutate input
+
+      // ═══════════════════════════════════════════════════════════════════
+      // CORE FIELD MAPPING (Composite -> Core)
+      // ═══════════════════════════════════════════════════════════════════
+      Object.keys(updatedData).forEach(key => {
+        if (key.startsWith('General Information – ')) {
+          const field = key.replace('General Information – ', '');
+          if (field === 'Station ID') updatedData.station_id = updatedData[key];
+          else if (field === 'Category' || field === 'Asset Type') updatedData.asset_type = updatedData[key];
+          else if (field === 'Station Name' || field === 'Site Name') updatedData.name = updatedData[key];
+          else if (field === 'Province' || field === 'Location') updatedData.province = updatedData[key];
+          else if (field === 'Latitude') updatedData.lat = updatedData[key];
+          else if (field === 'Longitude') updatedData.lon = updatedData[key];
+          else if (field === 'Status') updatedData.status = updatedData[key];
+        }
+      });
+
+      // 3. Determine NEW Coordinates (Location / Asset Type)
+      // Fallback to existing doc if not in update
+      const newProv = String(updatedData.province || existingDoc.province || locationName).trim();
+      const newAssetType = String(updatedData.asset_type || existingDoc.asset_type).trim();
+      
+      // Calculate target collection name based on NEW values
+      // NOTE: We force 'company' to remain the same to satisfy the requirement
+      const targetCollectionName = mongoClient.getStationCollectionName(company, newProv, newAssetType);
+
+      // 4. Schema Processing (Prepare final document)
+      let finalDoc = {};
+      
+      if (schema && schema.sections && schema.fields && schema.sections.length > 0) {
+        // ... (Existing Schema Deletion Logic) ...
+        const GI_FIELDS = [
+          'station_id', 'asset_type', 'name', 'province', 'lat', 'lon', 'status',
+          'company', 'location_file', '_updatedAt', '_createdAt', '_source'
+        ];
+        
+        // Preserve GI from Existing or Update
+        Object.keys(existingDoc).forEach(key => {
+          if (GI_FIELDS.includes(key) || key.startsWith('_')) finalDoc[key] = existingDoc[key];
+        });
+        
+        // Overwrite with Updates
+        ['station_id', 'asset_type', 'name', 'province', 'lat', 'lon', 'status'].forEach(field => {
+          if (updatedData[field] !== undefined) finalDoc[field] = updatedData[field];
+        });
+
+        // Apply Schema Fields
+        schema.fields.forEach((field, idx) => {
+          const section = schema.sections[idx];
+          if (section && section.toLowerCase() === 'general information') return;
+          
+          const composite = `${section} – ${field}`;
+          let value = '';
+          if (updatedData[composite] !== undefined) value = updatedData[composite];
+          else if (updatedData[field] !== undefined) value = updatedData[field];
+          else if (existingDoc[composite] !== undefined) value = existingDoc[composite];
+          else if (existingDoc[field] !== undefined) value = existingDoc[field];
+          
+          finalDoc[composite] = value;
+        });
+      } else {
+        // No Schema: Simple Merge
+        finalDoc = { ...existingDoc, ...updatedData };
+      }
+
+      // Ensure Core Metadata is set for the move
+      finalDoc.company = company; // Enforce company lock
+      finalDoc.location_file = newProv; // Sync location_file property
+      finalDoc.asset_type = newAssetType;
+      finalDoc._updatedAt = new Date();
+
+      // 5. CHECK FOR MOVE (Different Collection?)
+      if (targetCollectionName !== sourceCollectionName) {
+        console.log(`[MongoPersistence] Moving station ${stationId}: ${sourceCollectionName} -> ${targetCollectionName}`);
+
+        // A. Insert into NEW collection
+        const targetCollection = db.collection(targetCollectionName);
+        
+        // FIX: Extract _createdAt AND _source so they aren't in $set (avoiding conflict with $setOnInsert)
+        // We also strip _id so MongoDB generates a new one for the new collection
+        const { _id: oldId, _createdAt, _source, ...docToInsert } = finalDoc; 
+       
+        await targetCollection.updateOne(
+          { station_id: docToInsert.station_id },
+          { 
+            $set: docToInsert,
+            // Use the original creation date/source if available, otherwise defaults
+            $setOnInsert: { 
+              _createdAt: _createdAt || new Date(), 
+              _source: _source || 'manual' 
+            }
+          },
+          { upsert: true }
+        );
+
+        // B. Delete from OLD collection
+        await sourceCollection.deleteOne({ _id: existingDoc._id });
+
+        // C. Update Lookups (Create filters if they don't exist)
+        await this.upsertLocation(newProv, company);
+        await this.upsertAssetType(newAssetType, company, newProv);
+
+        return { success: true, moved: true, newLocation: newProv, newAssetType: newAssetType };
+
+      } else {
+        // 6. IN-PLACE UPDATE (Same Collection)
+        // Use replaceOne to handle field deletions if using schema
+        if (schema) {
+          await sourceCollection.replaceOne({ _id: existingDoc._id }, finalDoc);
+        } else {
+          await sourceCollection.updateOne({ _id: existingDoc._id }, { $set: finalDoc });
+        }
+        return { success: true, moved: false };
+      }
+
     } catch (error) {
       console.error('[MongoPersistence] updateStationInLocationFile failed:', error.message);
       return { success: false, message: error.message };

@@ -2111,7 +2111,10 @@
     const getMissingKeys = (r) =>
       FIELD_DEFS.filter(f => !String(r[f.key] ?? '').trim()).map(f => f.key);
 
+    let skipAll = false;
+
     for (let i = 0; i < repairs.length; i++) {
+      if (skipAll) break;
       const repair = repairs[i];
       const missing = getMissingKeys(repair);
       if (missing.length === 0) continue;
@@ -2204,6 +2207,7 @@
           </div>
           <div class="modal-actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
             <button id="mfSave" class="btn btn-primary">Save & Continue</button>
+            <button id="mfSkipAll" class="btn btn-ghost">Skip Remaining</button>
             <button id="mfSkip" class="btn btn-ghost">Skip This Repair</button>
           </div>
         </div>
@@ -2245,6 +2249,12 @@
         };
 
         $('#mfSkip').onclick = () => {
+          modal.style.display = 'none';
+          resolve();
+        };
+
+        $('#mfSkipAll').onclick = () => {
+          skipAll = true;
           modal.style.display = 'none';
           resolve();
         };

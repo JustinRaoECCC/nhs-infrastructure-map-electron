@@ -933,13 +933,31 @@ async function saveStationChanges(assetType) {
         return el ? el.value.trim() : '';
       };
 
-      updatedData.station_id = getValue('giStationId');
-      updatedData.asset_type = getValue('giCategory');
-      updatedData.name = getValue('giSiteName');
-      updatedData.province = getValue('giProvince');
-      updatedData.lat = getValue('giLatitude');
-      updatedData.lon = getValue('giLongitude');
-      updatedData.status = getValue('giStatus');
+      // Helper to update both the simple DB key and the composite Excel key
+      // to ensure one doesn't shadow the other during the save process.
+      const setGiPair = (simpleKey, compositeSuffix, val) => {
+        updatedData[simpleKey] = val;
+        // Update the composite key specifically
+        updatedData[`General Information – ${compositeSuffix}`] = val;
+      };
+
+      setGiPair('station_id', 'Station ID', getValue('giStationId'));
+      setGiPair('asset_type', 'Category', getValue('giCategory'));
+      
+      // Handle Name synonyms (Site Name vs Station Name)
+      const nameVal = getValue('giSiteName');
+      updatedData.name = nameVal;
+      // Check which key exists in the data and update it, default to Station Name if neither
+      if (updatedData['General Information – Site Name'] !== undefined) {
+        updatedData['General Information – Site Name'] = nameVal;
+      } else {
+        updatedData['General Information – Station Name'] = nameVal;
+      }
+
+      setGiPair('province', 'Province', getValue('giProvince'));
+      setGiPair('lat', 'Latitude', getValue('giLatitude'));
+      setGiPair('lon', 'Longitude', getValue('giLongitude'));
+      setGiPair('status', 'Status', getValue('giStatus'));
     }
 
     // Read existing Excel structure for column order
@@ -1185,6 +1203,11 @@ async function saveStationChanges(assetType) {
       }
 
       await window.electronAPI.invalidateStationCache();
+ 
+      // Refresh UI components to reflect changes immediately
+      if (window.refreshFilters) await window.refreshFilters();
+      if (window.refreshMarkers) await window.refreshMarkers();
+      if (window.renderList) await window.renderList();
       
     } else {
       throw new Error(result.message || 'Save failed');

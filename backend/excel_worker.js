@@ -2225,6 +2225,7 @@ async function updateStationInLocationFile(company, locationName, stationId, upd
     const companyDir = getCompanyDir(company);
     ensureDir(companyDir);
     
+    // 1. Locate the Source
     const locPath = getLocationFilePath(company, locationName);
     
     if (!fs.existsSync(locPath)) {
@@ -2235,55 +2236,141 @@ async function updateStationInLocationFile(company, locationName, stationId, upd
     const wb = new _ExcelJS.Workbook();
     await wb.xlsx.readFile(locPath);
 
-    let updated = false;
+    let sourceSheet = null;
+    let sourceRowIndex = -1;
+    let sourceRowObj = null; // Snapshot of data before update
+    let twoRowHeader = false;
 
-    // Search through all worksheets in the location file
+    // Search sheets for the station
     for (const ws of wb.worksheets) {
       if (!ws || ws.rowCount < 2) continue;
 
-      // Determine if this is a two-row header sheet
-      const twoRowHeader = (ws.getRow(2)?.actualCellCount || 0) > 0;
-      let stationIdColumnIndex = -1;
-      let headerRowNum = twoRowHeader ? 2 : 1;
-
-      // Find the Station ID column
+      const isTwoRow = (ws.getRow(2)?.actualCellCount || 0) > 0;
+      let headerRowNum = isTwoRow ? 2 : 1;
       const headerRow = ws.getRow(headerRowNum);
       const maxCol = ws.actualColumnCount || headerRow.cellCount || 0;
 
+      let sidCol = -1;
       for (let c = 1; c <= maxCol; c++) {
-        const cellText = takeText(headerRow.getCell(c)).toLowerCase();
-        if (cellText === 'station id' || cellText === 'stationid' || cellText === 'id') {
-          stationIdColumnIndex = c;
-          break;
+        const txt = takeText(headerRow.getCell(c)).toLowerCase();
+        if (txt === 'station id' || txt === 'stationid' || txt === 'id') {
+          sidCol = c; break;
         }
       }
+      if (sidCol === -1) continue;
 
-      if (stationIdColumnIndex === -1) continue; // No Station ID column in this sheet
-
-      // Find the row with matching Station ID
       const lastRow = ws.actualRowCount || ws.rowCount || headerRowNum;
       for (let r = headerRowNum + 1; r <= lastRow; r++) {
-        const row = ws.getRow(r);
-        const currentStationId = takeText(row.getCell(stationIdColumnIndex));
-        
-        if (String(currentStationId).trim() === String(stationId).trim()) {
-          // Found the station row - update it
-          await updateStationRow(ws, row, r, updatedRowData, twoRowHeader, schema);
-          updated = true;
+        const val = takeText(ws.getRow(r).getCell(sidCol));
+        if (String(val).trim() === String(stationId).trim()) {
+          sourceSheet = ws;
+          sourceRowIndex = r;
+          twoRowHeader = isTwoRow;
+          // Capture existing data to allow merging
+          if (isTwoRow) {
+             sourceRowObj = sheetToObjectsTwoRow(ws).rows.find(row => 
+               String(row['Station ID'] || row['station_id']).trim() === String(stationId).trim()
+             );
+          } else {
+             sourceRowObj = sheetToObjectsOneRow(ws).find(row => 
+               String(row['Station ID'] || row['station_id']).trim() === String(stationId).trim()
+             );
+          }
           break;
         }
       }
-
-      if (updated) break; // Found and updated, no need to check other sheets
+      if (sourceSheet) break;
     }
 
-    if (!updated) {
+    if (!sourceSheet || !sourceRowObj) {
       return { success: false, message: `Station ${stationId} not found in ${locationName}.xlsx` };
     }
 
-    // Save the workbook
-    await wb.xlsx.writeFile(locPath);
-    return { success: true, message: `Station ${stationId} updated successfully` };
+    // 2. Prepare Merged Data (Existing + Updates)
+    const mergedData = { ...sourceRowObj, ...updatedRowData };
+
+    // Helper to find value by possible keys
+    const getVal = (keys) => {
+      for (const k of keys) {
+        if (mergedData[k] !== undefined && mergedData[k] !== null && String(mergedData[k]).trim() !== '') return String(mergedData[k]).trim();
+      }
+      return '';
+    };
+
+    // 3. Determine Targets
+    // Check "General Information – Province" OR "Province" OR fallback to current file name
+    let newLoc = getVal(['General Information – Province', 'Province', 'Location']);
+    if (!newLoc) newLoc = locationName; // Fallback to current if cleared/missing
+
+    // Check "General Information – Category" OR "Category" OR "Asset Type" OR fallback to existing
+    let newAsset = getVal(['General Information – Category', 'Category', 'Asset Type', 'Type']);
+    // Fallback logic for Asset Type if missing in row:
+    if (!newAsset) {
+      // Try to parse from sheet name "AssetType Location"
+      const sheetParts = sourceSheet.name.split(' ');
+      if (sheetParts.length > 1) {
+        newAsset = sheetParts.slice(0, -1).join(' ');
+      } else {
+        newAsset = sourceSheet.name;
+      }
+    }
+
+    // Normalize for comparison
+    const cleanLoc = (s) => String(s).trim().toLowerCase();
+    const cleanAt  = (s) => String(s).trim().toLowerCase();
+
+    const isMove = cleanLoc(newLoc) !== cleanLoc(locationName) || cleanAt(newAsset) !== cleanAt(newAssetFromSheetName(sourceSheet.name, locationName));
+
+    function newAssetFromSheetName(sName, lName) {
+       // Helper to extract asset from "Cableway BC"
+       const l = lName.toLowerCase();
+       const s = sName.toLowerCase();
+       if (s.endsWith(' ' + l)) return sName.substring(0, sName.length - lName.length - 1);
+       return sName;
+    }
+
+    if (isMove) {
+      console.log(`[ExcelWorker] Moving station ${stationId} to ${newLoc} / ${newAsset}`);
+
+      // A. Delete from OLD Sheet
+      sourceSheet.spliceRows(sourceRowIndex, 1);
+      await wb.xlsx.writeFile(locPath);
+
+      // B. Ensure Headers/Sections for New Sheet
+      // We reuse the headers from the Schema if provided, or build standard ones
+      let targetHeaders = [];
+      let targetSections = [];
+
+      if (schema && schema.fields && schema.sections) {
+        targetHeaders = schema.fields;
+        targetSections = schema.sections;
+      } else {
+        // Fallback: Use keys from mergedData, prioritizing GI fields
+        const giFields = ['Station ID', 'Category', 'Site Name', 'Province', 'Latitude', 'Longitude', 'Status'];
+        const extraKeys = Object.keys(mergedData).filter(k => 
+          !giFields.includes(k) && !k.includes(' – ') && k !== 'Station ID'
+        );
+        targetHeaders = [...giFields, ...extraKeys];
+        targetSections = targetHeaders.map(h => giFields.includes(h) ? 'General Information' : 'Extra Information');
+      }
+
+      // C. Insert into NEW Location File (this handles file creation + sheet creation)
+      // Force the company to stay the same
+      await writeLocationRows(company, newLoc, newAsset, targetSections, targetHeaders, [mergedData]);
+
+      // D. Update Lookups (create filters)
+      await upsertLocation(newLoc, company);
+      await upsertAssetType(newAsset, company, newLoc);
+
+      return { success: true, moved: true };
+
+    } else {
+      // 4. In-Place Update
+      const row = sourceSheet.getRow(sourceRowIndex);
+      await updateStationRow(sourceSheet, row, sourceRowIndex, updatedRowData, twoRowHeader, schema);
+      await wb.xlsx.writeFile(locPath);
+      return { success: true, moved: false };
+    }
 
   } catch (error) {
     console.error('[updateStationInLocationFile] failed:', error);

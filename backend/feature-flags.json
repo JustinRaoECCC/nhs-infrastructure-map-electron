@@ -1,5 +1,5 @@
 {
-  "authEnabled": true,
+  "authEnabled": false,
   "testTabEnabled": false,
   "chatbotDisabled": true
 }

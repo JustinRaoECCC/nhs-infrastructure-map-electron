@@ -274,80 +274,102 @@
     const iframeContainer = document.getElementById('chatbot-iframe-container');
     const chatbotIframe = document.getElementById('chatbot-iframe');
 
-    // Toggle chatbot visibility
-    toggleBtn.addEventListener('click', () => {
-        const isVisible = iframeContainer.style.display !== 'none';
-        
-        if (isVisible) {
-            // Hide chatbot
-            iframeContainer.style.display = 'none';
-            // be explicit on close
-            iframeContainer.style.pointerEvents = 'none';
-            chatbotIframe.style.pointerEvents = 'none';
-        } else {
-            // Show chatbot
-            iframeContainer.style.display = 'block';
-            // enable interactions while visible
-            iframeContainer.style.pointerEvents = 'auto';
-            chatbotIframe.style.pointerEvents = 'auto';
-            
-            // Tell the iframe to show the chatbot
-            setTimeout(() => {
-                chatbotIframe.contentWindow.postMessage({ action: 'open-chatbot' }, '*');
-            }, 100);
-        }
-    });
+    const removeChatbotUI = () => {
+        if (toggleBtn && toggleBtn.parentElement) toggleBtn.remove();
+        if (iframeContainer && iframeContainer.parentElement) iframeContainer.remove();
+    };
 
-    // Listen for messages from the chatbot iframe
-    window.addEventListener('message', async (event) => {
-        // Close chatbot
-        if (event.data && event.data.action === 'close-chatbot') {
-            iframeContainer.style.display = 'none';
-            return;
-        }
+    const initChatbotUI = () => {
+        if (!toggleBtn || !iframeContainer || !chatbotIframe) return;
 
-        // Handle chatbot queries
-        if (event.data && event.data.type === 'chatbot-query') {
-            const { queryId, message } = event.data;
+        // Toggle chatbot visibility
+        toggleBtn.addEventListener('click', () => {
+            const isVisible = iframeContainer.style.display !== 'none';
             
-            try {
-                // Call the backend via electronAPI
-                const response = await window.electronAPI.chatbotQuery(message);
+            if (isVisible) {
+                // Hide chatbot
+                iframeContainer.style.display = 'none';
+                // be explicit on close
+                iframeContainer.style.pointerEvents = 'none';
+                chatbotIframe.style.pointerEvents = 'none';
+            } else {
+                // Show chatbot
+                iframeContainer.style.display = 'block';
+                // enable interactions while visible
+                iframeContainer.style.pointerEvents = 'auto';
+                chatbotIframe.style.pointerEvents = 'auto';
                 
-                // Send response back to iframe
-                chatbotIframe.contentWindow.postMessage({
-                    type: 'chatbot-response',
-                    queryId: queryId,
-                    response: response
-                }, '*');
-            } catch (error) {
-                console.error('Error calling chatbot backend:', error);
-                
-                // Send error response back to iframe
-                chatbotIframe.contentWindow.postMessage({
-                    type: 'chatbot-response',
-                    queryId: queryId,
-                    response: {
-                        success: false,
-                        message: 'Failed to connect to chatbot service. Please make sure the backend is running.',
-                        type: 'error',
-                        error: error.message
-                    }
-                }, '*');
+                // Tell the iframe to show the chatbot
+                setTimeout(() => {
+                    chatbotIframe.contentWindow.postMessage({ action: 'open-chatbot' }, '*');
+                }, 100);
             }
+        });
+
+        // Listen for messages from the chatbot iframe
+        window.addEventListener('message', async (event) => {
+            // Close chatbot
+            if (event.data && event.data.action === 'close-chatbot') {
+                iframeContainer.style.display = 'none';
+                return;
+            }
+
+            // Handle chatbot queries
+            if (event.data && event.data.type === 'chatbot-query') {
+                const { queryId, message } = event.data;
+                
+                try {
+                    // Call the backend via electronAPI
+                    const response = await window.electronAPI.chatbotQuery(message);
+                    
+                    // Send response back to iframe
+                    chatbotIframe.contentWindow.postMessage({
+                        type: 'chatbot-response',
+                        queryId: queryId,
+                        response: response
+                    }, '*');
+                } catch (error) {
+                    console.error('Error calling chatbot backend:', error);
+                    
+                    // Send error response back to iframe
+                    chatbotIframe.contentWindow.postMessage({
+                        type: 'chatbot-response',
+                        queryId: queryId,
+                        response: {
+                            success: false,
+                            message: 'Failed to connect to chatbot service. Please make sure the backend is running.',
+                            type: 'error',
+                            error: error.message
+                        }
+                    }, '*');
+                }
+            }
+        });
+
+        // Optional: Add hover effects
+        toggleBtn.addEventListener('mouseenter', () => {
+            toggleBtn.style.transform = 'scale(1.05)';
+            toggleBtn.style.boxShadow = '0 6px 20px rgba(102, 126, 234, 0.5)';
+        });
+
+        toggleBtn.addEventListener('mouseleave', () => {
+            toggleBtn.style.transform = 'scale(1)';
+            toggleBtn.style.boxShadow = '0 4px 15px rgba(102, 126, 234, 0.4)';
+        });
+    };
+
+    (async () => {
+        try {
+            const status = await window.electronAPI?.getChatbotStatus?.();
+            if (status && status.available === false) {
+                removeChatbotUI();
+                return;
+            }
+        } catch (_) {
+            // ignore probe errors and default to showing the UI
         }
-    });
-
-    // Optional: Add hover effects
-    toggleBtn.addEventListener('mouseenter', () => {
-        toggleBtn.style.transform = 'scale(1.05)';
-        toggleBtn.style.boxShadow = '0 6px 20px rgba(102, 126, 234, 0.5)';
-    });
-
-    toggleBtn.addEventListener('mouseleave', () => {
-        toggleBtn.style.transform = 'scale(1)';
-        toggleBtn.style.boxShadow = '0 4px 15px rgba(102, 126, 234, 0.4)';
-    });
+        initChatbotUI();
+    })();
 })();
 </script>
 
