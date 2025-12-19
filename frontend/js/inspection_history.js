@@ -535,8 +535,35 @@
       e.preventDefault();
       try {
         const res = await window.electronAPI.pickInspectionPhotos();
-        selectedPhotos = Array.isArray(res?.filePaths) ? res.filePaths : [];
-        if (photosSum) photosSum.textContent = `${selectedPhotos.length} selected`;
+        const filePaths = Array.isArray(res?.filePaths) ? res.filePaths : [];
+        if (!filePaths.length) {
+          selectedPhotos = [];
+          if (photosSum) photosSum.textContent = `0 selected`;
+          return;
+        }
+
+        if (typeof window.openFileNamingPopup === 'function' && typeof window.applyNamingToList === 'function') {
+          const cfg = await window.openFileNamingPopup({
+            station: stn,
+            files: filePaths,
+            defaultExt: ''
+          });
+          if (!cfg) {
+            selectedPhotos = [];
+            if (photosSum) photosSum.textContent = `0 selected`;
+            return;
+          }
+          const renamed = window.applyNamingToList({
+            station: stn,
+            files: filePaths,
+            config: cfg
+          });
+          selectedPhotos = renamed.map((r, i) => ({ path: filePaths[i], name: r.newName }));
+        } else {
+          selectedPhotos = filePaths.slice();
+        }
+
+        if (photosSum) photosSum.textContent = `${filePaths.length} selected`;
       } catch (_) {}
     });
 

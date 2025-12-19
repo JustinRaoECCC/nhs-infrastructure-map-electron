@@ -7,6 +7,7 @@
   let currentPhotos = [];
   let currentPhotoIndex = -1;
   let allFolderPaths = []; // For folder selection dropdowns
+  let pendingPhotoUploads = []; // [{ file: File, newName: string }]
 
   /**
    * Initialize the photo tab
@@ -62,8 +63,8 @@
     // File input change
     const fileInput = container.querySelector('#photoFileInput');
     if (fileInput) {
-      fileInput.addEventListener('change', (e) => {
-        handleFileSelection(container, e.target.files);
+      fileInput.addEventListener('change', async (e) => {
+        await handleFileSelection(container, e.target.files);
       });
     }
 
@@ -347,29 +348,80 @@
     if (!preview || !uploadBtn) return;
 
     preview.innerHTML = '';
+    pendingPhotoUploads = [];
 
     if (files.length === 0) {
       uploadBtn.disabled = true;
       return;
     }
 
-    uploadBtn.disabled = false;
+    // Ask for naming rules once, apply to whole batch
+    (async () => {
+      try {
+        if (typeof window.openFileNamingPopup !== 'function' || typeof window.applyNamingToList !== 'function') {
+          // Fallback: no popup available
+          pendingPhotoUploads = Array.from(files).map(f => ({ file: f, newName: f.name }));
+          renderPreviewWithNames();
+          uploadBtn.disabled = false;
+          return;
+        }
 
-    Array.from(files).forEach(file => {
-      const previewItem = document.createElement('div');
-      previewItem.className = 'photo-preview-item';
-      
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        previewItem.innerHTML = `
-          <img src="${e.target.result}" alt="${escapeHtml(file.name)}" />
-          <div class="photo-preview-name">${escapeHtml(file.name)}</div>
-        `;
-      };
-      reader.readAsDataURL(file);
-      
-      preview.appendChild(previewItem);
-    });
+        const cfg = await window.openFileNamingPopup({
+          station: currentStation,
+          files: Array.from(files),
+          defaultExt: ''
+        });
+
+        if (!cfg) {
+          // User cancelled: clear selection and keep modal open state unchanged
+          const fileInput = container.querySelector('#photoFileInput');
+          if (fileInput) fileInput.value = '';
+          preview.innerHTML = '';
+          uploadBtn.disabled = true;
+          pendingPhotoUploads = [];
+          return;
+        }
+
+        const renamed = window.applyNamingToList({
+          station: currentStation,
+          files: Array.from(files).map(f => ({ originalName: f.name, ext: (f.name.match(/\.[^.]+$/) || [''])[0] })),
+          config: cfg
+        });
+
+        // Apply same newName to all files in this batch (uniqueness handled on disk)
+        pendingPhotoUploads = Array.from(files).map((f, i) => ({
+          file: f,
+          newName: renamed[i]?.newName || f.name
+        }));
+
+        renderPreviewWithNames();
+        uploadBtn.disabled = false;
+      } catch (e) {
+        console.error('[photo_tab] naming popup failed:', e);
+        pendingPhotoUploads = Array.from(files).map(f => ({ file: f, newName: f.name }));
+        renderPreviewWithNames();
+        uploadBtn.disabled = false;
+      }
+    })();
+
+    function renderPreviewWithNames() {
+      preview.innerHTML = '';
+      pendingPhotoUploads.forEach(({ file, newName }) => {
+        const previewItem = document.createElement('div');
+        previewItem.className = 'photo-preview-item';
+
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          previewItem.innerHTML = `
+            <img src="${ev.target.result}" alt="${escapeHtml(newName)}" />
+            <div class="photo-preview-name">${escapeHtml(newName)}</div>
+          `;
+        };
+        reader.readAsDataURL(file);
+
+        preview.appendChild(previewItem);
+      });
+    }
   }
 
   /**
@@ -380,7 +432,12 @@
     const folderSelect = container.querySelector('#photoFolderSelect');
     const uploadBtn = container.querySelector('#uploadPhotosBtn');
 
-    if (!fileInput || !fileInput.files.length) {
+    // Prefer the renamed batch; fallback to raw input if needed
+    const batch = (Array.isArray(pendingPhotoUploads) && pendingPhotoUploads.length)
+      ? pendingPhotoUploads
+      : (fileInput?.files?.length ? Array.from(fileInput.files).map(f => ({ file: f, newName: f.name })) : []);
+
+    if (!batch.length) {
       return;
     }
 
@@ -393,12 +450,12 @@
       }
 
       // Convert files to base64
-      const filePromises = Array.from(fileInput.files).map(file => {
+      const filePromises = batch.map(({ file, newName }) => {
         return new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => {
             const base64 = reader.result.split(',')[1]; // Remove data:image/...;base64, prefix
-            resolve({ name: file.name, data: base64 });
+            resolve({ name: newName, data: base64 });
           };
           reader.onerror = reject;
           reader.readAsDataURL(file);
@@ -418,6 +475,7 @@
       if (result.success) {
         appAlert(`Successfully uploaded ${result.saved.length} photo(s)`);
         closeModal(container, 'addPhotoModal');
+        pendingPhotoUploads = [];
         
         // Reload current view
         await loadPhotoStructure(container, currentPath);

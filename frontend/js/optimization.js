@@ -3017,23 +3017,19 @@ function _mergeSplitMaps(...maps) {
         
         let totalCost = 0;
         let totalDays = 0;
-        const splitTotals = {};
-        
         repairs.forEach(repair => {
           const cost = _extractRepairCost(repair);
           const days = _tryFloat(repair.days || repair.Days) || 0;
           totalCost += cost;
           totalDays += days;
-          
-          const splitMap = getSplitMapFromRepair(repair);
-          for (const [k, mul] of Object.entries(splitMap)) {
-            const amt = cost * (Number.isFinite(mul) ? mul : 0);
-            if (amt > 0) splitTotals[k] = (splitTotals[k] || 0) + amt;
-          }
         });
-        
-        const splitKeys = Object.keys(splitTotals).filter(k => Number(splitTotals[k]) > 0).sort();
-        const splitChips = splitKeys.map(k => `<span class="chip">${k}: ${formatCurrency(splitTotals[k])}</span>`).join('');
+
+        // Category-aware year split chips + columns
+        const activeCats = detectActiveCategoriesFromRepairs(repairs);
+        const splitSources = collectSplitSourcesFromRepairs(repairs, activeCats);
+        const splitCols = buildSplitColumns(splitSources, activeCats);
+        const totals = computeSplitTotalsForRepairs(repairs, splitCols);
+        const splitChips = renderSplitChipsFromTotals(totals, splitCols);
 
         const yearSection = document.createElement('section');
         yearSection.className = 'opt-trip';
@@ -3071,10 +3067,12 @@ function _mergeSplitMaps(...maps) {
                 <thead>
                   <tr>
                     <th>Station ID</th>
+                    <th>Site</th>
                     <th>Repair Name</th>
                     <th>Cost</th>
                     <th>Days</th>
-                    ${splitKeys.map(k => `<th>Split: ${k}</th>`).join('')}
+                    <th>Category</th>
+                    ${(splitCols || []).map(c => `<th>${c.label}</th>`).join('')}
                   </tr>
                 </thead>
                 <tbody></tbody>
@@ -3084,17 +3082,22 @@ function _mergeSplitMaps(...maps) {
               repairs.forEach(repair => {
                 const cost = _extractRepairCost(repair);
                 const days = _tryFloat(repair.days || repair.Days) || 0;
-                const splitMap = getSplitMapFromRepair(repair);
+                const station = window._stationDataMap?.[repair.station_id] || {};
+                const site = getSiteNameForStationOrRepair(station);
+                const { category, map } = getSplitMapForRepairCategory(repair);
                 
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                   <td class="txt">${repair.station_id || ''}</td>
+                  <td class="txt">${site || ''}</td>
                   <td class="txt">${repair.name || repair.repair_name || ''}</td>
                   <td class="txt">${formatCurrency(cost)}</td>
                   <td class="txt">${String(days)}</td>
-                  ${splitKeys.map(k => {
-                    const mul = Number(splitMap[_canon(k)] || 0);
-                    const val = mul > 0 ? cost * mul : 0;
+                  <td class="txt">${category || ''}</td>
+                  ${(splitCols || []).map(col => {
+                    if (col.cat !== category) return `<td class="txt"></td>`;
+                    const frac = Number(map[col.srcCanon] || 0);
+                    const val = frac > 0 ? cost * frac : 0;
                     return `<td class="txt">${val ? formatCurrency(val) : ''}</td>`;
                   }).join('')}
                 `;
@@ -3601,8 +3604,8 @@ function _mergeSplitMaps(...maps) {
 
         if (moreStations) {
           const loadMore = document.createElement('tr');
-          loadMore.innerHTML = `<td colspan="${7 + yearSplitKeys.length}" style="text-align:center; padding:1em;">
-            <button class="btn" onclick="this.closest('tbody').innerHTML=''; renderStationsTable(this.closest('.nested-wrap'), trip, yearSplitKeys, true)">
+          loadMore.innerHTML = `<td colspan="${7 + (splitCols || []).length}" style="text-align:center; padding:1em;">
+            <button class="btn" onclick="this.closest('tbody').innerHTML=''; renderStationsTable(this.closest('.nested-wrap'), trip, splitCols, true)">
               Load all ${trip.stations.length} stations (may be slow)
             </button>
           </td>`;
@@ -3646,21 +3649,6 @@ function _mergeSplitMaps(...maps) {
     
       // Collect ALL split keys present across the year's assigned trips,
       // scanning stations -> repairs (not tied to fixed parameters).
-      function collectYearSplitKeys(trips) {
-        const found = new Set();
-        (trips || []).forEach(t => {
-          (t.stations || []).forEach(st => {
-            (st.repairs || []).forEach(rp => {
-              const smap = getSplitMapFromRepair(rp);
-              Object.entries(smap || {}).forEach(([k, mul]) => {
-                // Only include positive splits
-                if (Number(mul) > 0) found.add(k);
-              });
-            });
-          });
-        });
-        return Array.from(found).sort();
-      }
 
       // Warnings block: high-priority repairs missing from Year 1
       if (result.warnings && result.warnings.missing_in_year1 && result.warnings.missing_in_year1.length) {
@@ -3757,15 +3745,39 @@ function _mergeSplitMaps(...maps) {
       // ────────────────────────────────────────────────────────────────────
       // Helper: virtualized trips table (per year) — NO nested content
       // ───────────────────────────────────────────────────────────────────
-      function createVirtualTripsTable(trips, yearSplitKeys, detailsHost) {
+      function createVirtualTripsTable(trips, splitCols, detailsHost) {
         const wrap = document.createElement('div');
         wrap.className = 'virtual-scroll-container trips';
+
+        // ─────────────────────────────────────────────────────────────
+        // FIX: Prevent horizontal "condensing" in Opt-3 Trip-First trips table
+        // by giving header/body tables explicit matching column widths.
+        // This makes the table naturally wider so .table-scroll can scroll
+        // horizontally (same behavior as station tables).
+        // ─────────────────────────────────────────────────────────────
+        const baseWidths = [
+          '80px',   // Priority
+          '200px',  // City of Travel
+          '170px',  // Access Type
+          '120px',  // Cost
+          '110px',  // Trip Days
+          '100px',  // Stations
+          '110px'   // Score
+        ];
+        const splitWidth = '170px';
+        const colgroupHtml = `
+          <colgroup>
+            ${baseWidths.map(w => `<col style="width:${w};">`).join('')}
+            ${(splitCols || []).map(() => `<col style="width:${splitWidth};">`).join('')}
+          </colgroup>
+        `;
 
         // Sticky header in its own table
         const headerTable = document.createElement('table');
         headerTable.className = 'opt-table';
         headerTable.style.tableLayout = 'fixed';
         headerTable.innerHTML = `
+        ${colgroupHtml}
           <thead>
             <tr>
               <th>Priority</th>
@@ -3775,7 +3787,7 @@ function _mergeSplitMaps(...maps) {
               <th>Trip Days</th>
               <th>Stations</th>
               <th>Score</th>
-              ${yearSplitKeys.map(k => `<th>Split: ${k}</th>`).join('')}
+              ${(splitCols || []).map(c => `<th>${c.label}</th>`).join('')}
             </tr>
           </thead>
         `;
@@ -3792,7 +3804,10 @@ function _mergeSplitMaps(...maps) {
         const bodyTable = document.createElement('table');
         bodyTable.className = 'opt-table';
         bodyTable.style.tableLayout = 'fixed';
-        bodyTable.innerHTML = `<tbody></tbody>`;
+        bodyTable.innerHTML = `
+          ${colgroupHtml}
+          <tbody></tbody>
+        `;
         viewport.appendChild(bodyTable);
         const tbody = bodyTable.querySelector('tbody');
 
@@ -3830,8 +3845,10 @@ function _mergeSplitMaps(...maps) {
             <td class="txt">${cell(String((trip.stations || []).length))}</td>
             <td class="txt">${cell(Number(trip.priority_score || 0).toFixed(2))}</td>
           `;
-          for (const k of yearSplitKeys) {
-            const v = Number((trip.total_split_costs || {})[k] || 0);
+          const tripRepairs = (trip.stations || []).flatMap(st => (st.repairs || []));
+          const totals = computeSplitTotalsForRepairs(tripRepairs, splitCols);
+          for (const col of (splitCols || [])) {
+            const v = Number(totals[col.key] || 0);
             cells += `<td class="txt">${v ? formatCurrency(v) : ''}</td>`;
           }
           return `<tr>${cells}</tr>`;
@@ -3850,20 +3867,6 @@ function _mergeSplitMaps(...maps) {
             wrap.style.height = '';
             wrap.style.overflowY = 'auto';
           }
-        }
-
-        // For nested details below the trips table
-        function _collectSplitKeysForTrip(trip) {
-          const found = new Set();
-          (trip.stations || []).forEach(st => {
-            (st.repairs || []).forEach(rp => {
-              const smap = getSplitMapFromRepair(rp);
-              Object.entries(smap || {}).forEach(([k, mul]) => {
-                if (Number(mul) > 0) found.add(k);
-              });
-            });
-          });
-          return Array.from(found).sort();
         }
 
         function renderWindow() {
@@ -3903,8 +3906,11 @@ function _mergeSplitMaps(...maps) {
                 header.querySelector('button').addEventListener('click', () => { detailsHost.innerHTML = ''; });
                 panel.appendChild(header);
 
-                const keys = _collectSplitKeysForTrip(trip);
-                renderStationsTable(panel, trip, keys);
+                const tripRepairs = (trip.stations || []).flatMap(st => (st.repairs || []));
+                const cats = detectActiveCategoriesFromRepairs(tripRepairs);
+                const srcs = collectSplitSourcesFromRepairs(tripRepairs, cats);
+                const tripSplitCols = buildSplitColumns(srcs, cats);
+                renderStationsTable(panel, trip, tripSplitCols);
                 detailsHost.appendChild(panel);
                 try { detailsHost.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch {}
               };
@@ -3936,9 +3942,13 @@ function _mergeSplitMaps(...maps) {
       yearKeys.forEach((year) => {
         const trips = result.assignments[year];
         const ysum = (result.year_summaries && result.year_summaries[year]) ? result.year_summaries[year] : { total_cost: 0, total_days: 0, total_split_costs: {} };
-        const splitTotals = ysum.total_split_costs || {};
-        const splitKeys = Object.keys(splitTotals).filter(k => Number(splitTotals[k]) > 0).sort();
-        const splitChips = splitKeys.map(k => `<span class="chip">${k}: ${formatCurrency(splitTotals[k])}</span>`).join('');
+        // Category-aware year split chips (dynamic categories)
+        const allYearRepairs = (trips || []).flatMap(t => (t.stations || []).flatMap(st => (st.repairs || [])));
+        const activeCats = detectActiveCategoriesFromRepairs(allYearRepairs);
+        const splitSources = collectSplitSourcesFromRepairs(allYearRepairs, activeCats);
+        const yearSplitCols = buildSplitColumns(splitSources, activeCats);
+        const totals = computeSplitTotalsForRepairs(allYearRepairs, yearSplitCols);
+        const splitChips = renderSplitChipsFromTotals(totals, yearSplitCols);
         
         const cs = result.constraints_state?.[year] || { budgets:{}, temporal:{} };
         const remainChips = [];
@@ -3960,7 +3970,6 @@ function _mergeSplitMaps(...maps) {
           <div class="year-details" style="display:none;"></div>
         `;
 
-        const yearSplitKeys = collectYearSplitKeys(trips);
         const toggleBtn = yearSection.querySelector('.toggle-year');
         const detailsDiv = yearSection.querySelector('.year-details');
         let rendered = false;
@@ -3976,7 +3985,7 @@ function _mergeSplitMaps(...maps) {
               tripsScroll.className = 'table-scroll';
               const tripDetailsPanel = document.createElement('div');
               tripDetailsPanel.className = 'trip-details-panel';
-              const vt = createVirtualTripsTable(trips, yearSplitKeys, tripDetailsPanel);
+              const vt = createVirtualTripsTable(trips, yearSplitCols, tripDetailsPanel);
               tripsScroll.appendChild(vt);
               detailsDiv.appendChild(tripsScroll);
               detailsDiv.appendChild(tripDetailsPanel);
@@ -4049,6 +4058,12 @@ function _mergeSplitMaps(...maps) {
     .virtual-scroll-container {
       overflow-x: auto !important;
       -webkit-overflow-scrolling: touch;
+    }
+
+    /* Optional: ensure virtual trips tables can expand beyond container width */
+    .virtual-scroll-container.trips table.opt-table {
+      min-width: 100%;
+      width: max-content;
     }
 
   `;

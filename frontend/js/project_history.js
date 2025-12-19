@@ -635,8 +635,38 @@
     pickPhotos?.addEventListener('click', async () => {
       try {
         const res = await window.electronAPI.pickProjectPhotos();
-        selectedPhotos = res?.filePaths || [];
-        if (photosSum) photosSum.textContent = `${selectedPhotos.length} selected`;
+        const filePaths = res?.filePaths || [];
+        if (!filePaths.length) {
+          selectedPhotos = [];
+          if (photosSum) photosSum.textContent = `0 selected`;
+          return;
+        }
+
+        // Naming popup applies to THIS batch only
+        if (typeof window.openFileNamingPopup === 'function' && typeof window.applyNamingToList === 'function') {
+          const cfg = await window.openFileNamingPopup({
+            station: stn,
+            files: filePaths,
+            defaultExt: ''
+          });
+          if (!cfg) {
+            selectedPhotos = [];
+            if (photosSum) photosSum.textContent = `0 selected`;
+            return;
+          }
+          const renamed = window.applyNamingToList({
+            station: stn,
+            files: filePaths,
+            config: cfg
+          });
+          // store as objects so backend can copy using desired names
+          selectedPhotos = renamed.map((r, i) => ({ path: filePaths[i], name: r.newName }));
+        } else {
+          // fallback: old behavior
+          selectedPhotos = filePaths.slice();
+        }
+
+        if (photosSum) photosSum.textContent = `${filePaths.length} selected`;
       } catch (e) {
         console.error('[pickProjectPhotos] failed', e);
       }

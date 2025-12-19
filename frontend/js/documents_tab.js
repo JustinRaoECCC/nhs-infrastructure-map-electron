@@ -9,6 +9,7 @@
   let allFolderPaths = [];
   let searchTerm = '';
   let filterType = '';
+  let pendingDocumentUploads = []; // [{ file: File, newName: string }]
 
   /**
    * Initialize the documents tab
@@ -82,8 +83,8 @@
     // File input change
     const fileInput = container.querySelector('#documentFileInput');
     if (fileInput) {
-      fileInput.addEventListener('change', (e) => {
-        handleFileSelection(container, e.target.files);
+      fileInput.addEventListener('change', async (e) => {
+        await handleFileSelection(container, e.target.files);
       });
     }
 
@@ -509,40 +510,84 @@
     if (!preview || !uploadBtn) return;
 
     preview.innerHTML = '';
+    pendingDocumentUploads = [];
 
     if (files.length === 0) {
       uploadBtn.disabled = true;
       return;
     }
 
-    uploadBtn.disabled = false;
+    (async () => {
+      try {
+        if (typeof window.openFileNamingPopup !== 'function' || typeof window.applyNamingToList !== 'function') {
+          pendingDocumentUploads = Array.from(files).map(f => ({ file: f, newName: f.name }));
+          renderPreviewWithNames();
+          uploadBtn.disabled = false;
+          return;
+        }
 
-    Array.from(files).forEach(file => {
-      const previewItem = document.createElement('div');
-      previewItem.className = 'document-preview-item';
-      
-      // Get file icon based on extension
-      const ext = file.name.split('.').pop().toLowerCase();
-      const iconMap = {
-        'pdf': '📄', 'doc': '📝', 'docx': '📝',
-        'xls': '📊', 'xlsx': '📊',
-        'ppt': '📽️', 'pptx': '📽️',
-        'txt': '📃', 'zip': '🗜️', 'rar': '🗜️'
-      };
-      const icon = iconMap[ext] || '📄';
-      
-      const sizeKB = (file.size / 1024).toFixed(1);
-      
-      previewItem.innerHTML = `
-        <div class="document-preview-icon">${icon}</div>
-        <div class="document-preview-info">
-          <div class="document-preview-name">${escapeHtml(file.name)}</div>
-          <div class="document-preview-size">${sizeKB} KB</div>
-        </div>
-      `;
-      
-      preview.appendChild(previewItem);
-    });
+        const cfg = await window.openFileNamingPopup({
+          station: currentStation,
+          files: Array.from(files),
+          defaultExt: ''
+        });
+
+        if (!cfg) {
+          const fileInput = container.querySelector('#documentFileInput');
+          if (fileInput) fileInput.value = '';
+          preview.innerHTML = '';
+          uploadBtn.disabled = true;
+          pendingDocumentUploads = [];
+          return;
+        }
+
+        const renamed = window.applyNamingToList({
+          station: currentStation,
+          files: Array.from(files).map(f => ({ originalName: f.name, ext: (f.name.match(/\.[^.]+$/) || [''])[0] })),
+          config: cfg
+        });
+
+        pendingDocumentUploads = Array.from(files).map((f, i) => ({
+          file: f,
+          newName: renamed[i]?.newName || f.name
+        }));
+
+        renderPreviewWithNames();
+        uploadBtn.disabled = false;
+      } catch (e) {
+        console.error('[documents_tab] naming popup failed:', e);
+        pendingDocumentUploads = Array.from(files).map(f => ({ file: f, newName: f.name }));
+        renderPreviewWithNames();
+        uploadBtn.disabled = false;
+      }
+    })();
+
+    function renderPreviewWithNames() {
+      preview.innerHTML = '';
+      pendingDocumentUploads.forEach(({ file, newName }) => {
+        const previewItem = document.createElement('div');
+        previewItem.className = 'document-preview-item';
+
+        const ext = String(newName).split('.').pop().toLowerCase();
+        const iconMap = {
+          'pdf': '📄', 'doc': '📝', 'docx': '📝',
+          'xls': '📊', 'xlsx': '📊',
+          'ppt': '📽️', 'pptx': '📽️',
+          'txt': '📃', 'zip': '🗜️', 'rar': '🗜️', '7z': '🗜️'
+        };
+        const icon = iconMap[ext] || '📄';
+        const sizeKB = (file.size / 1024).toFixed(1);
+
+        previewItem.innerHTML = `
+          <div class="document-preview-icon">${icon}</div>
+          <div class="document-preview-info">
+            <div class="document-preview-name">${escapeHtml(newName)}</div>
+            <div class="document-preview-size">${sizeKB} KB</div>
+          </div>
+        `;
+        preview.appendChild(previewItem);
+      });
+    }
   }
 
   /**
@@ -553,7 +598,11 @@
     const folderSelect = container.querySelector('#documentFolderSelect');
     const uploadBtn = container.querySelector('#uploadDocumentsBtn');
 
-    if (!fileInput || !fileInput.files.length) {
+    const batch = (Array.isArray(pendingDocumentUploads) && pendingDocumentUploads.length)
+      ? pendingDocumentUploads
+      : (fileInput?.files?.length ? Array.from(fileInput.files).map(f => ({ file: f, newName: f.name })) : []);
+
+    if (!batch.length) {
       return;
     }
 
@@ -566,12 +615,12 @@
       }
 
       // Convert files to base64
-      const filePromises = Array.from(fileInput.files).map(file => {
+      const filePromises = batch.map(({ file, newName }) => {
         return new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => {
             const base64 = reader.result.split(',')[1];
-            resolve({ name: file.name, data: base64 });
+            resolve({ name: newName, data: base64 });
           };
           reader.onerror = reject;
           reader.readAsDataURL(file);
@@ -591,6 +640,7 @@
       if (result.success) {
         appAlert(`Successfully uploaded ${result.saved.length} document(s)`);
         closeModal(container, 'addDocumentModal');
+        pendingDocumentUploads = [];
         await loadDocumentStructure(container, currentPath);
       } else {
         throw new Error(result.message || 'Upload failed');

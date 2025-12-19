@@ -13,15 +13,19 @@
     return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   }
 
+  const norm = (v) => String(v || '').trim().toLowerCase();
+
   function findLocationName(company, locationId) {
     const locs = state.data[company]?.locations || [];
-    const match = locs.find(l => String(l.id) === String(locationId));
+    const lid = norm(locationId);
+    const match = locs.find(l => norm(l.id) === lid || norm(l.name) === lid);
     return match ? match.name : '';
   }
 
   function applyFilters(company, materials, selectedLocationIds) {
-    if (!selectedLocationIds || !selectedLocationIds.size) return materials || [];
-    return (materials || []).filter(m => selectedLocationIds.has(String(m.location_id)));
+    if (!selectedLocationIds || !selectedLocationIds.size) return [];
+    const selected = new Set(Array.from(selectedLocationIds).map(norm));
+    return (materials || []).filter(m => selected.has(norm(m.location_id)));
   }
 
   function showModal(title, bodyBuilder) {
@@ -167,7 +171,7 @@
       cb.addEventListener('change', () => {
         const id = cb.dataset.id;
         if (cb.checked) selected.add(id); else selected.delete(id);
-        renderMain();
+        renderMain(); // Re-render materials to show/hide by location
       });
     });
 
@@ -216,33 +220,44 @@
           <thead>
             <tr>
               <th>Material</th>
-              <th>Location</th>
-            <th>Quantity</th>
-            <th>Cost per Item ($)</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
+              <th>Storage Location</th>
+              <th>Quantity</th>
+              <th>Cost per Item ($)</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
       </div>
     `;
 
     const tbody = wrap.querySelector('tbody');
     if (!filtered.length) {
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td colspan="7" class="muted">No materials yet. Add a material to get started.</td>`;
+      tr.innerHTML = `<td colspan="5" class="muted">No materials yet. Add a material to get started.</td>`;
       tbody.appendChild(tr);
     } else {
       filtered.forEach((m) => {
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td>${m.name || ''}</td>
-          <td>${findLocationName(company, m.location_id)}</td>
+          <td>${findLocationName(company, m.location_id) || m.location_id || ''}</td>
           <td>${m.quantity || ''} ${m.unit || ''}</td>
           <td>${m.value || ''}</td>
+          <td><button class="btn btn-ghost btn-sm mat-edit" data-id="${m.id || ''}">Edit</button></td>
         `;
         tbody.appendChild(tr);
       });
     }
+
+    wrap.querySelectorAll('.mat-edit').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.id;
+        const all = state.data[company]?.materials || [];
+        const mat = all.find(x => String(x.id) === String(id));
+        if (mat) openMaterialModal(mat);
+      });
+    });
 
     body.appendChild(wrap);
   }
@@ -309,32 +324,45 @@
     });
   }
 
-  function openMaterialModal() {
+  function openMaterialModal(existingMaterial = null) {
     if (!state.activeCompany) return;
     const locs = state.data[state.activeCompany]?.locations || [];
-    showModal('Add Material', ({ body, footer, close }) => {
+    const isEdit = !!existingMaterial;
+    const initialLocId = existingMaterial?.location_id || (locs[0]?.id ?? '');
+    const locOptions = Array.isArray(locs) ? locs.slice() : [];
+    if (isEdit && initialLocId && !locOptions.some(l => String(l.id) === String(initialLocId))) {
+      locOptions.push({ id: initialLocId, name: initialLocId });
+    }
+    const esc = (v) => String(v ?? '').replace(/"/g, '&quot;');
+
+    showModal(isEdit ? 'Edit Material' : 'Add Material', ({ body, footer, close }) => {
       body.innerHTML = `
         <div class="form-grid">
           <div class="form-row">
             <label>Material Name*</label>
-            <input type="text" id="matName" placeholder="Material name">
+            <input type="text" id="matName" placeholder="Material name" value="${esc(existingMaterial?.name || '')}">
           </div>
           <div class="form-row">
             <label>Storage Location*</label>
-            <select id="matLocation">${locs.map(l => `<option value="${l.id}">${l.name}</option>`).join('')}</select>
+            <select id="matLocation">
+              ${locOptions.map(l => {
+                const selected = String(initialLocId) === String(l.id) ? 'selected' : '';
+                return `<option value="${esc(l.id)}" ${selected}>${esc(l.name)}</option>`;
+              }).join('')}
+            </select>
           </div>
           <div class="form-row split">
             <div>
               <label>Quantity</label>
-              <input type="number" id="matQty" placeholder="0">
+              <input type="number" id="matQty" placeholder="0" value="${esc(existingMaterial?.quantity ?? '')}">
             </div>
             <div>
               <label>Unit</label>
-              <input type="text" id="matUnit" placeholder="pcs, ft, kg">
+              <input type="text" id="matUnit" placeholder="pcs, ft, kg" value="${esc(existingMaterial?.unit || '')}">
             </div>
             <div>
               <label>Cost per Item ($)</label>
-              <input type="number" id="matValue" placeholder="">
+              <input type="number" id="matValue" placeholder="" value="${esc(existingMaterial?.value ?? '')}">
             </div>
           </div>
         </div>
@@ -342,7 +370,7 @@
 
       footer.innerHTML = `
         <button class="btn btn-ghost" id="matCancel">Cancel</button>
-        <button class="btn btn-primary" id="matSave">Save Material</button>
+        <button class="btn btn-primary" id="matSave">${isEdit ? 'Save Changes' : 'Save Material'}</button>
       `;
       qs(footer, '#matCancel')?.addEventListener('click', close);
       qs(footer, '#matSave')?.addEventListener('click', async () => {
@@ -351,6 +379,7 @@
         const locId = qs(body, '#matLocation')?.value;
         if (!locId) return appAlert('Please choose a storage location.');
         const payload = {
+          id: existingMaterial?.id,
           name,
           location_id: locId,
           quantity: qs(body, '#matQty')?.value || '',

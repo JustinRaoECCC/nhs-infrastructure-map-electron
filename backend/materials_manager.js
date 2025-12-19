@@ -3,9 +3,9 @@
 /**
  * Materials Manager backend
  * - Per-company workbook: data/companies/<Company>/materials.xlsx
- * - Sheet "StorageLocations" stores locations + sheet mapping
+ * - Sheet "StorageLocations" stores locations (name acts as the identifier)
  * - One sheet per storage location for materials
- * - Optional "Filters" sheet to persist saved filter definitions
+ * - Filters are derived from locations; no dedicated Filters sheet
  * - Dual-write to MongoDB when configured (collections: materials_locations, materials_items, materials_filters)
  */
 
@@ -17,34 +17,19 @@ const mongoClient = require('./db/mongoClient');
 
 const DATA_DIR = path.join(__dirname, '..', 'data', 'companies');
 const STORAGE_SHEET = 'StorageLocations';
-const FILTER_SHEET = 'Filters';
 const DEFAULT_COLUMNS_LOCATIONS = [
-  { header: 'Location ID', key: 'id', width: 24 },
   { header: 'Location Name', key: 'name', width: 28 },
   { header: 'Description', key: 'description', width: 32 },
-  { header: 'Sheet Name', key: 'sheetName', width: 24 },
   { header: 'Notes', key: 'notes', width: 32 },
-  { header: 'Created At', key: 'created_at', width: 22 },
 ];
 const DEFAULT_COLUMNS_MATERIALS = [
   { header: 'Material ID', key: 'id', width: 24 },
-  { header: 'Location ID', key: 'location_id', width: 22 },
+  { header: 'Location', key: 'location_id', width: 28 },
   { header: 'Material Name', key: 'name', width: 32 },
-  { header: 'Category', key: 'category', width: 18 },
   { header: 'Quantity', key: 'quantity', width: 14 },
   { header: 'Unit', key: 'unit', width: 10 },
   { header: 'Value', key: 'value', width: 14 },
-  { header: 'Tags', key: 'tags', width: 22 },
-  { header: 'Attributes (JSON)', key: 'attributes', width: 40 },
-  { header: 'Notes', key: 'notes', width: 32 },
   { header: 'Updated At', key: 'updated_at', width: 22 },
-];
-const DEFAULT_COLUMNS_FILTERS = [
-  { header: 'Filter ID', key: 'id', width: 24 },
-  { header: 'Name', key: 'name', width: 28 },
-  { header: 'Field', key: 'field', width: 20 },
-  { header: 'Operator', key: 'operator', width: 16 },
-  { header: 'Value', key: 'value', width: 32 },
 ];
 
 const dbConfig = config.getDbConfig();
@@ -59,39 +44,24 @@ function safeSheetName(name) {
   const cleaned = String(name || '').trim() || 'Storage';
   return cleaned.replace(/[\\/?*\\[\\]:]/g, '_').substring(0, 31);
 }
+function ensureMaterialSheetColumns(sheet) {
+  if (!sheet) return;
+  const hasKeys = Array.isArray(sheet.columns) && sheet.columns.every(c => c && c.key);
+  const header = (sheet.getRow(1).values || []).map(v => String(v || '').toLowerCase());
+  const needsReset = header.length - 1 !== DEFAULT_COLUMNS_MATERIALS.length ||
+    header[1] !== 'material id' ||
+    header[2] !== 'location' ||
+    !hasKeys;
+  if (needsReset) {
+    sheet.columns = DEFAULT_COLUMNS_MATERIALS;
+  }
+}
 function makeMaterialsPath(company) {
   return path.join(DATA_DIR, safeCompanyFolder(company), 'materials.xlsx');
 }
 function makeId(prefix = 'mat') {
   return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
-function normalizeAttributes(attrs) {
-  if (!attrs) return {};
-  if (Array.isArray(attrs)) {
-    const out = {};
-    attrs.forEach((pair) => {
-      if (!pair) return;
-      const k = String(pair.key || pair.name || '').trim();
-      if (!k) return;
-      out[k] = pair.value ?? '';
-    });
-    return out;
-  }
-  if (typeof attrs === 'object') return attrs;
-  if (typeof attrs === 'string') {
-    try { return JSON.parse(attrs); } catch { return {}; }
-  }
-  return {};
-}
-function normalizeTags(tags) {
-  if (!tags) return [];
-  if (Array.isArray(tags)) return tags.map(t => String(t || '').trim()).filter(Boolean);
-  if (typeof tags === 'string') {
-    return tags.split(',').map(t => t.trim()).filter(Boolean);
-  }
-  return [];
-}
-
 async function ensureMongoCollections() {
   if (!SHOULD_WRITE_MONGO && !SHOULD_READ_MONGO) return null;
   try {
@@ -131,19 +101,68 @@ async function ensureWorkbook(company) {
   if (!storageSheet) {
     storageSheet = workbook.addWorksheet(STORAGE_SHEET);
     storageSheet.columns = DEFAULT_COLUMNS_LOCATIONS;
-  }
-  if (!storageSheet.getRow(1).values || storageSheet.getRow(1).cellCount < DEFAULT_COLUMNS_LOCATIONS.length) {
-    storageSheet.columns = DEFAULT_COLUMNS_LOCATIONS;
+  } else {
+    // Migrate old schema (with ID/SheetName/CreatedAt) to the simplified layout
+    const header = (storageSheet.getRow(1).values || []).map(v => String(v || '').toLowerCase());
+    const needsMigration = header.length - 1 !== DEFAULT_COLUMNS_LOCATIONS.length ||
+      header[1] !== 'location name';
+    if (needsMigration) {
+      const rows = [];
+      const seen = new Set();
+      storageSheet.eachRow((row, rowNumber) => {
+        if (rowNumber === 1) return;
+        const name = String(row.getCell(2).value || row.getCell(1).value || '').trim();
+        if (!name) return;
+        const key = name.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        rows.push({
+          name,
+          description: row.getCell(3).value || row.getCell(2).value || '',
+          notes: row.getCell(5).value || row.getCell(3).value || '',
+        });
+      });
+      workbook.removeWorksheet(storageSheet.id);
+      storageSheet = workbook.addWorksheet(STORAGE_SHEET);
+      storageSheet.columns = DEFAULT_COLUMNS_LOCATIONS;
+      rows.forEach(r => storageSheet.addRow(r));
+    } else if (storageSheet.getRow(1).cellCount !== DEFAULT_COLUMNS_LOCATIONS.length) {
+      storageSheet.columns = DEFAULT_COLUMNS_LOCATIONS;
+    }
   }
 
-  let filterSheet = workbook.getWorksheet(FILTER_SHEET);
-  if (!filterSheet) {
-    filterSheet = workbook.addWorksheet(FILTER_SHEET);
-    filterSheet.columns = DEFAULT_COLUMNS_FILTERS;
+  // Deduplicate by location name if legacy rows created duplicates
+  if (storageSheet) {
+    const seen = new Set();
+    const rows = [];
+    let needsRewrite = false;
+    storageSheet.eachRow((row, rowNumber) => {
+      if (rowNumber === 1) return;
+      const name = String(row.getCell(1).value || row.getCell(2).value || '').trim();
+      if (!name) return;
+      const key = name.toLowerCase();
+      if (seen.has(key)) {
+        needsRewrite = true;
+        return;
+      }
+      seen.add(key);
+      rows.push({
+        name,
+        description: row.getCell(2).value || '',
+        notes: row.getCell(3).value || '',
+      });
+    });
+    if (needsRewrite) {
+      workbook.removeWorksheet(storageSheet.id);
+      storageSheet = workbook.addWorksheet(STORAGE_SHEET);
+      storageSheet.columns = DEFAULT_COLUMNS_LOCATIONS;
+      rows.forEach(r => storageSheet.addRow(r));
+    }
   }
-  if (!filterSheet.getRow(1).values || filterSheet.getRow(1).cellCount < DEFAULT_COLUMNS_FILTERS.length) {
-    filterSheet.columns = DEFAULT_COLUMNS_FILTERS;
-  }
+
+  // Remove legacy Filters sheet if present; filters are implicit from storage locations now
+  const filterSheet = workbook.getWorksheet('Filters');
+  if (filterSheet) workbook.removeWorksheet(filterSheet.id);
 
   return { workbook, filePath };
 }
@@ -165,53 +184,6 @@ function upsertRow(sheet, matcher, values) {
   return targetRow;
 }
 
-function readSheetRows(sheet, keys) {
-  const rows = [];
-  if (!sheet) return rows;
-  sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-    if (rowNumber === 1) return;
-    const obj = {};
-    keys.forEach((k, idx) => {
-      obj[k] = row.getCell(idx + 1).value ?? '';
-    });
-    rows.push(obj);
-  });
-  return rows;
-}
-
-function parseFilters(filterSheet) {
-  if (!filterSheet) return [];
-  const out = [];
-  filterSheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-    if (rowNumber === 1) return;
-    const id = row.getCell(1).value || '';
-    const name = row.getCell(2).value || '';
-    const field = row.getCell(3).value || '';
-    const operator = row.getCell(4).value || '';
-    const value = row.getCell(5).value || '';
-    if (id || name) {
-      out.push({ id: String(id), name: String(name), field: String(field), operator: String(operator), value: String(value) });
-    }
-  });
-  return out;
-}
-
-async function saveFiltersExcel(company, filters) {
-  const { workbook, filePath } = await ensureWorkbook(company);
-  const filterSheet = workbook.getWorksheet(FILTER_SHEET);
-  filterSheet.spliceRows(2, Math.max(0, filterSheet.rowCount)); // clear existing except header
-  (filters || []).forEach(f => {
-    filterSheet.addRow({
-      id: f.id || makeId('fil'),
-      name: f.name || '',
-      field: f.field || '',
-      operator: f.operator || '',
-      value: f.value || '',
-    });
-  });
-  await workbook.xlsx.writeFile(filePath);
-}
-
 async function saveFiltersMongo(company, filters) {
   const cols = await ensureMongoCollections();
   if (!cols) return;
@@ -230,33 +202,26 @@ async function saveFiltersMongo(company, filters) {
 async function upsertStorageLocation(company, payload = {}) {
   const name = String(payload.name || '').trim();
   if (!name) return { success: false, message: 'Location name is required' };
-  const id = payload.id || makeId('loc');
-  const sheetName = safeSheetName(payload.sheetName || name);
+  const id = name; // Use the human-readable name as the identifier
+  const sheetName = safeSheetName(name);
   const record = {
     id,
     name,
     description: payload.description || '',
-    sheetName,
     notes: payload.notes || '',
-    created_at: payload.created_at || new Date().toISOString(),
   };
 
   if (SHOULD_WRITE_EXCEL) {
     const { workbook, filePath } = await ensureWorkbook(company);
     const storageSheet = workbook.getWorksheet(STORAGE_SHEET);
     upsertRow(storageSheet, (row) => {
-      const rid = row.getCell(1).value;
-      const rname = row.getCell(2).value;
-      return String(rid) === String(id) || String(rname || '').trim().toLowerCase() === name.toLowerCase();
+      const rname = row.getCell(1).value || row.getCell(2).value;
+      return String(rname || '').trim().toLowerCase() === name.toLowerCase();
     }, record);
 
     let locSheet = workbook.getWorksheet(sheetName);
-    if (!locSheet) {
-      locSheet = workbook.addWorksheet(sheetName);
-      locSheet.columns = DEFAULT_COLUMNS_MATERIALS;
-    } else if (locSheet.getRow(1).cellCount < DEFAULT_COLUMNS_MATERIALS.length) {
-      locSheet.columns = DEFAULT_COLUMNS_MATERIALS;
-    }
+    if (!locSheet) locSheet = workbook.addWorksheet(sheetName);
+    ensureMaterialSheetColumns(locSheet);
 
     await workbook.xlsx.writeFile(filePath);
   }
@@ -276,25 +241,20 @@ async function upsertStorageLocation(company, payload = {}) {
 }
 
 async function upsertMaterial(company, payload = {}) {
-  const locationId = payload.location_id || payload.locationId;
-  if (!locationId) return { success: false, message: 'Location is required' };
+  const locationKey = payload.location_id || payload.locationId || payload.location || payload.location_name;
+  if (!locationKey) return { success: false, message: 'Location is required' };
   const name = String(payload.name || '').trim();
   if (!name) return { success: false, message: 'Material name is required' };
   const id = payload.id || makeId('mat');
-  const attrsObj = normalizeAttributes(payload.attributes);
-  const tagsArr = normalizeTags(payload.tags);
+  const locationName = String(locationKey).trim();
 
   const material = {
     id,
-    location_id: locationId,
+    location_id: locationName,
     name,
-    category: payload.category || '',
     quantity: payload.quantity ?? '',
     unit: payload.unit || '',
     value: payload.value ?? '',
-    tags: tagsArr.join(', '),
-    attributes: JSON.stringify(attrsObj),
-    notes: payload.notes || '',
     updated_at: new Date().toISOString(),
   };
 
@@ -304,19 +264,15 @@ async function upsertMaterial(company, payload = {}) {
     let targetSheetName = null;
     storageSheet.eachRow((row, rowNumber) => {
       if (rowNumber === 1) return;
-      const rid = row.getCell(1).value;
-      if (String(rid) === String(locationId)) {
-        targetSheetName = row.getCell(4).value || row.getCell(2).value;
+      const rname = row.getCell(1).value || row.getCell(2).value;
+      if (String(rname || '').trim().toLowerCase() === locationName.toLowerCase()) {
+        targetSheetName = row.getCell(1).value || row.getCell(2).value;
       }
     });
-    targetSheetName = safeSheetName(targetSheetName || 'Storage');
+    targetSheetName = safeSheetName(targetSheetName || locationName || 'Storage');
     let locSheet = workbook.getWorksheet(targetSheetName);
-    if (!locSheet) {
-      locSheet = workbook.addWorksheet(targetSheetName);
-      locSheet.columns = DEFAULT_COLUMNS_MATERIALS;
-    } else if (locSheet.getRow(1).cellCount < DEFAULT_COLUMNS_MATERIALS.length) {
-      locSheet.columns = DEFAULT_COLUMNS_MATERIALS;
-    }
+    if (!locSheet) locSheet = workbook.addWorksheet(targetSheetName);
+    ensureMaterialSheetColumns(locSheet);
     upsertRow(locSheet, (row) => String(row.getCell(1).value) === String(id), material);
     await workbook.xlsx.writeFile(filePath);
   }
@@ -326,7 +282,7 @@ async function upsertMaterial(company, payload = {}) {
     if (cols) {
       await cols.materials.updateOne(
         { company, id },
-        { $set: { company, ...material, tags: tagsArr, attributes: attrsObj } },
+        { $set: { company, ...material } },
         { upsert: true }
       );
     }
@@ -336,7 +292,7 @@ async function upsertMaterial(company, payload = {}) {
 }
 
 async function saveFilters(company, filters = []) {
-  if (SHOULD_WRITE_EXCEL) await saveFiltersExcel(company, filters);
+  // Filters sheet is no longer persisted to Excel; optional Mongo write is kept for parity.
   if (SHOULD_WRITE_MONGO) await saveFiltersMongo(company, filters);
   return { success: true };
 }
@@ -344,50 +300,61 @@ async function saveFilters(company, filters = []) {
 async function readFromExcel(company) {
   const { workbook } = await ensureWorkbook(company);
   const storageSheet = workbook.getWorksheet(STORAGE_SHEET);
-  const filterSheet = workbook.getWorksheet(FILTER_SHEET);
   const locations = [];
+  const nameToSheet = new Map(); // lowercased name -> { name, sheetName }
   storageSheet.eachRow((row, rowNumber) => {
     if (rowNumber === 1) return;
-    const id = row.getCell(1).value || '';
-    const name = row.getCell(2).value || '';
-    if (!id && !name) return;
+    const name = row.getCell(1).value || row.getCell(2).value || '';
+    if (!name) return;
+    const cleanName = String(name).trim();
+    const sheetName = safeSheetName(cleanName);
+    nameToSheet.set(cleanName.toLowerCase(), { name: cleanName, sheetName });
     locations.push({
-      id: String(id),
-      name: String(name),
-      description: row.getCell(3).value || '',
-      sheetName: safeSheetName(row.getCell(4).value || name),
-      notes: row.getCell(5).value || '',
-      created_at: row.getCell(6).value || '',
+      id: cleanName,
+      name: cleanName,
+      description: row.getCell(2).value || '',
+      sheetName,
+      notes: row.getCell(3).value || '',
     });
   });
 
   const materials = [];
-  const skip = new Set([STORAGE_SHEET, FILTER_SHEET]);
+  const skip = new Set([STORAGE_SHEET]);
   workbook.worksheets.forEach((sheet) => {
     if (skip.has(sheet.name)) return;
+    ensureMaterialSheetColumns(sheet);
     sheet.eachRow((row, rowNumber) => {
       if (rowNumber === 1) return;
       const id = row.getCell(1).value || '';
       const name = row.getCell(3).value || '';
       if (!id && !name) return;
-      const attrRaw = row.getCell(9).value || '{}';
+      const rawLoc = String(row.getCell(2).value || '').trim();
+      const locKey = rawLoc.toLowerCase();
+      const byName = nameToSheet.get(locKey);
+      let resolvedLoc = rawLoc;
+      if (byName) {
+        resolvedLoc = byName.name;
+      } else {
+        for (const info of nameToSheet.values()) {
+          if (info.sheetName.toLowerCase() === locKey) {
+            resolvedLoc = info.name;
+            break;
+          }
+        }
+      }
       materials.push({
         id: String(id),
-        location_id: String(row.getCell(2).value || ''),
+        location_id: resolvedLoc,
         name: String(name),
-        category: row.getCell(4).value || '',
-        quantity: row.getCell(5).value ?? '',
-        unit: row.getCell(6).value || '',
-        value: row.getCell(7).value ?? '',
-        tags: normalizeTags(row.getCell(8).value || ''),
-        attributes: normalizeAttributes(attrRaw),
-        notes: row.getCell(10).value || '',
-        updated_at: row.getCell(11).value || '',
+        quantity: row.getCell(4).value ?? '',
+        unit: row.getCell(5).value || '',
+        value: row.getCell(6).value ?? '',
+        updated_at: row.getCell(7).value || '',
       });
     });
   });
 
-  const filters = parseFilters(filterSheet);
+  const filters = locations.map(l => ({ id: l.id, name: l.name }));
   return { locations, materials, filters };
 }
 
@@ -399,14 +366,25 @@ async function readFromMongo(company) {
     cols.materials.find({ company }).toArray(),
     cols.filters.find({ company }).toArray(),
   ]);
+  const locMap = new Map();
+  locations.forEach(l => {
+    const id = String(l.id);
+    const name = String(l.name || l.id || '');
+    locMap.set(id, name);
+    locMap.set(name.toLowerCase(), name);
+  });
   return {
-    locations: locations.map(l => ({ ...l, id: String(l.id) })),
+    locations: locations.map(l => {
+      const name = String(l.name || l.id || '');
+      return { ...l, id: name, name };
+    }),
     materials: materials.map(m => ({
       ...m,
       id: String(m.id),
-      location_id: String(m.location_id || m.locationId || ''),
-      tags: normalizeTags(m.tags),
-      attributes: normalizeAttributes(m.attributes),
+      location_id: (() => {
+        const raw = String(m.location_id || m.locationId || m.location || '');
+        return locMap.get(raw) || locMap.get(raw.toLowerCase()) || raw;
+      })(),
     })),
     filters: filters.map(f => ({ ...f, id: String(f.id) })),
   };

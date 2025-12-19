@@ -11,6 +11,23 @@ const DOCUMENT_EXTS = [
   '.zip', '.rar', '.7z', '.tar', '.gz'
 ];
 
+async function uniqueNameInDir(dir, fileName) {
+  const ext = path.extname(fileName);
+  const stem = fileName.slice(0, fileName.length - ext.length);
+  let candidate = fileName;
+  let i = 1;
+  for (;;) {
+    const full = safePathJoin(dir, candidate);
+    try {
+      await fsp.access(full);
+      candidate = `${stem}_${i}${ext}`;
+      i++;
+    } catch (_) {
+      return candidate;
+    }
+  }
+}
+
 /**
  * Safely join paths, preserving UNC path format
  */
@@ -282,16 +299,17 @@ async function saveDocuments(siteName, stationId, folderPath, files) {
         }
 
         // Sanitize filename
-        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-        const filePath = safePathJoin(targetPath, safeName);
+        const safeName = String(file.name || '').replace(/[^a-zA-Z0-9._-]/g, '_');
+        const finalName = await uniqueNameInDir(targetPath, safeName);
+        const filePath = safePathJoin(targetPath, finalName);
 
         // Write file
         const buffer = Buffer.from(file.data, 'base64');
         await fsp.writeFile(filePath, buffer);
 
         saved.push({
-          name: safeName,
-          path: folderPath ? `${folderPath}/${safeName}` : safeName
+          name: finalName,
+          path: folderPath ? `${folderPath}/${finalName}` : finalName
         });
       } catch (e) {
         errors.push({ name: file.name, error: String(e) });

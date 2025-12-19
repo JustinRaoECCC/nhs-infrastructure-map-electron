@@ -40,6 +40,37 @@ async function copyWithUniqueName(src, destDir) {
   return target;
 }
 
+function sanitizeFilename(name) {
+  return String(name || '')
+    .normalize('NFKD')
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+async function copyWithDesiredName(src, destDir, desiredName) {
+  const srcBase = path.basename(src);
+  const srcExt = path.extname(srcBase);
+  const raw = String(desiredName || '').trim();
+  let base = sanitizeFilename(raw);
+  if (!base) return copyWithUniqueName(src, destDir);
+
+  const hasExt = path.extname(base);
+  if (!hasExt) base = `${base}${srcExt}`;
+
+  const name = base.replace(/\.[^.]+$/, '');
+  const ext = path.extname(base);
+
+  let target = path.join(destDir, base);
+  let i = 0;
+  for (;;) {
+    try { await fsp.access(target); i++; target = path.join(destDir, `${name}_${i}${ext}`); }
+    catch { break; }
+  }
+  await fsp.copyFile(src, target);
+  return target;
+}
+
 function containsInspectionWordFromList(folderName, keywords) {
   // 1. Safety check and normalize the folder name to lowercase
   const nameLower = String(folderName || '').trim().toLowerCase();
@@ -271,10 +302,15 @@ async function createInspectionFolder(siteName, stationId, payload) {
 
     // Copy photos (if any), keep original filenames, uniquify on collision
     for (const p of photos) {
-      if (!p || typeof p !== 'string') continue;
-      const ext = path.extname(p).toLowerCase();
+      const src = (p && typeof p === 'object') ? p.path : p;
+      const desired = (p && typeof p === 'object') ? p.name : null;
+      if (!src || typeof src !== 'string') continue;
+      const ext = path.extname(src).toLowerCase();
       if (!IMAGE_EXTS.includes(ext)) continue; // ignore non-images
-      try { await copyWithUniqueName(p, photosDir); } catch (e) { /* continue */ }
+      try {
+        if (desired) await copyWithDesiredName(src, photosDir, desired);
+        else await copyWithUniqueName(src, photosDir);
+      } catch (e) { /* continue */ }
     }
 
     // Copy report as "Inspection Report.pdf" (if provided)
