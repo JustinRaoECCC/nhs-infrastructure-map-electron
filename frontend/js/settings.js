@@ -659,8 +659,15 @@
       });
     }
 
+    let lookupReloadTimer = null;
+    const queueLookupReload = () => {
+      if (lookupReloadTimer) clearTimeout(lookupReloadTimer);
+      lookupReloadTimer = setTimeout(() => loadAndRender(root), 50);
+    };
+
     loadAndRender(root);
-    window.addEventListener('lookups:changed', () => loadAndRender(root));
+    window.addEventListener('lookups:changed', queueLookupReload);
+    window.addEventListener('lookups-changed', queueLookupReload);
   }
 
   window.initSettingsView = window.initSettingsView || initSettingsView;

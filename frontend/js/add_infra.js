@@ -182,10 +182,30 @@
     } catch (_) {}
   }
 
+  // Throttled filter refresh so every tab switch re-syncs the LHS tree.
+  const queueFilterRefresh = (() => {
+    let t = null;
+    return () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => {
+        t = null;
+        try { window.refreshFilters && window.refreshFilters(); } catch (_) {}
+      }, 25);
+    };
+  })();
+
+  // Notify listeners (settings colors, filters, etc.) that lookup data changed.
+  function broadcastLookupChange() {
+    ['lookups:changed', 'lookups-changed'].forEach(evt => {
+      try { window.dispatchEvent(new Event(evt)); } catch (_) {}
+    });
+  }
+
   async function showUsersView() {
     setActiveNav('navUsers');
     showViews({ map: false, list: false, docs: false, wizard: false, settings: false, users: true });
     safeEnableFullWidthMode();
+    queueFilterRefresh();
 
     const container = document.getElementById('usersContainer');
     if (!container) return;
@@ -253,6 +273,7 @@
     setActiveNav('navMap');
     showViews({ map: true, list: false, docs: false, wizard: false, settings: false });
     safeDisableFullWidthMode();
+    queueFilterRefresh();
 
     // Leaving docs: allow RHS to restore again
     delete document.body.dataset.suppressRhs;
@@ -270,6 +291,7 @@
     setActiveNav('navList');
     showViews({ map: false, list: true, docs: false, wizard: false, settings: false });
     safeDisableFullWidthMode();
+    queueFilterRefresh();
 
     // Leaving docs: allow RHS to restore again
     delete document.body.dataset.suppressRhs;
@@ -324,6 +346,7 @@
     setActiveNav('navSettings');
     showViews({ map: false, list: false, docs: false, wizard: false, settings: true });
     safeEnableFullWidthMode();
+    queueFilterRefresh();
 
     const container = document.getElementById('settingsContainer');
     if (!container) return;
@@ -355,6 +378,7 @@
     // Optimization/dashboard docs should be full-width; no RHS gutter
     safeEnableFullWidthMode();
     hideRightPanel();
+    queueFilterRefresh();
     if (!document.getElementById('dashboardContentContainer')) showMapView();
   }
 
@@ -363,6 +387,7 @@
     showViews({ map: false, list: false, docs: false, wizard: false, settings: false, materials: true });
     safeEnableFullWidthMode();
     hideRightPanel();
+    queueFilterRefresh();
     const rightToggleBtn = document.getElementById('toggleRight');
     if (rightToggleBtn) rightToggleBtn.style.display = 'none';
 
@@ -389,6 +414,7 @@
     setActiveNav('navDash'); // "Statistics" has become "Dashboard"
     showViews({ map: false, list: false, docs: false, wizard: false, settings: false, stats: true });
     safeEnableFullWidthMode();
+    queueFilterRefresh();
 
     // Optional: hide RHS panel content while in full-width stats view
     try {
@@ -1526,6 +1552,7 @@
         if (typeof window.electronAPI.normalizeFundingOverrides === 'function') {
           await window.electronAPI.normalizeFundingOverrides();
         }
+        broadcastLookupChange();
         await window.refreshFilters?.();
         await window.refreshMarkers?.();
         await window.renderList?.();

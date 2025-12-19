@@ -3384,10 +3384,14 @@ async function getWorkbookFieldCatalog(company = null, locationName = null) {
 
   try {
     let filesToScan = [];
+    const skipMaterialsFile = (p) => {
+      const base = path.basename(p).toLowerCase();
+      return base.includes('material');
+    };
     
     if (company && locationName) {
       const filePath = getLocationFilePath(company, locationName);
-      if (fs.existsSync(filePath)) {
+      if (fs.existsSync(filePath) && !skipMaterialsFile(filePath)) {
         filesToScan.push({ path: filePath, company, location: locationName });
       }
     } else {
@@ -3400,8 +3404,10 @@ async function getWorkbookFieldCatalog(company = null, locationName = null) {
         if (!fs.existsSync(dir)) continue;
         const files = fs.readdirSync(dir).filter(f => f.endsWith('.xlsx') && !f.startsWith('~$'));
         for (const f of files) {
+          const full = path.join(dir, f);
+          if (skipMaterialsFile(full)) continue; // Exclude materials workbooks from field catalog
           filesToScan.push({
-            path: path.join(dir, f),
+            path: full,
             company: comp,
             location: path.basename(f, '.xlsx')
           });
