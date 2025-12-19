@@ -6300,3 +6300,35 @@ html.modal-open, body.modal-open { overflow: hidden; }
   opacity: 0.65;
   cursor: not-allowed;
 }
+/* --------------------------------- Materials Manager ------------------------- */
+.materials-shell { display:flex; flex-direction:column; gap:12px; padding:12px; }
+.materials-header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.materials-header .actions { display:flex; gap:8px; align-items:center; }
+.materials-tabs { display:flex; gap:8px; flex-wrap:wrap; }
+.materials-body { display:grid; grid-template-columns:1fr; gap:12px; }
+.materials-loading { padding:8px 0; color: var(--muted); }
+.filters-card .filter-builder { display:flex; flex-direction:column; gap:8px; }
+.filter-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.filter-row select, .filter-row input { min-width: 140px; }
+.filter-chips { display:flex; gap:8px; flex-wrap:wrap; }
+.filter-chip { display:flex; align-items:center; gap:6px; }
+.filter-chip .chip-close { background:none; border:none; cursor:pointer; color:#475569; }
+.locations-card .locations-grid { display:flex; flex-wrap:wrap; gap:8px; }
+.location-pill { padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:#f8fafc; min-width:180px; }
+.location-pill .loc-name { font-weight:600; }
+.table-card .muted { color: var(--muted); }
+.form-grid { display:flex; flex-direction:column; gap:10px; }
+.form-row.split { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:10px; }
+.attr-row { display:flex; gap:8px; align-items:center; margin-bottom:6px; }
+.attr-row input { flex:1; }
+.modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.4); display:flex; align-items:center; justify-content:center; z-index:2000; opacity:0; transition:opacity .15s ease; }
+.modal-overlay.open { opacity:1; }
+.modal-card { background:#fff; border-radius:12px; box-shadow:var(--shadow); padding:16px; width: min(640px, 92vw); max-height:90vh; overflow:auto; }
+.modal-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+.modal-title { font-weight:700; font-size:18px; }
+.modal-body { display:flex; flex-direction:column; gap:12px; }
+.modal-footer { display:flex; justify-content:flex-end; gap:8px; margin-top:8px; }
+.eyebrow { text-transform:uppercase; font-size:12px; letter-spacing:.6px; color: var(--muted); }
+.muted { color: var(--muted); }
+.small { font-size:12px; }
+.chip.active { background: var(--primary); color:#fff; border-color: var(--primary); }

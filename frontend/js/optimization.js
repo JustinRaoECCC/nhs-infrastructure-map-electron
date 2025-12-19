@@ -2027,6 +2027,9 @@ function _mergeSplitMaps(...maps) {
           });
         }
 
+        // FIX: ensure station splits are visible in Opt2/Opt3 (O&M was missing when this wasn't set)
+        window._stationDataMap = stationDataMap;
+
         // Build overall weights
         const overall = {};
         document.querySelectorAll('.param-row').forEach(row => {
@@ -2138,6 +2141,7 @@ function _mergeSplitMaps(...maps) {
           <tr>
             <th>Rank</th>
             <th>Station ID</th>
+            <th>Site</th>
             <th>Location</th>
             <th>Asset Type</th>
             <th>Repair</th>
@@ -2204,6 +2208,10 @@ function _mergeSplitMaps(...maps) {
       function rowHtml(item) {
         const cost = Number(item.cost || 0);
         const repair = item.original_repair || {};
+
+        const station = window._stationDataMap?.[item.station_id] || {};
+        const site = getSiteNameForStationOrRepair(station);
+
         // For Opt1 we normally don't have station map; fall back to repair only
         const fundingType =
           findFieldAnywhere(repair, /*station*/ {}, 'Funding Type') ||
@@ -2219,6 +2227,7 @@ function _mergeSplitMaps(...maps) {
         let cells = `
           <td class="txt">${cell(item.rank)}</td>
           <td class="txt">${cell(item.station_id || '')}</td>
+          <td class="txt">${cell(site || '')}</td>
           <td class="txt">${cell(item.location || '')}</td>
           <td class="txt">${cell(item.asset_type || '')}</td>
           <td class="txt">${cell(repairName)}</td>
@@ -2358,6 +2367,9 @@ function _mergeSplitMaps(...maps) {
           if (stationId) stationDataMap[stationId] = station;
         });
 
+        // FIX: required for station-level split lookups in Opt2 nested tables
+        window._stationDataMap = stationDataMap;
+
         opt2Results.innerHTML = '<div class="opt-note">Grouping scored repairs into trips…</div>';
 
         // Use scored repairs from Optimization 1 only
@@ -2479,9 +2491,13 @@ function _mergeSplitMaps(...maps) {
                   ? trip.group_labels.map(gl => `${gl.name}: ${gl.value}`).join(' • ')
                   : `Access Type: ${trip.access_type || ''} • City of Travel: ${trip.city_of_travel || ''}`;
                 
-                const splitTotals = trip.total_split_costs || {};
-                const splitKeys = Object.keys(splitTotals).filter(k => Number(splitTotals[k]) > 0).sort();
-                const splitChips = splitKeys.map(k => `<span class="chip">${k}: ${formatCurrency(splitTotals[k])}</span>`).join('');
+                // Category-aware split chips (dynamic categories)
+                const allRepairs = (trip.stations || []).flatMap(st => (st.repairs || []));
+                const activeCats = detectActiveCategoriesFromRepairs(allRepairs);
+                const splitSources = collectSplitSourcesFromRepairs(allRepairs, activeCats);
+                const splitCols = buildSplitColumns(splitSources, activeCats);
+                const totals = computeSplitTotalsForRepairs(allRepairs, splitCols);
+                const splitChips = renderSplitChipsFromTotals(totals, splitCols);
                 
                 tripDiv.innerHTML = `
                   <div style="font-weight:600; margin-bottom:0.5em;">Trip ${idx + 1}: ${labels}</div>
@@ -2496,11 +2512,10 @@ function _mergeSplitMaps(...maps) {
                 `;
                 
                 // Add stations table
-                const keys = collectYearSplitKeys([trip]);
                 const stationScroll = document.createElement('div');
                 stationScroll.className = 'table-scroll';
                 tripDiv.appendChild(stationScroll);
-                renderStationsTable(stationScroll, trip, keys);
+                renderStationsTable(stationScroll, trip, splitCols);
                 
                 detailsDiv.appendChild(tripDiv);
               });
@@ -2514,21 +2529,6 @@ function _mergeSplitMaps(...maps) {
         opt2Results.appendChild(yearSection);
       });
 
-      // Helper to collect split keys (reuse from main renderOpt2Results)
-      function collectYearSplitKeys(trips) {
-        const found = new Set();
-        (trips || []).forEach(t => {
-          (t.stations || []).forEach(st => {
-            (st.repairs || []).forEach(rp => {
-              const smap = getSplitMapFromRepair(rp);
-              Object.entries(smap || {}).forEach(([k, mul]) => {
-                if (Number(mul) > 0) found.add(k);
-              });
-            });
-          });
-        });
-        return Array.from(found).sort();
-      }
     }
 
     function renderOpt2Results(result) {
@@ -2717,9 +2717,13 @@ function _mergeSplitMaps(...maps) {
             ? trip.group_labels.map(gl => `${gl.name}: ${gl.value}`).join(' • ')
             : `Access Type: ${trip.access_type || ''} • City of Travel: ${trip.city_of_travel || ''}`;
         
-        const splitTotals = trip.total_split_costs || {};
-        const splitKeys = Object.keys(splitTotals).filter(k => Number(splitTotals[k]) > 0).sort();
-        const splitChips = splitKeys.map(k => `<span class="chip">${k}: ${formatCurrency(splitTotals[k])}</span>`).join('');
+        // Category-aware split chips (dynamic categories)
+        const allRepairs = (trip.stations || []).flatMap(st => (st.repairs || []));
+        const activeCats = detectActiveCategoriesFromRepairs(allRepairs);
+        const splitSources = collectSplitSourcesFromRepairs(allRepairs, activeCats);
+        const splitCols = buildSplitColumns(splitSources, activeCats);
+        const totals = computeSplitTotalsForRepairs(allRepairs, splitCols);
+        const splitChips = renderSplitChipsFromTotals(totals, splitCols);
         
         tripSection.innerHTML = `
           <div class="trip-title">
@@ -2757,8 +2761,7 @@ function _mergeSplitMaps(...maps) {
               stationScroll.className = 'table-scroll';
               wrap.appendChild(stationScroll);
 
-              const keys = _collectSplitKeysForTrip(trip);
-              renderStationsTable(stationScroll, trip, keys);
+              renderStationsTable(stationScroll, trip, splitCols);
               detailsDiv.appendChild(wrap);
               rendered = true;
             }
@@ -3152,6 +3155,143 @@ function _mergeSplitMaps(...maps) {
       if (!isFinite(num)) return '$0';
       return '$' + num.toLocaleString(undefined, { maximumFractionDigits: 0 });
     }
+
+    // ─────────────────────────────────────────────────────────────
+    // CATEGORY + SPLIT (category-aware) helpers
+    // Dynamic categories + {Split} - {Category} formatting
+    // ─────────────────────────────────────────────────────────────
+    const CATEGORY_FIELDS = ['O&M', 'Capital', 'Decommission'];
+
+    function normalizeCategory(raw) {
+      const s = String(raw ?? '').trim().toLowerCase();
+      if (!s) return '';
+      if (s === 'o&m' || s === 'o & m' || s === 'om' || s.includes('o&m')) return 'O&M';
+      if (s.includes('capital')) return 'Capital';
+      if (s.includes('decommission') || s.includes('decom')) return 'Decommission';
+      const hit = CATEGORY_FIELDS.find(c => _canon(c) === _canon(raw));
+      return hit || String(raw).trim();
+    }
+
+    function parseSplitSpecToMap(spec) {
+      if (!spec) return {};
+      const out = Object.create(null);
+      String(spec).split(/\s*-\s*/).forEach(seg => {
+        const m = String(seg).match(/(-?\d+(?:\.\d+)?)%\s*([A-Za-z0-9()[\]\/\-\s]+)$/);
+        if (!m) return;
+        const pct = Number(m[1]);
+        const src = _canon(m[2] || '');
+        if (Number.isFinite(pct) && src) out[src] = pct / 100;
+      });
+      return out;
+    }
+
+    function getRepairCategory(repair) {
+      const station = window._stationDataMap?.[repair?.station_id] || {};
+      const raw =
+        findFieldAnywhere(repair, station, 'Category') ??
+        findFieldAnywhere(repair, station, 'Funding Type') ??
+        '';
+      const cat = normalizeCategory(raw);
+      if (cat) return cat;
+      // Fallback inference by presence of category columns
+      for (const c of CATEGORY_FIELDS) {
+        const spec = (repair && (repair[c] ?? repair[c.toLowerCase()])) || station?.[c];
+        if (spec) return c;
+      }
+      return '';
+    }
+
+    function getSplitMapForRepairCategory(repair) {
+      const station = window._stationDataMap?.[repair?.station_id] || {};
+      const category = getRepairCategory(repair);
+      if (!category) return { category: '', map: {} };
+      const spec =
+        (repair && (repair[category] ?? repair[category.toLowerCase()])) ??
+        station?.[category] ??
+        null;
+      return { category, map: parseSplitSpecToMap(spec) };
+    }
+
+    function detectActiveCategoriesFromRepairs(repairs) {
+      const set = new Set();
+      (repairs || []).forEach(r => {
+        const c = getRepairCategory(r);
+        if (c) set.add(c);
+      });
+      return CATEGORY_FIELDS.filter(c => set.has(c));
+    }
+
+    function collectSplitSourcesFromRepairs(repairs, activeCategories) {
+      const set = new Set();
+      (repairs || []).forEach(r => {
+        const station = window._stationDataMap?.[r?.station_id] || {};
+        const cat = getRepairCategory(r);
+        if (!cat) return;
+        if (activeCategories && !activeCategories.includes(cat)) return;
+        const spec =
+          (r && (r[cat] ?? r[cat.toLowerCase()])) ??
+          station?.[cat] ??
+          null;
+        Object.keys(parseSplitSpecToMap(spec)).forEach(srcCanon => set.add(srcCanon));
+      });
+      return Array.from(set).sort((a, b) => a.localeCompare(b));
+    }
+
+    function buildSplitColumns(splitSourcesCanon, activeCategories) {
+      const cols = [];
+      (splitSourcesCanon || []).forEach(srcCanon => {
+        (activeCategories || []).forEach(cat => {
+          cols.push({
+            key: `${srcCanon}__${_canon(cat)}`,
+            srcCanon,
+            cat,
+            label: `${srcCanon.toUpperCase()} - ${cat}`
+          });
+        });
+      });
+      return cols;
+    }
+
+    function computeSplitTotalsForRepairs(repairs, splitCols) {
+      const totals = Object.create(null);
+      (splitCols || []).forEach(c => totals[c.key] = 0);
+
+      (repairs || []).forEach(r => {
+        const station = window._stationDataMap?.[r?.station_id] || {};
+        const cost = _tryFloat(r.cost ?? r.Cost ?? findFieldAnywhere(r, station, 'Cost')) || 0;
+        if (!cost) return;
+        const { category, map } = getSplitMapForRepairCategory(r);
+        if (!category) return;
+        (splitCols || []).forEach(col => {
+          if (col.cat !== category) return;
+          const frac = Number(map[col.srcCanon] || 0);
+          if (frac > 0) totals[col.key] += cost * frac;
+        });
+      });
+      return totals;
+    }
+
+    function renderSplitChipsFromTotals(totals, splitCols) {
+      const parts = [];
+      (splitCols || []).forEach(col => {
+        const v = Number(totals?.[col.key] || 0);
+        if (v > 0) parts.push(`<span class="chip">${col.label}: ${formatCurrency(v)}</span>`);
+      });
+      return parts.join('');
+    }
+
+    function getSiteNameForStationOrRepair(obj) {
+      const st = obj || {};
+      return (
+        st.site_name ||
+        st['Site'] ||
+        st['Site Name'] ||
+        st['Station Name'] ||
+        st['Station'] ||
+        ''
+      );
+    }
+
     function findFieldAnywhere(repair, station, fieldName) {
       const canon = _canon(fieldName);
       for (const [k, v] of Object.entries(repair || {})) {
@@ -3345,7 +3485,7 @@ function _mergeSplitMaps(...maps) {
     }
 
     // Optimized station table rendering with lazy repair expansion
-    function renderStationsTable(container, trip, yearSplitKeys/*, useVirtual = false*/) {
+    function renderStationsTable(container, trip, splitCols/*, useVirtual = false*/) {
       {
         // Regular table for smaller datasets, but still with lazy repair expansion
         const tableScroll = document.createElement('div');
@@ -3359,8 +3499,7 @@ function _mergeSplitMaps(...maps) {
               <th></th>
               <th>Station ID</th><th>Site</th><th>City</th><th>Time to Site (hr)</th>
               <th>Repairs</th><th>Station Days</th>
-              ${yearSplitKeys.map(k => `<th>Split: ${k}</th>`).join('')}
-            </tr>
+              ${(splitCols || []).map(c => `<th>${c.label}</th>`).join('')}
           </thead>
           <tbody></tbody>
         `;
@@ -3374,15 +3513,8 @@ function _mergeSplitMaps(...maps) {
           const sTr = document.createElement('tr');
           sTr.className = 'tr-station';
           
-          const sSplit = {};
-          (st.repairs || []).forEach(rp => {
-            const cst = _tryFloat(rp.cost || findFieldAnywhere(rp, window._stationDataMap?.[rp.station_id], 'Cost')) || 0;
-            const smap = getSplitMapFromRepair(rp);
-            yearSplitKeys.forEach(k => {
-              const mul = Number(smap[_canon(k)] || 0);
-              if (mul > 0) sSplit[k] = (sSplit[k] || 0) + (cst * mul);
-            });
-          });
+          const stRepairs = (st.repairs || []);
+          const stTotals = computeSplitTotalsForRepairs(stRepairs, splitCols);
 
           sTr.innerHTML = `
             <td><button class="toggle" aria-label="Expand station">▸</button></td>
@@ -3392,8 +3524,8 @@ function _mergeSplitMaps(...maps) {
             <td class="txt">${st.time_to_site || ''}</td>
             <td class="txt">${String(st.repair_count)}</td>
             <td class="txt">${String(st.total_days)}</td>
-            ${yearSplitKeys.map(k => {
-              const val = Number(sSplit[k] || 0);
+            ${(splitCols || []).map(c => {
+              const val = Number(stTotals[c.key] || 0);
               return `<td class="txt">${val ? formatCurrency(val) : ''}</td>`;
             }).join('')}
           `;
@@ -3402,7 +3534,7 @@ function _mergeSplitMaps(...maps) {
           // Nested repairs - defer rendering
           const rNestRow = document.createElement('tr');
           const rCell = document.createElement('td');
-          const stationColCount = 7 + yearSplitKeys.length;
+          const stationColCount = 7 + (splitCols || []).length;
           rCell.colSpan = stationColCount;
           const repairsWrap = document.createElement('div');
           repairsWrap.style.display = 'none';
@@ -3427,8 +3559,8 @@ function _mergeSplitMaps(...maps) {
                 rTable.innerHTML = `
                   <thead>
                     <tr>
-                      <th>Repair</th><th>Repair Days</th><th>Cost</th>
-                      ${yearSplitKeys.map(k => `<th>Split: ${k}</th>`).join('')}
+                      <th>Repair</th><th>Repair Days</th><th>Cost</th><th>Category</th>
+                      ${(splitCols || []).map(c => `<th>${c.label}</th>`).join('')}
                     </tr>
                   </thead>
                   <tbody></tbody>
@@ -3438,15 +3570,17 @@ function _mergeSplitMaps(...maps) {
                 (st.repairs || []).forEach(rp => {
                   const d = _tryFloat(rp.days || rp.Days) || 0;
                   const cst = _tryFloat(rp.cost || findFieldAnywhere(rp, window._stationDataMap?.[rp.station_id], 'Cost')) || 0;
+                  const { category, map } = getSplitMapForRepairCategory(rp);                  
                   const rr = document.createElement('tr');
                   rr.innerHTML = `
                     <td class="txt">${rp.name || rp.repair_name || ''}</td>
                     <td class="txt">${String(d)}</td>
                     <td class="txt">${formatCurrency(cst)}</td>
-                    ${yearSplitKeys.map(k => {
-                      const smap = getSplitMapFromRepair(rp);
-                      const mul = Number(smap[_canon(k)] || 0);
-                      const val = mul > 0 ? cst * mul : 0;
+                    <td class="txt">${category || ''}</td>
+                    ${(splitCols || []).map(col => {
+                      if (col.cat !== category) return `<td class="txt"></td>`;
+                      const frac = Number(map[col.srcCanon] || 0);
+                      const val = frac > 0 ? (cst * frac) : 0;
                       return `<td class="txt">${val ? formatCurrency(val) : ''}</td>`;
                     }).join('')}
                   `;

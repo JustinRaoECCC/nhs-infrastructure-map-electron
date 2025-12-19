@@ -1,4 +1,4 @@
-// backend/app.js
+﻿// backend/app.js
 const fs = require('fs');
 const fsp = fs.promises;
 const { pathToFileURL } = require('url');
@@ -6,6 +6,7 @@ const path = require('path');
 
 const config = require('./config'); // <— changed
 const lookupsRepo = require('./lookups_repo');
+const materialsManager = require('./materials_manager');
 const { getPersistence } = require('./persistence');
 
 const IMAGE_EXTS = config.IMAGE_EXTS;
@@ -874,6 +875,37 @@ async function appendRepair(payload = {}) {
   return await persistence.appendRepair(company, location, assetType, repair);
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Materials Manager (Excel + Mongo dual-write)
+// ──────────────────────────────────────────────────────────────────────────────
+async function upsertCompanyWithMaterials(name, active, description, email) {
+  const res = await lookupsRepo.upsertCompany(name, active, description, email);
+  if (res && res.success !== false) {
+    try {
+      await materialsManager.ensureCompanyWorkbook(name);
+    } catch (e) {
+      console.warn('[materials] Failed to ensure materials workbook for company', name, e.message);
+    }
+  }
+  return res;
+}
+
+async function getMaterialsForCompany(company) {
+  return materialsManager.getCompanyData(company);
+}
+
+async function saveStorageLocation(company, payload) {
+  return materialsManager.upsertStorageLocation(company, payload);
+}
+
+async function saveMaterial(company, payload) {
+  return materialsManager.upsertMaterial(company, payload);
+}
+
+async function saveMaterialFilters(company, filters) {
+  return materialsManager.saveFilters(company, filters);
+}
+
 module.exports = {
   getStationData,
   getActiveCompanies,
@@ -886,7 +918,7 @@ module.exports = {
   listExcelSheets,
   addStationsFromSelection,
   manualAddInstance,
-  upsertCompany: lookupsRepo.upsertCompany,
+  upsertCompany: upsertCompanyWithMaterials,
   upsertLocation: lookupsRepo.upsertLocation,
   upsertAssetType: lookupsRepo.upsertAssetType,
   getLookupTree: lookupsRepo.getLookupTree,
@@ -903,6 +935,11 @@ module.exports = {
   updateStationData,
   // repairs
   appendRepair,
+  // materials
+  getMaterialsForCompany,
+  saveStorageLocation,
+  saveMaterial,
+  saveMaterialFilters,
   // algorithm/workplan & weights
   getAlgorithmParameters: async () => {
     const persistence = await getPersistence();
@@ -939,3 +976,4 @@ module.exports = {
     return persistence.saveFixedParameters(params);
   },
 };
+

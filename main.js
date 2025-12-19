@@ -395,6 +395,20 @@ ipcMain.handle('excel:parseRowsFromSheet', async (_evt, b64, sheetName) =>
   getExcelClient().parseRowsFromSheet(b64, sheetName)
 );
 
+// Materials Manager
+ipcMain.handle('materials:get', async (_evt, company) =>
+  backend.getMaterialsForCompany(company)
+);
+ipcMain.handle('materials:saveLocation', async (_evt, company, payload) =>
+  backend.saveStorageLocation(company, payload)
+);
+ipcMain.handle('materials:saveMaterial', async (_evt, company, payload) =>
+  backend.saveMaterial(company, payload)
+);
+ipcMain.handle('materials:saveFilters', async (_evt, company, filters) =>
+  backend.saveMaterialFilters(company, filters)
+);
+
 ipcMain.handle('photos:getRecent', async (_evt, { siteName, stationId, limit }) =>
   backend.getRecentPhotos(siteName, stationId, limit)
 );

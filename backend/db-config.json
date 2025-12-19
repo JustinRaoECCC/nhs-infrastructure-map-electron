@@ -4,9 +4,9 @@
     "connectionString": "mongodb+srv://username:password@host/dbname?retryWrites=true&w=majority&appName=Cluster0"
   },
   "read": {
-    "source": "mongodb"
+    "source": "excel"
   },
   "write": {
-    "targets": ["mongodb"]
+    "targets": ["excel"]
   }
 }

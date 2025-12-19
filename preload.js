@@ -26,6 +26,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setRepairColorForCompanyLocation: (assetType, company, location, color) =>
     ipcRenderer.invoke('setRepairColorForCompanyLocation', assetType, company, location, color),
   getLookupTree:      () => ipcRenderer.invoke('lookups:getTree'),
+  getActiveCompanies: () => ipcRenderer.invoke('lookups:getActiveCompanies'),
+  getLocationsForCompany: (company) => ipcRenderer.invoke('lookups:getLocationsForCompany', company),
+  getAssetTypesForLocation: (company, location) =>
+    ipcRenderer.invoke('lookups:getAssetTypesForLocation', company, location),
 
   // ─── Lookups (writes only — used by Add Infrastructure wizard) ──────────
   upsertCompany:   (name, active = true, description, email) =>
@@ -41,6 +45,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ─── Excel helper for Step 3 sheet picker ───────────────────────────────
   excelListSheets:            (b64)                 => ipcRenderer.invoke('excel:listSheets', b64),
   excelParseRowsFromSheet:    (b64, sheetName)      => ipcRenderer.invoke('excel:parseRowsFromSheet', b64, sheetName),
+
+  // Materials Manager
+  getMaterialsForCompany: (company) => ipcRenderer.invoke('materials:get', company),
+  saveMaterialLocation:   (company, payload) => ipcRenderer.invoke('materials:saveLocation', company, payload),
+  saveMaterial:           (company, payload) => ipcRenderer.invoke('materials:saveMaterial', company, payload),
+  saveMaterialFilters:    (company, filters) => ipcRenderer.invoke('materials:saveFilters', company, filters),
 
   // ─── Boot progress from the worker (UI progress bar) ────────────────────
   onExcelProgress: (handler) => {
