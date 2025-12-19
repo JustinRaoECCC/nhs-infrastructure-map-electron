@@ -3,3 +3,4 @@ node_modules/
 *.xlsx
 data/.lookups_cache.json
 .env
+package-lock.json
