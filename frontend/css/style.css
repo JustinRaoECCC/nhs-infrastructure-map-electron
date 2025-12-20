@@ -6332,3 +6332,26 @@ html.modal-open, body.modal-open { overflow: hidden; }
 .muted { color: var(--muted); }
 .small { font-size:12px; }
 .chip.active { background: var(--primary); color:#fff; border-color: var(--primary); }
+
+#photoViewerImageWrap {
+  overflow: hidden;
+  /* ensure it has a size; your modal layout probably already does this */
+}
+
+#photoViewerImage {
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+#photoZoomControls {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  gap: 8px;
+  z-index: 5;
+}
+
+#photoZoomControls button {
+  padding: 6px 10px;
+}

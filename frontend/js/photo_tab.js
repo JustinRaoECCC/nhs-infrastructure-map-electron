@@ -8,6 +8,170 @@
   let currentPhotoIndex = -1;
   let allFolderPaths = []; // For folder selection dropdowns
   let pendingPhotoUploads = []; // [{ file: File, newName: string }]
+    // ===== Photo viewer zoom/pan state =====
+  let viewerScale = 1;
+  let viewerPanX = 0;
+  let viewerPanY = 0;
+  let viewerIsPanning = false;
+  let viewerPanStartX = 0;
+  let viewerPanStartY = 0;
+  let viewerPanOriginX = 0;
+  let viewerPanOriginY = 0;
+
+  function clamp(n, min, max) {
+    return Math.max(min, Math.min(max, n));
+  }
+
+  function getViewerWrap(container) {
+    // Prefer a dedicated wrapper if you have it; otherwise use the img parent.
+    const img = container.querySelector('#photoViewerImage');
+    if (!img) return null;
+
+    let wrap = container.querySelector('#photoViewerImageWrap');
+    if (!wrap) {
+      wrap = img.parentElement;
+      if (wrap) wrap.id = 'photoViewerImageWrap';
+    }
+    return wrap;
+  }
+
+  function applyViewerTransform(container) {
+    const img = container.querySelector('#photoViewerImage');
+    if (!img) return;
+
+    img.style.transformOrigin = '0 0';
+    img.style.transform = `translate(${viewerPanX}px, ${viewerPanY}px) scale(${viewerScale})`;
+
+    // Nice cursor behavior
+    img.style.cursor = viewerScale > 1 ? (viewerIsPanning ? 'grabbing' : 'grab') : 'default';
+  }
+
+  function resetViewerTransform(container) {
+    viewerScale = 1;
+    viewerPanX = 0;
+    viewerPanY = 0;
+    viewerIsPanning = false;
+    applyViewerTransform(container);
+  }
+
+  // Zoom around a screen point (cursor-centered zoom)
+  function zoomViewer(container, factor, clientX, clientY) {
+    const modal = container.querySelector('#photoViewerModal');
+    if (!modal || modal.style.display === 'none') return;
+
+    const img = container.querySelector('#photoViewerImage');
+    const wrap = getViewerWrap(container);
+    if (!img || !wrap) return;
+
+    const rect = wrap.getBoundingClientRect();
+
+    // Clamp scale
+    const oldScale = viewerScale;
+    const newScale = clamp(oldScale * factor, 1, 6);
+    if (newScale === oldScale) return;
+
+    // Point inside wrapper in wrapper coords
+    const px = clientX - rect.left;
+    const py = clientY - rect.top;
+
+    // Convert that point to "image local" coords before zoom
+    const imgX = (px - viewerPanX) / oldScale;
+    const imgY = (py - viewerPanY) / oldScale;
+
+    // Update scale
+    viewerScale = newScale;
+
+    // Adjust pan so the same image-local point stays under the cursor
+    viewerPanX = px - imgX * viewerScale;
+    viewerPanY = py - imgY * viewerScale;
+
+    applyViewerTransform(container);
+  }
+
+  function setupViewerZoomHandlers(container) {
+    const modal = container.querySelector('#photoViewerModal');
+    const img = container.querySelector('#photoViewerImage');
+    const wrap = getViewerWrap(container);
+    if (!modal || !img || !wrap) return;
+
+    // Make wrapper behave well for pan/zoom
+    wrap.style.overflow = 'hidden';
+    wrap.style.touchAction = 'none'; // prevents browser gestures from stealing wheel/pan
+
+    // Prevent re-binding if init is called multiple times
+    if (wrap.dataset.zoomBound === '1') return;
+    wrap.dataset.zoomBound = '1';
+
+    // Wheel zoom
+    wrap.addEventListener('wheel', (e) => {
+      if (modal.style.display === 'none') return;
+      e.preventDefault();
+
+      const factor = e.deltaY < 0 ? 1.12 : 0.89; // zoom in/out
+      zoomViewer(container, factor, e.clientX, e.clientY);
+    }, { passive: false });
+
+    // Double-click reset
+    wrap.addEventListener('dblclick', () => resetViewerTransform(container));
+
+    // Mouse drag pan (only when zoomed)
+    wrap.addEventListener('mousedown', (e) => {
+      if (modal.style.display === 'none') return;
+      if (viewerScale <= 1) return;
+
+      viewerIsPanning = true;
+      viewerPanStartX = e.clientX;
+      viewerPanStartY = e.clientY;
+      viewerPanOriginX = viewerPanX;
+      viewerPanOriginY = viewerPanY;
+
+      applyViewerTransform(container);
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!viewerIsPanning) return;
+      viewerPanX = viewerPanOriginX + (e.clientX - viewerPanStartX);
+      viewerPanY = viewerPanOriginY + (e.clientY - viewerPanStartY);
+      applyViewerTransform(container);
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (!viewerIsPanning) return;
+      viewerIsPanning = false;
+      applyViewerTransform(container);
+    });
+
+    // Optional: inject zoom buttons into the modal if you don't already have them
+    let controls = container.querySelector('#photoZoomControls');
+    if (!controls) {
+      controls = document.createElement('div');
+      controls.id = 'photoZoomControls';
+      controls.innerHTML = `
+        <button type="button" id="photoZoomOut" title="Zoom out">−</button>
+        <button type="button" id="photoZoomReset" title="Reset zoom">Reset</button>
+        <button type="button" id="photoZoomIn" title="Zoom in">+</button>
+      `;
+      modal.appendChild(controls);
+    }
+
+    const zoomInBtn = container.querySelector('#photoZoomIn');
+    const zoomOutBtn = container.querySelector('#photoZoomOut');
+    const zoomResetBtn = container.querySelector('#photoZoomReset');
+
+    zoomInBtn?.addEventListener('click', () => {
+      const rect = wrap.getBoundingClientRect();
+      zoomViewer(container, 1.2, rect.left + rect.width / 2, rect.top + rect.height / 2);
+    });
+
+    zoomOutBtn?.addEventListener('click', () => {
+      const rect = wrap.getBoundingClientRect();
+      zoomViewer(container, 0.83, rect.left + rect.width / 2, rect.top + rect.height / 2);
+    });
+
+    zoomResetBtn?.addEventListener('click', () => resetViewerTransform(container));
+  }
+
 
   /**
    * Initialize the photo tab
@@ -93,14 +257,34 @@
     }
 
     // Keyboard navigation in photo viewer
-    document.addEventListener('keydown', (e) => {
+        document.addEventListener('keydown', (e) => {
       const viewer = container.querySelector('#photoViewerModal');
-      if (viewer && viewer.style.display !== 'none') {
-        if (e.key === 'ArrowLeft') navigatePhoto(-1, container);
-        if (e.key === 'ArrowRight') navigatePhoto(1, container);
-        if (e.key === 'Escape') closeModal(container, 'photoViewerModal');
+      if (!viewer || viewer.style.display === 'none') return;
+
+      const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
+      if (tag === 'input' || tag === 'textarea' || e.target?.isContentEditable) return;
+
+      if (e.key === 'ArrowLeft') navigatePhoto(-1, container);
+      if (e.key === 'ArrowRight') navigatePhoto(1, container);
+      if (e.key === 'Escape') closeModal(container, 'photoViewerModal');
+
+      // Zoom keys
+      if (e.key === '+' || e.key === '=') {
+        const wrap = getViewerWrap(container);
+        const rect = wrap?.getBoundingClientRect();
+        if (rect) zoomViewer(container, 1.2, rect.left + rect.width / 2, rect.top + rect.height / 2);
       }
+      if (e.key === '-' || e.key === '_') {
+        const wrap = getViewerWrap(container);
+        const rect = wrap?.getBoundingClientRect();
+        if (rect) zoomViewer(container, 0.83, rect.left + rect.width / 2, rect.top + rect.height / 2);
+      }
+      if (e.key === '0') resetViewerTransform(container);
     });
+
+       // Photo viewer zoom/pan handlers
+    setupViewerZoomHandlers(container);
+ 
   }
 
   /**
@@ -336,6 +520,11 @@
   function closeModal(container, modalId) {
     const modal = container.querySelector(`#${modalId}`);
     if (modal) modal.style.display = 'none';
+
+    if (modalId === 'photoViewerModal') {
+      resetViewerTransform(container);
+    }
+
   }
 
   /**
@@ -634,6 +823,7 @@
       }
 
       img.src = result.url;
+      resetViewerTransform(container);
       name.textContent = photo.name;
 
       // Update navigation buttons
