@@ -7,6 +7,7 @@
 
   <div class="stats-tabs">
     <button id="tabAnalytics" class="tab-button active" type="button">Analytics</button>
+    <button id="tabHistory" class="tab-button" type="button">Inspection/Project History</button>
     <button id="tabRepairs" class="tab-button" type="button">Repairs and Maintenance</button>
   </div>
 
@@ -78,6 +79,93 @@
     </div>
 
     <div id="analyticsGrid" class="stats-cards analytics-grid"><!-- dynamic cards --></div>
+  </section>
+
+  <!-- INSPECTION / PROJECT HISTORY -->
+  <section id="historyTab" class="stats-tab" style="display:none;">
+    <div class="history-toolbar">
+      <div class="history-actions">
+        <button id="btnHistoryAdd" class="btn">+ Add</button>
+        <div id="historyAddMenu" class="history-add-menu" style="display:none;">
+          <button id="historyAddInspection" type="button">Add Inspection</button>
+          <button id="historyAddProject" type="button">Add Project</button>
+        </div>
+        <button id="btnHistoryInspectionKeywords" class="btn btn-ghost" type="button">Inspection keywords</button>
+        <button id="btnHistoryProjectKeywords" class="btn btn-ghost" type="button">Project keywords</button>
+      </div>
+      <div class="history-filters">
+        <div class="form-row">
+          <label for="historyYear">Year</label>
+          <select id="historyYear">
+            <option value="">All years</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="historyCity">City of travel</label>
+          <select id="historyCity">
+            <option value="">All cities</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="historyField">Field filter</label>
+          <div class="search-select">
+            <input id="historyField" type="text" placeholder="Search any field" autocomplete="off" />
+          </div>
+        </div>
+        <div class="form-row">
+          <label for="historyFieldValue">Field value</label>
+          <select id="historyFieldValue" disabled>
+            <option value="">All values</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="historySort">Sort by</label>
+          <select id="historySort">
+            <option value="date_desc">Newest first</option>
+            <option value="date_asc">Oldest first</option>
+            <option value="year_desc">Year (high → low)</option>
+            <option value="year_asc">Year (low → high)</option>
+            <option value="city_asc">City A → Z</option>
+            <option value="city_desc">City Z → A</option>
+            <option value="station_asc">Station A → Z</option>
+            <option value="station_desc">Station Z → A</option>
+            <option value="field_asc">Field value A → Z</option>
+            <option value="field_desc">Field value Z → A</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div id="historyLoading" class="hint" style="display:none;">Loading inspection and project history…</div>
+    <div id="historyEmpty" class="empty" style="display:none;">No inspections or projects found.</div>
+
+    <div id="historyLists" class="history-grid">
+      <div class="history-column">
+        <div class="history-col-head">Inspections</div>
+        <div id="historyInspections" class="history-list"></div>
+        <div id="historyInspectionsPager" class="history-pagination"></div>
+      </div>
+      <div class="history-column">
+        <div class="history-col-head">Projects</div>
+        <div id="historyProjects" class="history-list"></div>
+        <div id="historyProjectsPager" class="history-pagination"></div>
+      </div>
+    </div>
+
+    <!-- PDF modals for previews -->
+    <div id="historyPdfModal" class="modal" style="display:none;">
+      <div class="modal-content" style="max-width:960px;width:92%;height:80vh;display:flex;flex-direction:column;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <h3 id="historyPdfTitle" style="margin:0;">Report</h3>
+          <button id="historyPdfClose" class="btn btn-ghost">Close</button>
+        </div>
+        <iframe id="historyPdfFrame" title="Report" style="flex:1;width:100%;border:1px solid var(--border);border-radius:8px;"></iframe>
+      </div>
+    </div>
+
+    <!-- Add modals -->
+    <div id="historyAddInspectionModal" class="modal" style="display:none;"></div>
+    <div id="historyAddProjectModal" class="modal" style="display:none;"></div>
   </section>
 
   <!-- REPAIRS AND MAINTENANCE -->

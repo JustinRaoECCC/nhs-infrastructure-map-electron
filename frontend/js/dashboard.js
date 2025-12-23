@@ -203,6 +203,19 @@
     cardsHost: null
   };
 
+  const historyState = {
+    loaded: false,
+    loading: false,
+    entries: [], // {type, station, item, dateMs, year, city}
+    filteredInspections: [],
+    filteredProjects: [],
+    years: [],
+    cities: [],
+    page: { inspections: 1, projects: 1 },
+    filter: { year: '', city: '', field: '', value: '', sort: 'date_desc' }
+  };
+
+  const HISTORY_PAGE_SIZE = 10;
   const palette = ['#2563eb', '#0ea5e9', '#22c55e', '#f59e0b', '#ef4444', '#7c3aed', '#14b8a6', '#f97316'];
 
   const renderQueue = new Set();
@@ -440,6 +453,1757 @@
       if (seen.size >= 80) break;
     }
     return Array.from(seen).sort((a, b) => a.localeCompare(b));
+  }
+
+  function collectHistoryFieldValues(fieldName) {
+    if (!fieldName) return [];
+    if (HISTORY_FIELD_EXCLUSIONS.includes(canonHistoryFieldName(fieldName))) return [];
+    // 1) Prefer scanning all stations (richer dataset, matches Opt2 logic)
+    const stationValues = collectStationFieldValues(fieldName);
+    if (stationValues.length) return stationValues;
+    // 2) Fallback to entries (in case field exists only on history items)
+    const seen = new Map();
+    const entries = historyState.entries || [];
+    for (const entry of entries) {
+      const raw = findHistoryFieldValue(entry.station, entry.item, fieldName);
+      const v = normStr(raw);
+      if (!v) continue;
+      const key = v.toLowerCase();
+      if (!seen.has(key)) seen.set(key, v);
+      if (seen.size >= 80) break;
+    }
+    return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
+  }
+
+  function collectStationFieldValues(fieldName) {
+    if (!fieldName) return [];
+    const seen = new Map();
+    (state.allStations || []).forEach(stn => {
+      const raw = findHistoryFieldValue(stn, null, fieldName);
+      const v = normStr(raw);
+      if (!v) return;
+      const key = v.toLowerCase();
+      if (!seen.has(key)) seen.set(key, v);
+      if (seen.size >= 80) return;
+    });
+    return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
+  }
+
+  // ---- Inspection/Project History (Dashboard) ------------------------------
+  const HISTORY_TYPES = { INSPECTION: 'inspection', PROJECT: 'project' };
+  const HISTORY_FIELD_EXCLUSIONS = ['city of travel'];
+
+  function normalizeHistoryFieldName(fieldName) {
+    return String(fieldName || '')
+      .replace(/\s*\((?:Station Data|Repairs)\)\s*$/i, '')
+      .trim();
+  }
+
+  const canonHistoryFieldName = (fieldName) => normalizeHistoryFieldName(fieldName).toLowerCase();
+
+  function findHistoryFieldValue(stn, item, fieldName) {
+    const targetCanon = canonHistoryFieldName(fieldName);
+    if (!targetCanon) return '';
+
+    const condensed = (s) => canonHistoryFieldName(s).replace(/[^a-z0-9]/g, '');
+    const targetCondensed = condensed(fieldName);
+
+    const probe = (obj) => {
+      if (!obj) return undefined;
+
+      const direct = getFieldValue(obj, fieldName);
+      if (direct !== undefined && direct !== '') return direct;
+
+      for (const [key, val] of Object.entries(obj)) {
+        const normalized = normalizeHistoryFieldName(key);
+        if (!normalized) continue;
+
+        const variants = [normalized];
+        const dashParts = normalized.split(/\s*[-\u2013]\s*/);
+        if (dashParts.length > 1) variants.push(dashParts[dashParts.length - 1].trim());
+
+        for (const variant of variants) {
+          const canon = canonHistoryFieldName(variant);
+          const cond = condensed(variant);
+          if (canon === targetCanon || cond === targetCondensed) {
+            return val;
+          }
+        }
+      }
+      return undefined;
+    };
+
+    const stnVal = probe(stn);
+    if (stnVal !== undefined && stnVal !== null && normStr(stnVal)) return stnVal;
+
+    const itemVal = probe(item);
+    return itemVal !== undefined ? itemVal : '';
+  }
+
+  function getStationFieldForHistory(stn, fieldName) {
+    return findHistoryFieldValue(stn, null, fieldName);
+  }
+
+  function buildHistoryEntry(type, stn, item) {
+    const ms = Number(item?.dateMs);
+    const parsedMs = Number.isFinite(ms) ? ms : Date.parse(item?.dateHuman || '') || 0;
+    const humanYear = String(item?.dateHuman || '').slice(0, 4);
+    const city = String(findHistoryFieldValue(stn, item, 'City of Travel') || '').trim();
+    return {
+      type,
+      station: stn || {},
+      item: item || {},
+      dateMs: parsedMs,
+      year: humanYear && /^\d{4}$/.test(humanYear) ? humanYear : (parsedMs ? String(new Date(parsedMs).getUTCFullYear()) : ''),
+      city
+    };
+  }
+
+  function setHistoryLoading(isLoading) {
+    const loading = $('#historyLoading');
+    historyState.loading = !!isLoading;
+    if (loading) loading.style.display = isLoading ? '' : 'none';
+  }
+
+  function refreshHistoryFilterOptions() {
+    const yearSel = $('#historyYear');
+    const citySel = $('#historyCity');
+    if (yearSel) {
+      const cur = yearSel.value;
+      yearSel.innerHTML = '<option value=\"\">All years</option>';
+      historyState.years.forEach(y => {
+        const opt = document.createElement('option');
+        opt.value = y;
+        opt.textContent = y;
+        yearSel.appendChild(opt);
+      });
+      yearSel.value = cur;
+    }
+    if (citySel) {
+      const cur = citySel.value;
+      citySel.innerHTML = '<option value=\"\">All cities</option>';
+      historyState.cities.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c;
+        opt.textContent = c;
+        citySel.appendChild(opt);
+      });
+      citySel.value = cur;
+    }
+  }
+
+  function historyFieldOptions() {
+    const banned = new Set(HISTORY_FIELD_EXCLUSIONS);
+    return (state.fieldNames || []).filter(name => !banned.has(canonHistoryFieldName(name)));
+  }
+
+  function refreshHistoryFieldValues() {
+    const field = $('#historyField')?.value || '';
+    const valueSel = $('#historyFieldValue');
+    if (!valueSel) return;
+    valueSel.innerHTML = '<option value=\"\">All values</option>';
+    const cleanField = normalizeHistoryFieldName(field);
+    if (!cleanField || HISTORY_FIELD_EXCLUSIONS.includes(canonHistoryFieldName(cleanField))) {
+      valueSel.disabled = true;
+      return;
+    }
+    const values = collectHistoryFieldValues(cleanField);
+    values.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = v;
+      opt.textContent = v;
+      valueSel.appendChild(opt);
+    });
+    valueSel.disabled = false;
+    valueSel.value = '';
+    historyState.filter.value = '';
+  }
+
+  function historySorter(sortKey) {
+    const fieldNorm = normalizeHistoryFieldName(historyState.filter.field);
+    const fieldExcluded = HISTORY_FIELD_EXCLUSIONS.includes(canonHistoryFieldName(fieldNorm));
+    const fieldVal = (entry) => (fieldNorm && !fieldExcluded) ? String(findHistoryFieldValue(entry.station, entry.item, fieldNorm) || '') : '';
+    const cityVal = (entry) => String(findHistoryFieldValue(entry.station, entry.item, 'City of Travel') || '');
+    const yearVal = (entry) => String(entry.year || '');
+    switch (sortKey) {
+      case 'date_asc':
+        return (a, b) => (a.dateMs || 0) - (b.dateMs || 0);
+      case 'year_desc':
+        return (a, b) => yearVal(b).localeCompare(yearVal(a)) || (b.dateMs || 0) - (a.dateMs || 0);
+      case 'year_asc':
+        return (a, b) => yearVal(a).localeCompare(yearVal(b)) || (a.dateMs || 0) - (b.dateMs || 0);
+      case 'city_asc':
+        return (a, b) => cityVal(a).localeCompare(cityVal(b));
+      case 'city_desc':
+        return (a, b) => cityVal(b).localeCompare(cityVal(a));
+      case 'station_asc':
+        return (a, b) => String(a.station?.name || '').localeCompare(String(b.station?.name || ''));
+      case 'station_desc':
+        return (a, b) => String(b.station?.name || '').localeCompare(String(a.station?.name || ''));
+      case 'field_asc':
+        return (a, b) => fieldVal(a).localeCompare(fieldVal(b));
+      case 'field_desc':
+        return (a, b) => fieldVal(b).localeCompare(fieldVal(a));
+      case 'date_desc':
+      default:
+        return (a, b) => (b.dateMs || 0) - (a.dateMs || 0);
+    }
+  }
+
+  function applyHistoryFilters() {
+    const { year, city, field, value, sort } = historyState.filter;
+    const fieldNorm = normalizeHistoryFieldName(field);
+    const fieldExcluded = HISTORY_FIELD_EXCLUSIONS.includes(canonHistoryFieldName(fieldNorm));
+    const valueNorm = String(value || '').toLowerCase();
+    const matches = (entry) => {
+      if (year && String(entry.year) !== String(year)) return false;
+      if (city) {
+        const entryCity = String(findHistoryFieldValue(entry.station, entry.item, 'City of Travel') || '').trim();
+        if (entryCity !== city) return false;
+      }
+      if (fieldNorm && valueNorm && !fieldExcluded) {
+        const v = String(findHistoryFieldValue(entry.station, entry.item, fieldNorm) || '').toLowerCase();
+        if (v !== valueNorm) return false;
+      }
+      return true;
+    };
+    const inspections = historyState.entries.filter(e => e.type === HISTORY_TYPES.INSPECTION && matches(e));
+    const projects = historyState.entries.filter(e => e.type === HISTORY_TYPES.PROJECT && matches(e));
+    const sorter = historySorter(sort);
+    inspections.sort(sorter);
+    projects.sort(sorter);
+    historyState.filteredInspections = inspections;
+    historyState.filteredProjects = projects;
+    historyState.page.inspections = 1;
+    historyState.page.projects = 1;
+    renderHistoryLists(inspections, projects);
+  }
+
+  function openHistoryPdfModal(url, title) {
+    if (!url) return;
+    const modal = $('#historyPdfModal');
+    const frame = $('#historyPdfFrame');
+    const head = $('#historyPdfTitle');
+    const close = $('#historyPdfClose');
+    if (!modal || !frame) return;
+    frame.src = url;
+    if (head) head.textContent = title || 'Report';
+    modal.style.display = 'flex';
+    const closer = () => {
+      modal.style.display = 'none';
+      frame.removeAttribute('src');
+      close?.removeEventListener('click', closer);
+      modal.removeEventListener('click', backdropCloser);
+      document.removeEventListener('keydown', escCloser);
+    };
+    const backdropCloser = (e) => { if (e.target === modal) closer(); };
+    const escCloser = (e) => { if (e.key === 'Escape') closer(); };
+    close?.addEventListener('click', closer);
+    modal.addEventListener('click', backdropCloser);
+    document.addEventListener('keydown', escCloser);
+  }
+
+  function buildInspectionCard(entry) {
+    const { item, station } = entry;
+    const wrap = document.createElement('div');
+    wrap.className = 'history-card inspection-item';
+    wrap.setAttribute('data-date-ms', String(entry.dateMs || ''));
+
+    const header = document.createElement('div');
+    header.style.display = 'flex';
+    header.style.justifyContent = 'space-between';
+    header.style.alignItems = 'center';
+    header.style.gap = '8px';
+
+    const title = document.createElement('div');
+    title.style.fontWeight = '700';
+    title.style.fontSize = '14px';
+    const byInspector = item.inspector ? ` by ${item.inspector}` : '';
+    const datePart = item.dateHuman ? ` - ${item.dateHuman}` : '';
+    title.textContent = `${item.displayName || item.folderName || 'Inspection'}${byInspector}${datePart}`;
+    header.appendChild(title);
+
+    const actions = document.createElement('div');
+    actions.style.display = 'flex';
+    actions.style.gap = '8px';
+
+    const reportBtn = document.createElement('button');
+    reportBtn.className = 'btn';
+    reportBtn.textContent = 'Inspection Report';
+    reportBtn.disabled = !item.reportUrl;
+    reportBtn.addEventListener('click', () => openHistoryPdfModal(item.reportUrl, `${item.displayName || 'Inspection'} Report`));
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-ghost btn-sm btn-danger';
+    delBtn.textContent = 'Delete';
+    delBtn.title = 'Delete this inspection';
+    delBtn.addEventListener('click', async () => {
+      const ok = await appConfirm(`Delete the "${item.folderName || item.displayName || 'inspection'}" folder for ${station.name || station.station_id}?`);
+      if (!ok) return;
+      delBtn.disabled = true;
+      delBtn.textContent = 'Deleting…';
+      try {
+        await window.electronAPI.deleteInspection(station.name, station.station_id, item.folderName);
+        historyState.loaded = false;
+        await ensureHistoryData(true);
+      } catch (e) {
+        console.error('[history] delete inspection failed', e);
+        delBtn.disabled = false;
+        delBtn.textContent = 'Delete';
+      }
+    });
+
+    actions.appendChild(reportBtn);
+    actions.appendChild(delBtn);
+    header.appendChild(actions);
+    wrap.appendChild(header);
+
+    const meta = document.createElement('div');
+    meta.className = 'history-meta';
+    const badge = document.createElement('span');
+    badge.className = 'history-badge';
+    badge.textContent = `Station ${station.station_id || ''}`;
+    meta.appendChild(badge);
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = station.name || '';
+    meta.appendChild(nameSpan);
+    const locSpan = document.createElement('span');
+    locSpan.textContent = stationLocation(station) || '';
+    meta.appendChild(locSpan);
+    const assetSpan = document.createElement('span');
+    assetSpan.textContent = stationAssetType(station) || '';
+    meta.appendChild(assetSpan);
+    if (entry.city) {
+      const citySpan = document.createElement('span');
+      citySpan.textContent = `City of travel: ${entry.city}`;
+      meta.appendChild(citySpan);
+    }
+    wrap.appendChild(meta);
+
+    if (item.commentText && item.commentText.trim()) {
+      const comment = document.createElement('div');
+      comment.className = 'ih-comment';
+      comment.style.marginTop = '8px';
+      comment.style.whiteSpace = 'pre-wrap';
+      comment.textContent = item.commentText.trim();
+      wrap.appendChild(comment);
+    }
+
+    const photosRow = document.createElement('div');
+    photosRow.className = 'history-photo-row';
+    if (item.photos && item.photos.length) {
+      item.photos.forEach(p => {
+        const a = document.createElement('a');
+        a.href = p.url;
+        a.title = p.name || 'Inspection photo';
+        a.target = '_blank';
+        const img = document.createElement('img');
+        img.src = p.url;
+        img.alt = p.name || 'Inspection photo';
+        a.appendChild(img);
+        photosRow.appendChild(a);
+      });
+      const extra = Number(item.moreCount || 0);
+      if (extra > 0) {
+        const more = document.createElement('div');
+        more.textContent = `+ ${extra} more`;
+        more.style.fontWeight = '700';
+        more.style.color = '#374151';
+        photosRow.appendChild(more);
+      }
+    } else {
+      const empty = document.createElement('div');
+      empty.className = 'photo-empty';
+      empty.textContent = 'No photos found for this inspection';
+      photosRow.appendChild(empty);
+    }
+    wrap.appendChild(photosRow);
+
+    return wrap;
+  }
+
+  function buildProjectCard(entry) {
+    const { item, station } = entry;
+    const wrap = document.createElement('div');
+    wrap.className = 'history-card project-item';
+    wrap.setAttribute('data-date-ms', String(entry.dateMs || ''));
+
+    const header = document.createElement('div');
+    header.style.display = 'flex';
+    header.style.justifyContent = 'space-between';
+    header.style.alignItems = 'center';
+    header.style.gap = '8px';
+
+    const title = document.createElement('div');
+    title.style.fontWeight = '700';
+    title.style.fontSize = '14px';
+    const byLead = item.projectLead ? ` by ${item.projectLead}` : '';
+    const datePart = item.dateHuman ? ` - ${item.dateHuman}` : '';
+    title.textContent = `${item.displayName || item.folderName || 'Project'}${byLead}${datePart}`;
+    header.appendChild(title);
+
+    const actions = document.createElement('div');
+    actions.style.display = 'flex';
+    actions.style.gap = '8px';
+
+    const reportBtn = document.createElement('button');
+    reportBtn.className = 'btn';
+    reportBtn.textContent = 'Project Report';
+    reportBtn.disabled = !item.reportUrl;
+    reportBtn.addEventListener('click', () => openHistoryPdfModal(item.reportUrl, `${item.displayName || 'Project'} Report`));
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-ghost btn-sm btn-danger';
+    delBtn.textContent = 'Delete';
+    delBtn.title = 'Delete this project';
+    delBtn.addEventListener('click', async () => {
+      const ok = await appConfirm(`Delete the "${item.folderName || item.displayName || 'project'}" folder for ${station.name || station.station_id}?`);
+      if (!ok) return;
+      delBtn.disabled = true;
+      delBtn.textContent = 'Deleting…';
+      try {
+        await window.electronAPI.deleteProject(station.name, station.station_id, item.folderName);
+        historyState.loaded = false;
+        await ensureHistoryData(true);
+      } catch (e) {
+        console.error('[history] delete project failed', e);
+        delBtn.disabled = false;
+        delBtn.textContent = 'Delete';
+      }
+    });
+
+    actions.appendChild(reportBtn);
+    actions.appendChild(delBtn);
+    header.appendChild(actions);
+    wrap.appendChild(header);
+
+    const meta = document.createElement('div');
+    meta.className = 'history-meta';
+    const badge = document.createElement('span');
+    badge.className = 'history-badge';
+    badge.textContent = `Station ${station.station_id || ''}`;
+    meta.appendChild(badge);
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = station.name || '';
+    meta.appendChild(nameSpan);
+    const locSpan = document.createElement('span');
+    locSpan.textContent = stationLocation(station) || '';
+    meta.appendChild(locSpan);
+    const assetSpan = document.createElement('span');
+    assetSpan.textContent = stationAssetType(station) || '';
+    meta.appendChild(assetSpan);
+    if (entry.city) {
+      const citySpan = document.createElement('span');
+      citySpan.textContent = `City of travel: ${entry.city}`;
+      meta.appendChild(citySpan);
+    }
+    wrap.appendChild(meta);
+
+    if (item.commentText && item.commentText.trim()) {
+      const comment = document.createElement('div');
+      comment.className = 'ph-comment';
+      comment.style.marginTop = '8px';
+      comment.style.whiteSpace = 'pre-wrap';
+      comment.textContent = item.commentText.trim();
+      wrap.appendChild(comment);
+    }
+
+    const photosRow = document.createElement('div');
+    photosRow.className = 'history-photo-row';
+    if (item.photos && item.photos.length) {
+      item.photos.forEach(p => {
+        const a = document.createElement('a');
+        a.href = p.url;
+        a.title = p.name || 'Project photo';
+        a.target = '_blank';
+        const img = document.createElement('img');
+        img.src = p.url;
+        img.alt = p.name || 'Project photo';
+        a.appendChild(img);
+        photosRow.appendChild(a);
+      });
+      const extra = Number(item.moreCount || 0);
+      if (extra > 0) {
+        const more = document.createElement('div');
+        more.textContent = `+ ${extra} more`;
+        more.style.fontWeight = '700';
+        more.style.color = '#374151';
+        photosRow.appendChild(more);
+      }
+    } else {
+      const empty = document.createElement('div');
+      empty.className = 'photo-empty';
+      empty.textContent = 'No photos found for this project';
+      photosRow.appendChild(empty);
+    }
+    wrap.appendChild(photosRow);
+
+    return wrap;
+  }
+
+  function paginateHistoryList(list, page) {
+    const totalPages = Math.max(1, Math.ceil((list?.length || 0) / HISTORY_PAGE_SIZE));
+    const currentPage = Math.min(Math.max(page || 1, 1), totalPages);
+    const start = (currentPage - 1) * HISTORY_PAGE_SIZE;
+    return {
+      items: (list || []).slice(start, start + HISTORY_PAGE_SIZE),
+      totalPages,
+      currentPage
+    };
+  }
+
+  function renderHistoryPager(host, totalPages, currentPage, onChange) {
+    if (!host) return;
+    host.innerHTML = '';
+    if (totalPages <= 1) {
+      host.style.display = 'none';
+      return;
+    }
+    host.style.display = 'flex';
+
+    const clamp = (p) => Math.min(Math.max(p, 1), totalPages);
+    const addBtn = (label, target, disabled = false, isActive = false) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `history-page-btn${isActive ? ' active' : ''}`;
+      btn.textContent = label;
+      btn.disabled = !!disabled;
+      if (!disabled) btn.addEventListener('click', () => onChange(clamp(target)));
+      host.appendChild(btn);
+    };
+
+    addBtn('< Prev', currentPage - 1, currentPage <= 1);
+
+    const windowSize = 5;
+    let start = Math.max(1, currentPage - 2);
+    let end = Math.min(totalPages, start + windowSize - 1);
+    if (end - start < windowSize - 1) start = Math.max(1, end - windowSize + 1);
+    for (let p = start; p <= end; p++) {
+      addBtn(String(p), p, false, p === currentPage);
+    }
+
+    addBtn('Next >', currentPage + 1, currentPage >= totalPages);
+
+    const info = document.createElement('span');
+    info.className = 'history-page-info';
+    info.textContent = `Page ${currentPage} of ${totalPages}`;
+    host.appendChild(info);
+  }
+
+  function renderHistoryLists(inspections = historyState.filteredInspections, projects = historyState.filteredProjects) {
+    const insHost = $('#historyInspections');
+    const projHost = $('#historyProjects');
+    const empty = $('#historyEmpty');
+    const insPager = $('#historyInspectionsPager');
+    const projPager = $('#historyProjectsPager');
+    historyState.filteredInspections = inspections || [];
+    historyState.filteredProjects = projects || [];
+    const insPage = paginateHistoryList(inspections || [], historyState.page.inspections || 1);
+    const projPage = paginateHistoryList(projects || [], historyState.page.projects || 1);
+    historyState.page.inspections = insPage.currentPage;
+    historyState.page.projects = projPage.currentPage;
+    if (insHost) {
+      insHost.innerHTML = '';
+      if (!insPage.items.length) {
+        const ghost = document.createElement('div');
+        ghost.className = 'history-empty-card';
+        ghost.textContent = 'No inspections match the filters';
+        insHost.appendChild(ghost);
+      } else {
+        insPage.items.forEach(entry => insHost.appendChild(buildInspectionCard(entry)));
+      }
+    }
+    if (insPager) {
+      renderHistoryPager(insPager, insPage.totalPages, insPage.currentPage, (page) => {
+        historyState.page.inspections = page;
+        renderHistoryLists(historyState.filteredInspections, historyState.filteredProjects);
+      });
+    }
+    if (projHost) {
+      projHost.innerHTML = '';
+      if (!projPage.items.length) {
+        const ghost = document.createElement('div');
+        ghost.className = 'history-empty-card';
+        ghost.textContent = 'No projects match the filters';
+        projHost.appendChild(ghost);
+      } else {
+        projPage.items.forEach(entry => projHost.appendChild(buildProjectCard(entry)));
+      }
+    }
+    if (projPager) {
+      renderHistoryPager(projPager, projPage.totalPages, projPage.currentPage, (page) => {
+        historyState.page.projects = page;
+        renderHistoryLists(historyState.filteredInspections, historyState.filteredProjects);
+      });
+    }
+    if (empty) {
+      const none = (inspections && inspections.length === 0) && (projects && projects.length === 0);
+      empty.style.display = none ? '' : 'none';
+    }
+  }
+
+  function wireHistoryFieldInput(inputEl) {
+    if (!inputEl) return;
+    // Guard against double-wiring after clone
+    if (inputEl._historyWired) return;
+    inputEl._historyWired = true;
+    inputEl.addEventListener('change', () => {
+      historyState.filter.field = inputEl.value;
+      refreshHistoryFieldValues();
+      applyHistoryFilters();
+    });
+    inputEl.addEventListener('input', () => {
+      historyState.filter.field = inputEl.value;
+      refreshHistoryFieldValues();
+    });
+  }
+
+  function wireHistoryFilters() {
+    const yearSel = $('#historyYear');
+    const citySel = $('#historyCity');
+    let fieldInput = $('#historyField');
+    const valueSel = $('#historyFieldValue');
+    const sortSel = $('#historySort');
+
+    if (yearSel) {
+      yearSel.addEventListener('change', () => {
+        historyState.filter.year = yearSel.value;
+        applyHistoryFilters();
+      });
+    }
+    if (citySel) {
+      citySel.addEventListener('change', () => {
+        historyState.filter.city = citySel.value;
+        applyHistoryFilters();
+      });
+    }
+    if (fieldInput) {
+      fieldInput = applyAutocomplete(fieldInput, historyFieldOptions());
+      wireHistoryFieldInput(fieldInput);
+    }
+    if (valueSel) {
+      valueSel.addEventListener('change', () => {
+        historyState.filter.value = valueSel.value;
+        applyHistoryFilters();
+      });
+    }
+    if (sortSel) {
+      sortSel.addEventListener('change', () => {
+        historyState.filter.sort = sortSel.value || 'date_desc';
+        applyHistoryFilters();
+      });
+    }
+
+    const addBtn = $('#btnHistoryAdd');
+    const addMenu = $('#historyAddMenu');
+    const addInspection = $('#historyAddInspection');
+    const addProject = $('#historyAddProject');
+    if (addBtn && addMenu) {
+      const toggleMenu = (show) => {
+        addMenu.style.display = show ? 'flex' : 'none';
+      };
+      addBtn.addEventListener('click', () => {
+        const isOpen = addMenu.style.display === 'flex';
+        toggleMenu(!isOpen);
+      });
+      document.addEventListener('click', (e) => {
+        if (!addMenu.contains(e.target) && !addBtn.contains(e.target)) {
+          toggleMenu(false);
+        }
+      });
+    }
+    addInspection?.addEventListener('click', () => {
+      $('#historyAddMenu')?.style && ($('#historyAddMenu').style.display = 'none');
+      openHistoryAddInspection();
+    });
+    addProject?.addEventListener('click', () => {
+      $('#historyAddMenu')?.style && ($('#historyAddMenu').style.display = 'none');
+      openHistoryAddProject();
+    });
+
+    const btnInspectKeywords = $('#btnHistoryInspectionKeywords');
+    const btnProjectKeywords = $('#btnHistoryProjectKeywords');
+    btnInspectKeywords?.addEventListener('click', () => openHistoryKeywordModal('inspection'));
+    btnProjectKeywords?.addEventListener('click', () => openHistoryKeywordModal('project'));
+  }
+
+  function refreshHistoryFieldAutocomplete() {
+    let fieldInput = $('#historyField');
+    if (fieldInput) {
+      fieldInput = applyAutocomplete(fieldInput, historyFieldOptions());
+      wireHistoryFieldInput(fieldInput);
+    }
+  }
+
+  async function loadHistoryData(force = false) {
+    if (historyState.loading) return;
+    if (historyState.loaded && !force) {
+      applyHistoryFilters();
+      return;
+    }
+    setHistoryLoading(true);
+    try {
+      const entries = [];
+      const stations = Array.isArray(state.allStations) ? state.allStations : [];
+      for (const stn of stations) {
+        if (!stn || !stn.station_id) continue;
+        try {
+          const [inspections, projects] = await Promise.all([
+            window.electronAPI.listInspections(stn.name, stn.station_id),
+            window.electronAPI.listProjects(stn.name, stn.station_id)
+          ]);
+          (inspections || []).forEach(item => entries.push(buildHistoryEntry(HISTORY_TYPES.INSPECTION, stn, item)));
+          (projects || []).forEach(item => entries.push(buildHistoryEntry(HISTORY_TYPES.PROJECT, stn, item)));
+        } catch (e) {
+          console.warn('[history] load station entries failed', e);
+        }
+      }
+      historyState.entries = entries;
+      historyState.loaded = true;
+      historyState.years = Array.from(new Set(entries.map(e => e.year).filter(Boolean))).sort((a, b) => Number(b) - Number(a));
+      // Build city list from station data (matches Opt2 City of Travel lookup), not just entries
+      historyState.cities = collectStationFieldValues('City of Travel');
+      refreshHistoryFilterOptions();
+      refreshHistoryFieldValues();
+      applyHistoryFilters();
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  async function ensureHistoryData(force = false) {
+    try {
+      await loadHistoryData(force);
+    } catch (e) {
+      console.error('[history] failed to load', e);
+      setHistoryLoading(false);
+    }
+  }
+
+  function buildStationSelectorHTML(prefix) {
+    return `
+      <div class="form-row" style="grid-column:1 / -1;">
+        <label>Company</label>
+        <select id="${prefix}Company">
+          <option value="">Select company...</option>
+        </select>
+      </div>
+      <div class="form-row" style="grid-column:1 / -1;">
+        <label>Location</label>
+        <select id="${prefix}Location" disabled>
+          <option value="">Select company first...</option>
+        </select>
+      </div>
+      <div class="form-row" style="grid-column:1 / -1;">
+        <label>Asset Type</label>
+        <select id="${prefix}Asset" disabled>
+          <option value="">Select location first...</option>
+        </select>
+      </div>
+      <div class="form-row" style="grid-column:1 / -1;">
+        <label>Station *</label>
+        <div style="position:relative;">
+          <input id="${prefix}StationInput" type="text" placeholder="Type to search..." disabled autocomplete="off" />
+          <div id="${prefix}StationDropdown" class="station-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;max-height:200px;overflow-y:auto;background:#fff;border:1px solid #ddd;border-top:none;z-index:1000;"></div>
+        </div>
+        <input type="hidden" id="${prefix}StationId" />
+        <input type="hidden" id="${prefix}StationName" />
+        <input type="hidden" id="${prefix}StationLocation" />
+        <input type="hidden" id="${prefix}StationAsset" />
+      </div>`;
+  }
+
+  function wireStationSelector(modal, prefix) {
+    const opts = getFilteredAssetTypes();
+    const stationsList = Array.isArray(state.allStations) ? state.allStations : [];
+    const companySel = modal.querySelector(`#${prefix}Company`);
+    const locationSel = modal.querySelector(`#${prefix}Location`);
+    const assetSel = modal.querySelector(`#${prefix}Asset`);
+    const stationInput = modal.querySelector(`#${prefix}StationInput`);
+    const stationDropdown = modal.querySelector(`#${prefix}StationDropdown`);
+    const hidId = modal.querySelector(`#${prefix}StationId`);
+    const hidName = modal.querySelector(`#${prefix}StationName`);
+    const hidLoc = modal.querySelector(`#${prefix}StationLocation`);
+    const hidAsset = modal.querySelector(`#${prefix}StationAsset`);
+    let availableStations = [];
+
+    (opts.companies || []).forEach(co => {
+      const opt = document.createElement('option');
+      opt.value = co;
+      opt.textContent = co;
+      companySel?.appendChild(opt);
+    });
+
+    const resetStation = () => {
+      if (stationInput) stationInput.value = '';
+      if (hidId) hidId.value = '';
+      if (hidName) hidName.value = '';
+      if (hidLoc) hidLoc.value = '';
+      if (hidAsset) hidAsset.value = '';
+    };
+
+    const chooseStation = (st) => {
+      if (stationInput) stationInput.value = `${st.station_id || ''} - ${st.name || ''}`;
+      if (hidId) hidId.value = st.station_id || '';
+      if (hidName) hidName.value = st.name || '';
+      if (hidLoc) hidLoc.value = stationLocation(st) || '';
+      if (hidAsset) hidAsset.value = stationAssetType(st) || '';
+      if (stationDropdown) stationDropdown.style.display = 'none';
+    };
+
+    companySel?.addEventListener('change', () => {
+      const company = companySel.value;
+      resetStation();
+      locationSel.innerHTML = '<option value="">Select location...</option>';
+      assetSel.innerHTML = '<option value="">Select location first...</option>';
+      assetSel.disabled = true;
+      if (company) {
+        (opts.locationsByCompany?.[company] || []).forEach(loc => {
+          const opt = document.createElement('option');
+          opt.value = loc;
+          opt.textContent = loc;
+          locationSel.appendChild(opt);
+        });
+        locationSel.disabled = false;
+      } else {
+        locationSel.disabled = true;
+      }
+    });
+
+    locationSel?.addEventListener('change', () => {
+      const location = locationSel.value;
+      resetStation();
+      assetSel.innerHTML = '<option value="">Select asset type...</option>';
+      if (location) {
+        (opts.assetTypesByLocation?.[location] || []).forEach(at => {
+          const opt = document.createElement('option');
+          opt.value = at;
+          opt.textContent = at;
+          assetSel.appendChild(opt);
+        });
+        assetSel.disabled = false;
+      } else {
+        assetSel.disabled = true;
+      }
+    });
+
+    assetSel?.addEventListener('change', () => {
+      const location = locationSel.value;
+      const assetType = assetSel.value;
+      resetStation();
+      if (stationDropdown) {
+        stationDropdown.innerHTML = '';
+        stationDropdown.style.display = 'none';
+      }
+      if (location && assetType) {
+        availableStations = stationsList.filter(s =>
+          (stationLocation(s) === location) &&
+          (stationAssetType(s) === assetType) &&
+          (!companySel.value || normStr(s.company) === normStr(companySel.value))
+        );
+        if (stationInput) {
+          stationInput.disabled = false;
+          stationInput.placeholder = 'Type to search stations...';
+        }
+      } else {
+        availableStations = [];
+        if (stationInput) {
+          stationInput.disabled = true;
+          stationInput.placeholder = 'Select asset type first...';
+        }
+      }
+    });
+
+    if (stationInput && stationDropdown) {
+      const renderDropdown = (term) => {
+        stationDropdown.innerHTML = '';
+        const needle = String(term || '').toLowerCase();
+        const filtered = needle ? availableStations.filter(st => {
+          const id = String(st.station_id || '').toLowerCase();
+          const nm = String(st.name || '').toLowerCase();
+          return id.includes(needle) || nm.includes(needle);
+        }) : availableStations;
+        if (!filtered.length) {
+          stationDropdown.innerHTML = '<div style="padding:8px;color:#666;">No matching stations</div>';
+          stationDropdown.style.display = 'block';
+          return;
+        }
+        filtered.slice(0, 40).forEach(st => {
+          const item = document.createElement('div');
+          item.style.cssText = 'padding:8px;cursor:pointer;border-bottom:1px solid #f0f0f0;';
+          item.textContent = `${st.station_id} - ${st.name || ''}`;
+          item.addEventListener('mouseenter', () => { item.style.backgroundColor = '#f5f5f5'; });
+          item.addEventListener('mouseleave', () => { item.style.backgroundColor = ''; });
+          item.addEventListener('click', () => chooseStation(st));
+          stationDropdown.appendChild(item);
+        });
+        stationDropdown.style.display = 'block';
+      };
+
+      stationInput.addEventListener('input', () => renderDropdown(stationInput.value));
+      stationInput.addEventListener('focus', () => {
+        if (availableStations.length) renderDropdown(stationInput.value);
+      });
+      document.addEventListener('click', (e) => {
+        if (!stationDropdown.contains(e.target) && !stationInput.contains(e.target)) {
+          stationDropdown.style.display = 'none';
+        }
+      });
+    }
+
+    return {
+      getSelected() {
+        const id = String(hidId?.value || '').trim();
+        if (!id) return null;
+        return stationsList.find(s => String(s.station_id) === id) || null;
+      },
+      reset() { resetStation(); }
+    };
+  }
+
+  function buildRepairRow(it, idx, removeCb, fmtCostCell) {
+    const tr = document.createElement('tr');
+    const c1 = document.createElement('td'); c1.textContent = it.name || '';
+    const c2 = document.createElement('td'); c2.textContent = it.severity || '';
+    const c3 = document.createElement('td'); c3.textContent = it.priority || '';
+    const c4 = document.createElement('td'); c4.textContent = fmtCostCell(it.cost);
+    const c5 = document.createElement('td'); c5.textContent = it.type || '';
+    const c6 = document.createElement('td'); c6.textContent = (it.days === 0 ? 0 : it.days || '');
+    const c7 = document.createElement('td'); c7.textContent = it.category || '';
+    const c8 = document.createElement('td');
+    const del = document.createElement('button');
+    del.className = 'btn btn-ghost btn-sm btn-danger';
+    del.textContent = 'Remove';
+    del.title = 'Remove';
+    del.addEventListener('click', () => removeCb(idx));
+    c8.appendChild(del);
+    tr.appendChild(c1); tr.appendChild(c2); tr.appendChild(c3); tr.appendChild(c4); tr.appendChild(c5); tr.appendChild(c6); tr.appendChild(c7); tr.appendChild(c8);
+    return tr;
+  }
+
+  function openHistoryAddInspection() {
+    const modal = $('#historyAddInspectionModal');
+    if (!modal) return;
+    if (!modal._ctx) {
+      modal.innerHTML = `
+        <div class="modal-content ih-modal__content" style="max-width:900px;width:92%;max-height:92vh;overflow:auto;">
+          <div class="ih-modal__header">
+            <h3>Add Inspection</h3>
+            <p class="ih-subtitle">Create an inspection entry for any station.</p>
+          </div>
+          <div class="ih-modal__body">
+            <section class="ih-section">
+              <h4 class="ih-section__title">Station</h4>
+              <div class="ih-grid">${buildStationSelectorHTML('ghi')}</div>
+            </section>
+            <section class="ih-section">
+              <h4 class="ih-section__title">Details</h4>
+              <div class="ih-grid">
+                <div class="form-row required">
+                  <label for="ghiYear">Year (YYYY)</label>
+                  <input id="ghiYear" type="number" min="1000" max="9999" placeholder="2025" />
+                </div>
+                <div class="form-row required">
+                  <label for="ghiName">Name (must include "inspection")</label>
+                  <input id="ghiName" type="text" placeholder="Cableway Engineering Inspection" />
+                </div>
+                <div class="form-row">
+                  <label for="ghiInspector">Inspector</label>
+                  <input id="ghiInspector" type="text" placeholder="Inspector name" />
+                </div>
+                <div class="form-row" style="grid-column:1 / -1;">
+                  <label for="ghiComment">Comment</label>
+                  <textarea id="ghiComment" rows="3" placeholder="Any notes..."></textarea>
+                </div>
+              </div>
+            </section>
+            <section class="ih-section">
+              <h4 class="ih-section__title">Files</h4>
+              <div class="ih-file-row">
+                <div class="ih-file-col">
+                  <button id="ghiPickPhotos" class="btn">+ Add Photos</button>
+                  <span id="ghiPhotosSummary" class="ih-badge">0 selected</span>
+                </div>
+                <div class="ih-file-col">
+                  <button id="ghiPickReport" class="btn">+ Add Inspection Report (PDF)</button>
+                  <span id="ghiReportSummary" class="ih-badge">None</span>
+                </div>
+              </div>
+            </section>
+            <section class="ih-section">
+              <div class="ih-section__title-row">
+                <h4 class="ih-section__title">Repairs (optional)</h4>
+                <span class="ih-note">Add any repair items discovered during this inspection.</span>
+              </div>
+              <div class="ih-repairs-addGrid">
+                <div class="form-row">
+                  <label for="ghiRepName">Repair Name *</label>
+                  <input id="ghiRepName" type="text" />
+                </div>
+                <div class="form-row">
+                  <label for="ghiRepSeverity">Severity</label>
+                  <input id="ghiRepSeverity" type="text" placeholder="1-5" />
+                </div>
+                <div class="form-row">
+                  <label for="ghiRepPriority">Priority</label>
+                  <input id="ghiRepPriority" type="text" placeholder="1-5" />
+                </div>
+                <div class="form-row">
+                  <label for="ghiRepCost">Cost</label>
+                  <input id="ghiRepCost" type="text" />
+                </div>
+                <div class="form-row">
+                  <label for="ghiRepType">Type / Scope Type</label>
+                  <input id="ghiRepType" type="text" />
+                </div>
+                <div class="form-row">
+                  <label for="ghiRepDays">Days</label>
+                  <input id="ghiRepDays" type="text" />
+                </div>
+                <div class="form-row">
+                  <label for="ghiRepCategory">Category</label>
+                  <select id="ghiRepCategory">
+                    <option value="Capital">Capital</option>
+                    <option value="O&M">O&M</option>
+                    <option value="Decommission">Decommission</option>
+                  </select>
+                </div>
+                <div class="form-row form-row--button">
+                  <button id="ghiAddRepairBtn" class="btn">+ Add Repair</button>
+                </div>
+              </div>
+              <div class="table-scroll ih-table-scroll">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th style="width:40%;">Repair Name</th>
+                      <th>Severity</th>
+                      <th>Priority</th>
+                      <th>Cost</th>
+                      <th>Type / Scope Type</th>
+                      <th>Days</th>
+                      <th>Category</th>
+                      <th style="width:54px;">&nbsp;</th>
+                    </tr>
+                  </thead>
+                  <tbody id="ghiRepairsTbody">
+                    <tr class="ih-repairs-empty">
+                      <td colspan="8" style="text-align:center;color:#6b7280;">No repairs added</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+            <div id="ghiError" class="ih-error" style="display:none;"></div>
+          </div>
+          <div class="ih-modal__footer">
+            <button id="ghiCreateBtn" class="btn btn-primary">Create</button>
+            <button id="ghiCancelBtn" class="btn btn-ghost">Cancel</button>
+          </div>
+        </div>`;
+
+      const stationCtrl = wireStationSelector(modal, 'ghi');
+      const yearEl = modal.querySelector('#ghiYear');
+      const nameEl = modal.querySelector('#ghiName');
+      const inspEl = modal.querySelector('#ghiInspector');
+      const commEl = modal.querySelector('#ghiComment');
+      const errEl = modal.querySelector('#ghiError');
+      const createEl = modal.querySelector('#ghiCreateBtn');
+      const cancelEl = modal.querySelector('#ghiCancelBtn');
+      const pickPhotos = modal.querySelector('#ghiPickPhotos');
+      const photosSum = modal.querySelector('#ghiPhotosSummary');
+      const pickReport = modal.querySelector('#ghiPickReport');
+      const reportSum = modal.querySelector('#ghiReportSummary');
+      const repName = modal.querySelector('#ghiRepName');
+      const repSeverity = modal.querySelector('#ghiRepSeverity');
+      const repPriority = modal.querySelector('#ghiRepPriority');
+      const repCost = modal.querySelector('#ghiRepCost');
+      const repType = modal.querySelector('#ghiRepType');
+      const repDays = modal.querySelector('#ghiRepDays');
+      const repCategory = modal.querySelector('#ghiRepCategory');
+      const addRepairBtn = modal.querySelector('#ghiAddRepairBtn');
+      const repairsTbody = modal.querySelector('#ghiRepairsTbody');
+
+      const ctx = {
+        stationCtrl,
+        yearEl, nameEl, inspEl, commEl, errEl,
+        createEl, cancelEl, pickPhotos, photosSum, pickReport, reportSum,
+        repName, repSeverity, repPriority, repCost, repType, repDays, repCategory,
+        addRepairBtn, repairsTbody,
+        selectedPhotos: [],
+        selectedReport: null,
+        pendingRepairs: []
+      };
+
+      const fmtCostCell = (v) => {
+        if (typeof v === 'number' && Number.isFinite(v)) {
+          try { return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v); }
+          catch { return `$${Math.round(v).toLocaleString()}`; }
+        }
+        const s = String(v ?? '').trim();
+        return s || '';
+      };
+
+      ctx.renderRepairs = () => {
+        if (!ctx.repairsTbody) return;
+        ctx.repairsTbody.innerHTML = '';
+        if (!ctx.pendingRepairs.length) {
+          const tr = document.createElement('tr');
+          tr.className = 'ih-repairs-empty';
+          const td = document.createElement('td');
+          td.colSpan = 8;
+          td.style.textAlign = 'center';
+          td.style.color = '#6b7280';
+          td.textContent = 'No repairs added';
+          tr.appendChild(td);
+          ctx.repairsTbody.appendChild(tr);
+          return;
+        }
+        ctx.pendingRepairs.forEach((it, idx) => {
+          ctx.repairsTbody.appendChild(buildRepairRow(it, idx, (i) => { ctx.pendingRepairs.splice(i, 1); ctx.renderRepairs(); }, fmtCostCell));
+        });
+      };
+
+      ctx.setError = (msg) => {
+        if (!ctx.errEl) return;
+        if (msg) { ctx.errEl.textContent = msg; ctx.errEl.style.display = 'block'; }
+        else { ctx.errEl.textContent = ''; ctx.errEl.style.display = 'none'; }
+      };
+
+      const validateRepair = (it) => {
+        if (!it.name) return 'Repair Name is required.';
+        if (!/^Capital$|^O&?M$|^Decomm/i.test(it.category || 'Capital')) return 'Select a valid Category.';
+        return null;
+      };
+
+      const readRepairForm = () => {
+        const name = String(ctx.repName?.value || '').trim();
+        const severity = String(ctx.repSeverity?.value || '').trim();
+        const priority = String(ctx.repPriority?.value || '').trim();
+        const rawCost = String(ctx.repCost?.value || '').trim();
+        const rawDays = String(ctx.repDays?.value || '').trim();
+        const category = ctx.repCategory?.value || 'Capital';
+        const type = String(ctx.repType?.value || '').trim() || 'Repair';
+        let cost = rawCost ? Number(rawCost.replace(/[, ]/g, '')) : '';
+        if (!Number.isFinite(cost)) cost = rawCost;
+        let days = rawDays ? Number(rawDays.replace(/[, ]/g, '')) : '';
+        if (!Number.isFinite(days)) days = rawDays;
+        return { name, severity, priority, cost, category, type, days };
+      };
+
+      const clearRepairForm = () => {
+        if (ctx.repName) ctx.repName.value = '';
+        if (ctx.repSeverity) ctx.repSeverity.value = '';
+        if (ctx.repPriority) ctx.repPriority.value = '';
+        if (ctx.repCost) ctx.repCost.value = '';
+        if (ctx.repType) ctx.repType.value = '';
+        if (ctx.repDays) ctx.repDays.value = '';
+        if (ctx.repCategory) ctx.repCategory.value = 'Capital';
+      };
+
+      ctx.addRepairBtn?.addEventListener('click', (e) => {
+        e.preventDefault();
+        const it = readRepairForm();
+        const err = validateRepair(it);
+        if (err) { ctx.setError(err); return; }
+        ctx.pendingRepairs.push(it);
+        clearRepairForm();
+        ctx.renderRepairs();
+        ctx.setError('');
+      });
+
+      ctx.pickPhotos?.addEventListener('click', async () => {
+        try {
+          const res = await window.electronAPI.pickInspectionPhotos();
+          const filePaths = Array.isArray(res?.filePaths) ? res.filePaths : [];
+          if (!filePaths.length) {
+            ctx.selectedPhotos = [];
+            if (ctx.photosSum) ctx.photosSum.textContent = '0 selected';
+            return;
+          }
+          const stn = ctx.stationCtrl.getSelected();
+          if (typeof window.openFileNamingPopup === 'function' && typeof window.applyNamingToList === 'function' && stn) {
+            const cfg = await window.openFileNamingPopup({
+              station: stn,
+              files: filePaths,
+              defaultExt: ''
+            });
+            if (!cfg) {
+              ctx.selectedPhotos = [];
+              if (ctx.photosSum) ctx.photosSum.textContent = '0 selected';
+              return;
+            }
+            const renamed = window.applyNamingToList({
+              station: stn,
+              files: filePaths,
+              config: cfg
+            });
+            ctx.selectedPhotos = renamed.map((r, i) => ({ path: filePaths[i], name: r.newName }));
+          } else {
+            ctx.selectedPhotos = filePaths.slice();
+          }
+          if (ctx.photosSum) ctx.photosSum.textContent = `${filePaths.length} selected`;
+        } catch (e) {
+          console.error('[history] pickInspectionPhotos failed', e);
+        }
+      });
+
+      ctx.pickReport?.addEventListener('click', async () => {
+        try {
+          const res = await window.electronAPI.pickInspectionReport();
+          ctx.selectedReport = res?.filePath || null;
+          if (ctx.reportSum) ctx.reportSum.textContent = ctx.selectedReport ? '1 PDF selected' : 'None';
+        } catch (e) {
+          console.error('[history] pickInspectionReport failed', e);
+        }
+      });
+
+      const validateForm = () => {
+        const stn = ctx.stationCtrl.getSelected();
+        if (!stn) return 'Select a station.';
+        const year = Number(ctx.yearEl?.value || '');
+        const name = String(ctx.nameEl?.value || '').trim();
+        if (!Number.isInteger(year) || year < 1000 || year > 9999) return 'Enter a valid 4-digit year.';
+        if (!name || !/inspection/i.test(name)) return 'Name is required and must include the word "inspection".';
+        return null;
+      };
+
+      ctx.createEl?.addEventListener('click', async () => {
+        const err = validateForm();
+        if (err) { ctx.setError(err); return; }
+        ctx.setError('');
+        const stn = ctx.stationCtrl.getSelected();
+        const payload = {
+          year: Number(ctx.yearEl?.value || 0),
+          name: String(ctx.nameEl?.value || '').trim(),
+          inspector: String(ctx.inspEl?.value || '').trim(),
+          comment: String(ctx.commEl?.value || '').trim(),
+          photos: ctx.selectedPhotos,
+          report: ctx.selectedReport
+        };
+        ctx.createEl.disabled = true;
+        ctx.createEl.textContent = 'Creating…';
+        try {
+          const res = await window.electronAPI.createInspection(stn.name, stn.station_id, payload);
+          if (!res?.success) {
+            ctx.setError(res?.message || 'Failed to create inspection.');
+            return;
+          }
+          if (ctx.pendingRepairs.length) {
+            try {
+              const current = await window.electronAPI.listRepairs(stn.name, stn.station_id);
+              const merged = Array.isArray(current) ? current.concat(ctx.pendingRepairs) : ctx.pendingRepairs.slice();
+              await window.electronAPI.saveRepairs(stn.name, stn.station_id, merged);
+            } catch (repErr) {
+              console.warn('[history] failed to save repairs with inspection', repErr);
+            }
+          }
+          historyState.loaded = false;
+          modal.style.display = 'none';
+          await ensureHistoryData(true);
+        } catch (e) {
+          console.error('[history] createInspection failed', e);
+          ctx.setError('Failed to create inspection.');
+        } finally {
+          ctx.createEl.disabled = false;
+          ctx.createEl.textContent = 'Create';
+        }
+      });
+
+      ctx.cancelEl?.addEventListener('click', () => { modal.style.display = 'none'; });
+
+      modal._ctx = ctx;
+    }
+
+    const ctx = modal._ctx;
+    ctx.pendingRepairs = [];
+    ctx.selectedPhotos = [];
+    ctx.selectedReport = null;
+    ctx.stationCtrl.reset();
+    if (ctx.yearEl && (!ctx.yearEl.value || Number(ctx.yearEl.value) < 1000)) ctx.yearEl.value = String(new Date().getFullYear());
+    if (ctx.nameEl && !ctx.nameEl.value) ctx.nameEl.value = 'Cableway Engineering Inspection';
+    if (ctx.inspEl) ctx.inspEl.value = '';
+    if (ctx.commEl) ctx.commEl.value = '';
+    if (ctx.photosSum) ctx.photosSum.textContent = '0 selected';
+    if (ctx.reportSum) ctx.reportSum.textContent = 'None';
+    ctx.renderRepairs();
+    ctx.setError('');
+    modal.style.display = 'flex';
+  }
+
+  function openHistoryAddProject() {
+    const modal = $('#historyAddProjectModal');
+    if (!modal) return;
+    if (!modal._ctx) {
+      modal.innerHTML = `
+        <div class="modal-content ph-modal__content" style="max-width:900px;width:92%;max-height:92vh;overflow:auto;">
+          <div class="ph-modal__header">
+            <h3>Add Project Entry</h3>
+            <p class="ph-subtitle">Create a project entry for any station.</p>
+          </div>
+          <div class="ph-modal__body">
+            <section class="ph-section">
+              <h4 class="ph-section__title">Station</h4>
+              <div class="ph-grid">${buildStationSelectorHTML('ghp')}</div>
+            </section>
+            <section class="ph-section">
+              <h4 class="ph-section__title">Details</h4>
+              <div class="ph-grid">
+                <div class="form-row required">
+                  <label for="ghpYear">Year (YYYY)</label>
+                  <input id="ghpYear" type="number" min="1000" max="9999" placeholder="2025" />
+                </div>
+                <div class="form-row required">
+                  <label for="ghpName">Name</label>
+                  <input id="ghpName" type="text" placeholder="Infrastructure Project" />
+                </div>
+                <div class="form-row">
+                  <label for="ghpLead">Project Lead</label>
+                  <input id="ghpLead" type="text" placeholder="Project lead" />
+                </div>
+                <div class="form-row" style="grid-column:1 / -1;">
+                  <label for="ghpComment">Comment</label>
+                  <textarea id="ghpComment" rows="3" placeholder="Any notes..."></textarea>
+                </div>
+              </div>
+            </section>
+            <section class="ph-section">
+              <h4 class="ph-section__title">Files</h4>
+              <div class="ph-file-row">
+                <div class="ph-file-col">
+                  <button id="ghpPickPhotos" class="btn">+ Add Photos</button>
+                  <span id="ghpPhotosSummary" class="ph-badge">0 selected</span>
+                </div>
+                <div class="ph-file-col">
+                  <button id="ghpPickReport" class="btn">+ Add Project Report (PDF)</button>
+                  <span id="ghpReportSummary" class="ph-badge">None</span>
+                </div>
+              </div>
+            </section>
+            <section class="ph-section">
+              <div class="ph-section__title-row">
+                <h4 class="ph-section__title">Repairs (optional)</h4>
+                <span class="ph-note">Add any repair items associated with this project.</span>
+              </div>
+              <div class="ph-repairs-addGrid">
+                <div class="form-row">
+                  <label for="ghpRepName">Repair Name *</label>
+                  <input id="ghpRepName" type="text" />
+                </div>
+                <div class="form-row">
+                  <label for="ghpRepSeverity">Severity</label>
+                  <input id="ghpRepSeverity" type="text" placeholder="1-5" />
+                </div>
+                <div class="form-row">
+                  <label for="ghpRepPriority">Priority</label>
+                  <input id="ghpRepPriority" type="text" placeholder="1-5" />
+                </div>
+                <div class="form-row">
+                  <label for="ghpRepCost">Cost</label>
+                  <input id="ghpRepCost" type="text" />
+                </div>
+                <div class="form-row">
+                  <label for="ghpRepType">Type / Scope Type</label>
+                  <input id="ghpRepType" type="text" />
+                </div>
+                <div class="form-row">
+                  <label for="ghpRepDays">Days</label>
+                  <input id="ghpRepDays" type="text" />
+                </div>
+                <div class="form-row">
+                  <label for="ghpRepCategory">Category</label>
+                  <select id="ghpRepCategory">
+                    <option value="Capital">Capital</option>
+                    <option value="O&M">O&M</option>
+                    <option value="Decommission">Decommission</option>
+                  </select>
+                </div>
+                <div class="form-row form-row--button">
+                  <button id="ghpAddRepairBtn" class="btn">+ Add Repair</button>
+                </div>
+              </div>
+              <div class="table-scroll ph-table-scroll">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th style="width:40%;">Repair Name</th>
+                      <th>Severity</th>
+                      <th>Priority</th>
+                      <th>Cost</th>
+                      <th>Type / Scope Type</th>
+                      <th>Days</th>
+                      <th>Category</th>
+                      <th style="width:54px;">&nbsp;</th>
+                    </tr>
+                  </thead>
+                  <tbody id="ghpRepairsTbody">
+                    <tr class="ph-repairs-empty">
+                      <td colspan="8" style="text-align:center;color:#6b7280;">No repairs added</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+            <div id="ghpError" class="ph-error" style="display:none;"></div>
+          </div>
+          <div class="ph-modal__footer">
+            <button id="ghpCreateBtn" class="btn btn-primary">Create</button>
+            <button id="ghpCancelBtn" class="btn btn-ghost">Cancel</button>
+          </div>
+        </div>`;
+
+      const stationCtrl = wireStationSelector(modal, 'ghp');
+      const yearEl = modal.querySelector('#ghpYear');
+      const nameEl = modal.querySelector('#ghpName');
+      const leadEl = modal.querySelector('#ghpLead');
+      const commEl = modal.querySelector('#ghpComment');
+      const errEl = modal.querySelector('#ghpError');
+      const createEl = modal.querySelector('#ghpCreateBtn');
+      const cancelEl = modal.querySelector('#ghpCancelBtn');
+      const pickPhotos = modal.querySelector('#ghpPickPhotos');
+      const photosSum = modal.querySelector('#ghpPhotosSummary');
+      const pickReport = modal.querySelector('#ghpPickReport');
+      const reportSum = modal.querySelector('#ghpReportSummary');
+      const repName = modal.querySelector('#ghpRepName');
+      const repSeverity = modal.querySelector('#ghpRepSeverity');
+      const repPriority = modal.querySelector('#ghpRepPriority');
+      const repCost = modal.querySelector('#ghpRepCost');
+      const repType = modal.querySelector('#ghpRepType');
+      const repDays = modal.querySelector('#ghpRepDays');
+      const repCategory = modal.querySelector('#ghpRepCategory');
+      const addRepairBtn = modal.querySelector('#ghpAddRepairBtn');
+      const repairsTbody = modal.querySelector('#ghpRepairsTbody');
+
+      const ctx = {
+        stationCtrl,
+        yearEl, nameEl, leadEl, commEl, errEl,
+        createEl, cancelEl, pickPhotos, photosSum, pickReport, reportSum,
+        repName, repSeverity, repPriority, repCost, repType, repDays, repCategory,
+        addRepairBtn, repairsTbody,
+        selectedPhotos: [],
+        selectedReport: null,
+        pendingRepairs: []
+      };
+
+      const fmtCostCell = (v) => {
+        if (typeof v === 'number' && Number.isFinite(v)) {
+          try { return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v); }
+          catch { return `$${Math.round(v).toLocaleString()}`; }
+        }
+        const s = String(v ?? '').trim();
+        return s || '';
+      };
+
+      ctx.renderRepairs = () => {
+        if (!ctx.repairsTbody) return;
+        ctx.repairsTbody.innerHTML = '';
+        if (!ctx.pendingRepairs.length) {
+          const tr = document.createElement('tr');
+          tr.className = 'ph-repairs-empty';
+          const td = document.createElement('td');
+          td.colSpan = 8;
+          td.style.textAlign = 'center';
+          td.style.color = '#6b7280';
+          td.textContent = 'No repairs added';
+          tr.appendChild(td);
+          ctx.repairsTbody.appendChild(tr);
+          return;
+        }
+        ctx.pendingRepairs.forEach((it, idx) => {
+          ctx.repairsTbody.appendChild(buildRepairRow(it, idx, (i) => { ctx.pendingRepairs.splice(i, 1); ctx.renderRepairs(); }, fmtCostCell));
+        });
+      };
+
+      ctx.setError = (msg) => {
+        if (!ctx.errEl) return;
+        if (msg) { ctx.errEl.textContent = msg; ctx.errEl.style.display = 'block'; }
+        else { ctx.errEl.textContent = ''; ctx.errEl.style.display = 'none'; }
+      };
+
+      const validateRepair = (it) => {
+        if (!it.name) return 'Repair Name is required.';
+        if (!/^Capital$|^O&?M$|^Decomm/i.test(it.category || 'Capital')) return 'Select a valid Category.';
+        return null;
+      };
+
+      const readRepairForm = () => {
+        const name = String(ctx.repName?.value || '').trim();
+        const severity = String(ctx.repSeverity?.value || '').trim();
+        const priority = String(ctx.repPriority?.value || '').trim();
+        const rawCost = String(ctx.repCost?.value || '').trim();
+        const rawDays = String(ctx.repDays?.value || '').trim();
+        const category = ctx.repCategory?.value || 'Capital';
+        const type = String(ctx.repType?.value || '').trim() || 'Repair';
+        let cost = rawCost ? Number(rawCost.replace(/[, ]/g, '')) : '';
+        if (!Number.isFinite(cost)) cost = rawCost;
+        let days = rawDays ? Number(rawDays.replace(/[, ]/g, '')) : '';
+        if (!Number.isFinite(days)) days = rawDays;
+        return { name, severity, priority, cost, category, type, days };
+      };
+
+      const clearRepairForm = () => {
+        if (ctx.repName) ctx.repName.value = '';
+        if (ctx.repSeverity) ctx.repSeverity.value = '';
+        if (ctx.repPriority) ctx.repPriority.value = '';
+        if (ctx.repCost) ctx.repCost.value = '';
+        if (ctx.repType) ctx.repType.value = '';
+        if (ctx.repDays) ctx.repDays.value = '';
+        if (ctx.repCategory) ctx.repCategory.value = 'Capital';
+      };
+
+      ctx.addRepairBtn?.addEventListener('click', (e) => {
+        e.preventDefault();
+        const it = readRepairForm();
+        const err = validateRepair(it);
+        if (err) { ctx.setError(err); return; }
+        ctx.pendingRepairs.push(it);
+        clearRepairForm();
+        ctx.renderRepairs();
+        ctx.setError('');
+      });
+
+      ctx.pickPhotos?.addEventListener('click', async () => {
+        try {
+          const res = await window.electronAPI.pickProjectPhotos();
+          const filePaths = Array.isArray(res?.filePaths) ? res.filePaths : [];
+          if (!filePaths.length) {
+            ctx.selectedPhotos = [];
+            if (ctx.photosSum) ctx.photosSum.textContent = '0 selected';
+            return;
+          }
+          const stn = ctx.stationCtrl.getSelected();
+          if (typeof window.openFileNamingPopup === 'function' && typeof window.applyNamingToList === 'function' && stn) {
+            const cfg = await window.openFileNamingPopup({
+              station: stn,
+              files: filePaths,
+              defaultExt: ''
+            });
+            if (!cfg) {
+              ctx.selectedPhotos = [];
+              if (ctx.photosSum) ctx.photosSum.textContent = '0 selected';
+              return;
+            }
+            const renamed = window.applyNamingToList({
+              station: stn,
+              files: filePaths,
+              config: cfg
+            });
+            ctx.selectedPhotos = renamed.map((r, i) => ({ path: filePaths[i], name: r.newName }));
+          } else {
+            ctx.selectedPhotos = filePaths.slice();
+          }
+          if (ctx.photosSum) ctx.photosSum.textContent = `${filePaths.length} selected`;
+        } catch (e) {
+          console.error('[history] pickProjectPhotos failed', e);
+        }
+      });
+
+      ctx.pickReport?.addEventListener('click', async () => {
+        try {
+          const res = await window.electronAPI.pickProjectReport();
+          ctx.selectedReport = res?.filePath || null;
+          if (ctx.reportSum) ctx.reportSum.textContent = ctx.selectedReport ? '1 PDF selected' : 'None';
+        } catch (e) {
+          console.error('[history] pickProjectReport failed', e);
+        }
+      });
+
+      const validateForm = () => {
+        const stn = ctx.stationCtrl.getSelected();
+        if (!stn) return 'Select a station.';
+        const year = Number(ctx.yearEl?.value || '');
+        const name = String(ctx.nameEl?.value || '').trim();
+        if (!Number.isInteger(year) || year < 1000 || year > 9999) return 'Enter a valid 4-digit year.';
+        if (!name) return 'Name is required.';
+        return null;
+      };
+
+      ctx.createEl?.addEventListener('click', async () => {
+        const err = validateForm();
+        if (err) { ctx.setError(err); return; }
+        ctx.setError('');
+        const stn = ctx.stationCtrl.getSelected();
+        const payload = {
+          year: Number(ctx.yearEl?.value || 0),
+          name: String(ctx.nameEl?.value || '').trim(),
+          projectLead: String(ctx.leadEl?.value || '').trim(),
+          comment: String(ctx.commEl?.value || '').trim(),
+          photos: ctx.selectedPhotos,
+          report: ctx.selectedReport
+        };
+        ctx.createEl.disabled = true;
+        ctx.createEl.textContent = 'Creating…';
+        try {
+          const res = await window.electronAPI.createProject(stn.name, stn.station_id, payload);
+          if (!res?.success) {
+            ctx.setError(res?.message || 'Failed to create project.');
+            return;
+          }
+          if (ctx.pendingRepairs.length) {
+            try {
+              await window.electronAPI.saveRepairs(stn.name, stn.station_id, ctx.pendingRepairs);
+            } catch (repErr) {
+              console.warn('[history] failed to save project repairs', repErr);
+            }
+          }
+          historyState.loaded = false;
+          modal.style.display = 'none';
+          await ensureHistoryData(true);
+        } catch (e) {
+          console.error('[history] createProject failed', e);
+          ctx.setError('Failed to create project.');
+        } finally {
+          ctx.createEl.disabled = false;
+          ctx.createEl.textContent = 'Create';
+        }
+      });
+
+      ctx.cancelEl?.addEventListener('click', () => { modal.style.display = 'none'; });
+
+      modal._ctx = ctx;
+    }
+
+    const ctx = modal._ctx;
+    ctx.pendingRepairs = [];
+    ctx.selectedPhotos = [];
+    ctx.selectedReport = null;
+    ctx.stationCtrl.reset();
+    if (ctx.yearEl && (!ctx.yearEl.value || Number(ctx.yearEl.value) < 1000)) ctx.yearEl.value = String(new Date().getFullYear());
+    if (ctx.nameEl && !ctx.nameEl.value) ctx.nameEl.value = 'Infrastructure Project';
+    if (ctx.leadEl) ctx.leadEl.value = '';
+    if (ctx.commEl) ctx.commEl.value = '';
+    if (ctx.photosSum) ctx.photosSum.textContent = '0 selected';
+    if (ctx.reportSum) ctx.reportSum.textContent = 'None';
+    ctx.renderRepairs();
+    ctx.setError('');
+    modal.style.display = 'flex';
+  }
+
+  function openHistoryKeywordModal(kind) {
+    const isInspection = kind === 'inspection';
+    const modalId = isInspection ? 'historyInspectionKeywordsModal' : 'historyProjectKeywordsModal';
+    let modal = document.getElementById(modalId);
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = modalId;
+      modal.className = 'modal';
+      modal.style.display = 'none';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width:520px;width:92%;display:flex;flex-direction:column;gap:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <h3 style="margin:0;">${isInspection ? 'Inspection' : 'Project'} Folder Keywords</h3>
+            <button class="btn btn-ghost" data-role="close">Close</button>
+          </div>
+          <p class="ih-note">Folders whose names contain any of these words are treated as ${isInspection ? 'inspections' : 'projects'}.</p>
+          <div>
+            <div data-role="chips" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+            <div style="display:flex;gap:8px;margin-top:8px;">
+              <input data-role="input" type="text" placeholder="Add a word (e.g., assessment)" style="flex:1;"/>
+              <button class="btn" data-role="add">Add</button>
+            </div>
+            <small class="ih-help">Words are matched case-insensitively and can be partial.</small>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;">
+            <button class="btn btn-ghost" data-role="reset">Reset</button>
+            <button class="btn btn-primary" data-role="save">Save</button>
+          </div>
+        </div>`;
+      document.body.appendChild(modal);
+
+      const chipsEl = modal.querySelector('[data-role="chips"]');
+      const inputEl = modal.querySelector('[data-role="input"]');
+      const addBtn = modal.querySelector('[data-role="add"]');
+      const saveBtn = modal.querySelector('[data-role="save"]');
+      const resetBtn = modal.querySelector('[data-role="reset"]');
+      const closeBtn = modal.querySelector('[data-role="close"]');
+
+      const ctx = { keywords: [], chipsEl, inputEl, addBtn, saveBtn, resetBtn, closeBtn };
+
+      ctx.renderChips = () => {
+        if (!ctx.chipsEl) return;
+        ctx.chipsEl.innerHTML = '';
+        if (!ctx.keywords.length) {
+          const ghost = document.createElement('span');
+          ghost.style.color = '#6b7280';
+          ghost.textContent = '(no words — nothing will show)';
+          ctx.chipsEl.appendChild(ghost);
+          return;
+        }
+        ctx.keywords.forEach((w, idx) => {
+          const chip = document.createElement('span');
+          chip.className = 'badge';
+          chip.style.display = 'inline-flex';
+          chip.style.alignItems = 'center';
+          chip.style.gap = '6px';
+          chip.style.padding = '4px 8px';
+          chip.style.border = '1px solid var(--border)';
+          chip.style.borderRadius = '999px';
+          chip.style.background = '#f3f4f6';
+          chip.textContent = w;
+          const x = document.createElement('button');
+          x.className = 'btn btn-ghost btn-sm';
+          x.textContent = '×';
+          x.title = `Remove "${w}"`;
+          x.addEventListener('click', () => {
+            ctx.keywords.splice(idx, 1);
+            ctx.renderChips();
+          });
+          chip.appendChild(x);
+          ctx.chipsEl.appendChild(chip);
+        });
+      };
+
+      const addWord = () => {
+        const raw = String(ctx.inputEl?.value || '').trim();
+        if (!raw) return;
+        const norm = raw.toLowerCase();
+        if (!ctx.keywords.includes(norm)) ctx.keywords.push(norm);
+        ctx.inputEl.value = '';
+        ctx.renderChips();
+      };
+
+      ctx.addBtn?.addEventListener('click', addWord);
+      ctx.inputEl?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addWord(); } });
+      ctx.resetBtn?.addEventListener('click', () => {
+        ctx.keywords = isInspection ? ['inspection'] : ['project', 'construction', 'maintenance', 'repair', 'decommission'];
+        ctx.renderChips();
+      });
+      ctx.saveBtn?.addEventListener('click', async () => {
+        try {
+          if (isInspection) await window.electronAPI.setInspectionKeywords(ctx.keywords.slice());
+          else await window.electronAPI.setProjectKeywords(ctx.keywords.slice());
+          historyState.loaded = false;
+          modal.style.display = 'none';
+          await ensureHistoryData(true);
+        } catch (e) {
+          console.error('[history] save keywords failed', e);
+          appAlert('Failed to save keywords.');
+        }
+      });
+      ctx.closeBtn?.addEventListener('click', () => { modal.style.display = 'none'; });
+      modal.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; });
+
+      modal._ctx = ctx;
+    }
+
+    const ctx = modal._ctx;
+    (async () => {
+      try {
+        if (isInspection) {
+          ctx.keywords = await window.electronAPI.getInspectionKeywords() || ['inspection'];
+        } else {
+          ctx.keywords = await window.electronAPI.getProjectKeywords() || ['project', 'construction', 'maintenance', 'repair', 'decommission'];
+        }
+        if (!Array.isArray(ctx.keywords) || !ctx.keywords.length) {
+          ctx.keywords = isInspection ? ['inspection'] : ['project', 'construction', 'maintenance', 'repair', 'decommission'];
+        }
+      } catch (e) {
+        ctx.keywords = isInspection ? ['inspection'] : ['project', 'construction', 'maintenance', 'repair', 'decommission'];
+      }
+      ctx.renderChips();
+      modal.style.display = 'flex';
+      setTimeout(() => ctx.inputEl?.focus(), 20);
+    })();
   }
 
   // ---- Autocomplete (matches Optimization tab) ----------------------------
@@ -2357,26 +4121,31 @@
   // ---- Tabs ----------------------------------------------------------------
 
   function bindTabs() {
-    const tabAnalytics = $('#tabAnalytics');
-    const tabRepairs = $('#tabRepairs');
-    const paneAnalytics = $('#analyticsTab');
-    const paneRepairs = $('#repairsTab');
+    const tabs = [
+      { key: 'analytics', btn: $('#tabAnalytics'), pane: $('#analyticsTab'), onShow: async () => {} },
+      { key: 'history', btn: $('#tabHistory'), pane: $('#historyTab'), onShow: ensureHistoryData },
+      { key: 'repairs', btn: $('#tabRepairs'), pane: $('#repairsTab'), onShow: loadRepairsData }
+    ];
 
-    tabAnalytics.addEventListener('click', () => {
-      tabAnalytics.classList.add('active');
-      tabRepairs.classList.remove('active');
-      paneAnalytics.style.display = '';
-      paneRepairs.style.display = 'none';
+    const showTab = async (key) => {
+      tabs.forEach(t => {
+        if (!t.btn || !t.pane) return;
+        const isActive = t.key === key;
+        t.btn.classList.toggle('active', isActive);
+        t.pane.style.display = isActive ? '' : 'none';
+      });
+      const match = tabs.find(t => t.key === key);
+      if (match && typeof match.onShow === 'function') {
+        await match.onShow();
+      }
+    };
+
+    tabs.forEach(t => {
+      t.btn?.addEventListener('click', () => showTab(t.key));
     });
 
-    tabRepairs.addEventListener('click', async () => {
-      tabRepairs.classList.add('active');
-      tabAnalytics.classList.remove('active');
-      paneRepairs.style.display = '';
-      paneAnalytics.style.display = 'none';
-      await loadRepairsData();
-    });
-
+    // ensure default state
+    showTab('analytics');
   }
 
   // ---- Initialization -------------------------------------------------------
@@ -2401,6 +4170,8 @@
     applyAnalyticsFilters();
     refreshAnalyticsBuilderSources();
     state.cards.forEach(markDirty);
+    historyState.loaded = false; // force reload for history tab when source data changes
+    refreshHistoryFieldAutocomplete();
   }
   // Expose globally so other flows can poke it after imports/adds
   window.refreshStatisticsView = refreshStatisticsView;
@@ -2415,6 +4186,7 @@
 
     bindTabs();
     wireAnalyticsBuilder();
+    wireHistoryFilters();
 
     // Wire up repairs buttons
     const btnAddRepair = $('#btnAddGlobalRepair');
