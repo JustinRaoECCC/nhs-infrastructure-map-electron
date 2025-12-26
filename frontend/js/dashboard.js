@@ -50,8 +50,8 @@
     // dataPairs: [{ label, value }]
     container.innerHTML = '';
     const width = Math.max(320, container.clientWidth || 600);
-    const height = opts.height || 240;
-    const padL = 40, padR = 12, padT = 10, padB = 28;
+    const height = opts.height || 280;
+    const padL = 44, padR = 12, padT = 24, padB = 60; // extra padding so labels never clip
 
     const W = width, H = height;
     const plotW = W - padL - padR;
@@ -97,7 +97,7 @@
       // Value label
       const tv = document.createElementNS(svg.namespaceURI, 'text');
       tv.setAttribute('x', x + barW / 2);
-      tv.setAttribute('y', y - 4);
+      tv.setAttribute('y', Math.max(14, y - 6)); // clamp so tallest bar labels stay visible
       tv.setAttribute('text-anchor', 'middle');
       tv.setAttribute('font-size', '10');
       tv.textContent = String(v);
@@ -106,9 +106,9 @@
       // X labels (rotate if long)
       const tl = document.createElementNS(svg.namespaceURI, 'text');
       tl.setAttribute('x', x + barW / 2);
-      tl.setAttribute('y', padT + plotH + 14);
-      tl.setAttribute('text-anchor', 'end');
-      tl.setAttribute('transform', `rotate(-30, ${x + barW / 2}, ${padT + plotH + 14})`);
+      tl.setAttribute('y', padT + plotH + 20);
+      tl.setAttribute('text-anchor', 'middle');
+      tl.setAttribute('transform', `rotate(-28, ${x + barW / 2}, ${padT + plotH + 20})`);
       tl.setAttribute('font-size', '10');
       tl.textContent = String(d.label);
       svg.appendChild(tl);
@@ -136,7 +136,7 @@
     svg.setAttribute('aria-label', esc(opts.ariaLabel || 'Pie chart'));
 
     let angle = -Math.PI / 2;
-    const paletteLocal = opts.palette || palette;
+    const paletteLocal = buildPiePalette(dataPairs.length, opts.palette);
     dataPairs.forEach((d, i) => {
       const value = Math.max(0, Number(d.value) || 0);
       const slice = (value / total) * Math.PI * 2;
@@ -155,7 +155,7 @@
 
     const legend = document.createElement('div');
     legend.className = 'pie-legend';
-    dataPairs.slice(0, 12).forEach((d, i) => {
+    dataPairs.forEach((d, i) => {
       const row = document.createElement('div');
       row.className = 'legend-row';
       row.innerHTML = `<span class="dot" style="background:${paletteLocal[i % paletteLocal.length]}"></span><span>${esc(d.label)} — ${d.value}</span>`;
@@ -216,7 +216,25 @@
   };
 
   const HISTORY_PAGE_SIZE = 10;
-  const palette = ['#2563eb', '#0ea5e9', '#22c55e', '#f59e0b', '#ef4444', '#7c3aed', '#14b8a6', '#f97316'];
+  const palette = [
+    '#2563eb', '#0ea5e9', '#22c55e', '#f59e0b', '#ef4444', '#7c3aed', '#14b8a6', '#f97316',
+    '#10b981', '#6366f1', '#06b6d4', '#8b5cf6', '#f43f5e', '#84cc16', '#4ade80', '#d946ef',
+    '#0891b2', '#fb7185', '#475569', '#c084fc', '#22d3ee', '#eab308', '#14a9d5', '#f9739e'
+  ];
+
+  function buildPiePalette(count, customPalette) {
+    const base = (Array.isArray(customPalette) && customPalette.length) ? customPalette : palette;
+    if (count <= base.length) return base.slice(0, count);
+
+    const colors = base.slice();
+    const needed = count - colors.length;
+    for (let i = 0; i < needed; i++) {
+      const hue = Math.round(((i + colors.length) * 137.508) % 360);
+      const lightness = 48 + ((i % 3) * 8);
+      colors.push(`hsl(${hue}, 68%, ${lightness}%)`);
+    }
+    return colors;
+  }
 
   const renderQueue = new Set();
   let rafHandle = 0;
