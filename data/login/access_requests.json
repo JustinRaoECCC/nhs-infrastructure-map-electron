@@ -1,0 +1,15 @@
+[
+  {
+    "id": "7d035976-d152-4fca-acb4-39feab436729",
+    "name": "JJJJJ",
+    "email": "jjjjj@ec.gc.ca",
+    "passwordHash": "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4",
+    "reason": "fregefre",
+    "approver": "Justin Rao",
+    "approverEmail": "nitsuji7@icloud.com",
+    "permissionLevel": "Full Admin",
+    "codeHash": "38f83066b4e741c6fa2a7d43f8f7e0a68817a3121cbda89e804d97d631cca822",
+    "status": "pending",
+    "createdAt": "2025-12-29T09:26:57.857Z"
+  }
+]

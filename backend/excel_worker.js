@@ -17,6 +17,7 @@ function getExcel() {
 
 // ─── Paths ────────────────────────────────────────────────────────────────
 const DATA_DIR      = process.env.NHS_DATA_DIR || path.join(__dirname, '..', 'data');
+const LOGIN_DIR     = path.join(DATA_DIR, 'login');
 const LOOKUPS_PATH  = path.join(DATA_DIR, 'lookups.xlsx');
 const COMPANIES_DIR = path.join(DATA_DIR, 'companies');
 const SEED_PATH     = path.join(__dirname, 'templates', 'lookups.template.xlsx');
@@ -3129,7 +3130,8 @@ async function saveFixedParameters(params = []) {
 // ─── Auth Functions ─────────────────────────────────────────────────────
 async function createAuthWorkbook() {
   ensureDir(DATA_DIR);
-  const AUTH_FILE = path.join(DATA_DIR, 'Login_Information.xlsx');
+  ensureDir(LOGIN_DIR);
+  const AUTH_FILE = path.join(LOGIN_DIR, 'Login_Information.xlsx');
   
   const _ExcelJS = getExcel();
   const workbook = new _ExcelJS.Workbook();
@@ -3163,7 +3165,7 @@ async function createAuthWorkbook() {
 }
 
 async function createAuthUser(userData) {
-  const AUTH_FILE = path.join(DATA_DIR, 'Login_Information.xlsx');
+  const AUTH_FILE = path.join(LOGIN_DIR, 'Login_Information.xlsx');
   const _ExcelJS = getExcel();
   const workbook = new _ExcelJS.Workbook();
   
@@ -3214,8 +3216,8 @@ async function createAuthUser(userData) {
   return { success: true };
 }
 
-async function loginAuthUser(name, hashedPassword) {
-  const AUTH_FILE = path.join(DATA_DIR, 'Login_Information.xlsx');
+async function loginAuthUser(nameOrEmail, hashedPassword) {
+  const AUTH_FILE = path.join(LOGIN_DIR, 'Login_Information.xlsx');
   const _ExcelJS = getExcel();
   const workbook = new _ExcelJS.Workbook();
   
@@ -3228,14 +3230,20 @@ async function loginAuthUser(name, hashedPassword) {
 
   let foundUser = null;
   let foundRowNum = 0;
+  const loginId = String(nameOrEmail || '').trim().toLowerCase();
 
   sheet.eachRow((row, rowNum) => {
     if (rowNum === 1) return; // skip header
 
-    const rowName = row.getCell(1).value;
+    const rowName = String(row.getCell(1).value || '').trim();
+    const rowEmail = String(row.getCell(2).value || '').trim();
     const rowPassword = row.getCell(3).value;
     
-    if (rowName === name && rowPassword === hashedPassword) {
+    const matchesLogin =
+      (rowName && rowName.toLowerCase() === loginId) ||
+      (rowEmail && rowEmail.toLowerCase() === loginId);
+
+    if (matchesLogin && rowPassword === hashedPassword) {
       foundUser = {
         name: rowName,
         email: row.getCell(2).value,
@@ -3260,7 +3268,7 @@ async function loginAuthUser(name, hashedPassword) {
 }
 
 async function logoutAuthUser(name) {
-  const AUTH_FILE = path.join(DATA_DIR, 'Login_Information.xlsx');
+  const AUTH_FILE = path.join(LOGIN_DIR, 'Login_Information.xlsx');
   const _ExcelJS = getExcel();
   const workbook = new _ExcelJS.Workbook();
   
@@ -3282,7 +3290,7 @@ async function logoutAuthUser(name) {
 }
 
 async function getAllAuthUsers() {
-  const AUTH_FILE = path.join(DATA_DIR, 'Login_Information.xlsx');
+  const AUTH_FILE = path.join(LOGIN_DIR, 'Login_Information.xlsx');
   
   if (!fs.existsSync(AUTH_FILE)) {
     return { users: [] };
@@ -3311,12 +3319,103 @@ async function getAllAuthUsers() {
       lastLogin: row.getCell(8).value
     });
   });
-
+  
   return { users };
 }
 
+async function updateAuthUser(nameOrEmail, updates = {}) {
+  const AUTH_FILE = path.join(LOGIN_DIR, 'Login_Information.xlsx');
+  const _ExcelJS = getExcel();
+  const workbook = new _ExcelJS.Workbook();
+
+  if (!fs.existsSync(AUTH_FILE)) {
+    return { success: false, message: 'Users sheet not found' };
+  }
+
+  await workbook.xlsx.readFile(AUTH_FILE);
+  const sheet = workbook.getWorksheet('Users');
+  if (!sheet) return { success: false, message: 'Users sheet not found' };
+
+  const target = String(nameOrEmail || '').trim().toLowerCase();
+  let targetRow = null;
+  let targetRowNum = -1;
+  const norm = (v) => String(v || '').trim().toLowerCase();
+
+  sheet.eachRow((row, rowNum) => {
+    if (rowNum === 1) return;
+    const rname = norm(row.getCell(1).value);
+    const remail = norm(row.getCell(2).value);
+    if (rname === target || remail === target) {
+      targetRow = row;
+      targetRowNum = rowNum;
+    }
+  });
+
+  if (!targetRow) return { success: false, message: 'User not found' };
+
+  // Duplicate check for name/email changes
+  const nextName = updates.name ? String(updates.name).trim() : targetRow.getCell(1).value;
+  const nextEmail = updates.email ? String(updates.email).trim().toLowerCase() : String(targetRow.getCell(2).value || '').trim().toLowerCase();
+  let hasDuplicate = false;
+  sheet.eachRow((row, rowNum) => {
+    if (rowNum === 1 || rowNum === targetRowNum) return;
+    const rname = norm(row.getCell(1).value);
+    const remail = norm(row.getCell(2).value);
+    if (updates.name && rname === norm(nextName)) {
+      hasDuplicate = true;
+    }
+    if (updates.email && remail === nextEmail) {
+      hasDuplicate = true;
+    }
+  });
+  if (hasDuplicate) return { success: false, message: 'Another user already has that name or email' };
+
+  if (updates.name) targetRow.getCell(1).value = updates.name;
+  if (updates.email) targetRow.getCell(2).value = updates.email;
+  if (updates.passwordHash) targetRow.getCell(3).value = updates.passwordHash;
+  if (updates.admin !== undefined) targetRow.getCell(4).value = updates.admin ? 'Yes' : 'No';
+  if (updates.permissions) targetRow.getCell(5).value = updates.permissions;
+  if (updates.status) targetRow.getCell(6).value = updates.status;
+
+  await workbook.xlsx.writeFile(AUTH_FILE);
+  return { success: true };
+}
+
+async function deleteAuthUser(nameOrEmail) {
+  const AUTH_FILE = path.join(LOGIN_DIR, 'Login_Information.xlsx');
+  const _ExcelJS = getExcel();
+  const workbook = new _ExcelJS.Workbook();
+
+  if (!fs.existsSync(AUTH_FILE)) {
+    return { success: false, message: 'Users sheet not found' };
+  }
+
+  await workbook.xlsx.readFile(AUTH_FILE);
+  const sheet = workbook.getWorksheet('Users');
+  if (!sheet) return { success: false, message: 'Users sheet not found' };
+
+  const target = String(nameOrEmail || '').trim().toLowerCase();
+  const norm = (v) => String(v || '').trim().toLowerCase();
+  let foundRow = -1;
+
+  sheet.eachRow((row, rowNum) => {
+    if (rowNum === 1) return;
+    const rname = norm(row.getCell(1).value);
+    const remail = norm(row.getCell(2).value);
+    if (rname === target || remail === target) {
+      foundRow = rowNum;
+    }
+  });
+
+  if (foundRow === -1) return { success: false, message: 'User not found' };
+
+  sheet.spliceRows(foundRow, 1);
+  await workbook.xlsx.writeFile(AUTH_FILE);
+  return { success: true };
+}
+
 async function hasAuthUsers() {
-  const AUTH_FILE = path.join(DATA_DIR, 'Login_Information.xlsx');
+  const AUTH_FILE = path.join(LOGIN_DIR, 'Login_Information.xlsx');
   
   if (!fs.existsSync(AUTH_FILE)) {
     return { hasUsers: false };
@@ -3334,7 +3433,7 @@ async function hasAuthUsers() {
   return { hasUsers: sheet.rowCount > 1 };
 }
 async function hasAuthUsers() {
-  const AUTH_FILE = path.join(DATA_DIR, 'Login_Information.xlsx');
+  const AUTH_FILE = path.join(LOGIN_DIR, 'Login_Information.xlsx');
   
   if (!fs.existsSync(AUTH_FILE)) {
     return { hasUsers: false };
@@ -3769,6 +3868,8 @@ const handlers = {
   loginAuthUser,
   logoutAuthUser,
   getAllAuthUsers,
+  updateAuthUser,
+  deleteAuthUser,
   hasAuthUsers,
   getFundingSettings,
   saveFundingSettings,

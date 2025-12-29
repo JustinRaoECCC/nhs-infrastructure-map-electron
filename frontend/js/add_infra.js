@@ -497,7 +497,7 @@
 
       try {
         const res = await window.electronAPI.upsertCompany(name, true, desc, email);
-        if (!res || res.success === false) return appAlert('Failed to create company.');
+        if (!res || res.success === false) return appAlert(res?.message || 'Failed to create company.');
         await window.refreshFilters?.();
         closePanel();
       } catch (e) {
@@ -542,7 +542,7 @@
       try {
         const res = await window.electronAPI.upsertLocation(loc, company);
         // Only proceed if upsert succeeded
-        if (!res || res.success === false) return appAlert('Failed to create location.');
+        if (!res || res.success === false) return appAlert(res?.message || 'Failed to create location.');
         // Save optional link (if any) after upsert succeeds
         const link = ($('#locLink')?.value || '').trim();
         if (link) {
@@ -1510,7 +1510,7 @@
         await saveAssetTypeLinkIfAny(assetName);
 
         const up = await window.electronAPI.upsertAssetType(assetName, company, location);
-        if (!up || up.success === false) return appAlert('Failed to create asset type.');
+        if (!up || up.success === false) return appAlert(up?.message || 'Failed to create asset type.');
 
         const selectedRowsRaw = idxs.map(i => state.rows[i]).filter(Boolean);
         // Normalize GI for "no sections" sources
@@ -1541,7 +1541,7 @@
 
         const res = await window.electronAPI.importSelection(payload);
         if (!res || res.success === false) {
-          appAlert('Import failed.');
+          appAlert(res?.message || 'Import failed.');
           return;
         }
 
@@ -1657,8 +1657,7 @@
         e.preventDefault();
         const confirmed = await appConfirm('Are you sure you want to logout?');
         if (confirmed) {
-          await window.electronAPI.logoutUser();
-          window.close();
+          await window.electronAPI.logoutAndShowLogin();
         }
       });
       navLogout.dataset.bound = '1';

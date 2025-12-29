@@ -1790,10 +1790,24 @@ class MongoPersistence extends IPersistence {
     }
   }
 
-  async loginAuthUser(name, hashedPassword) {
+  async loginAuthUser(nameOrEmail, hashedPassword) {
     try {
+      const loginId = String(nameOrEmail || '').trim();
+      if (!loginId) {
+        return { success: false, message: 'Invalid credentials' };
+      }
+
+      const escapeRegex = (val) => String(val || '').replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+      const loginRegex = new RegExp(`^${escapeRegex(loginId)}$`, 'i');
+
       const collection = mongoClient.getCollection(COLLECTIONS.AUTH_USERS);
-      const user = await collection.findOne({ name, password: hashedPassword });
+      const user = await collection.findOne({
+        password: hashedPassword,
+        $or: [
+          { name: loginRegex },
+          { email: loginRegex }
+        ]
+      });
 
       if (!user) {
         return { success: false, message: 'Invalid credentials' };
@@ -1867,6 +1881,61 @@ class MongoPersistence extends IPersistence {
       return { hasUsers: count > 0 };
     } catch (error) {
       return { hasUsers: false };
+    }
+  }
+
+  async updateAuthUser(nameOrEmail, updates = {}) {
+    try {
+      const collection = mongoClient.getCollection(COLLECTIONS.AUTH_USERS);
+      const loginId = String(nameOrEmail || '').trim();
+      const escapeRegex = (val) => String(val || '').replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+      const loginRegex = new RegExp(`^${escapeRegex(loginId)}$`, 'i');
+
+      const existing = await collection.findOne({
+        $or: [{ name: loginRegex }, { email: loginRegex }]
+      });
+      if (!existing) return { success: false, message: 'User not found' };
+
+      const toSet = { _updatedAt: new Date() };
+      if (updates.name) toSet.name = updates.name;
+      if (updates.email) toSet.email = updates.email;
+      if (updates.passwordHash) toSet.password = updates.passwordHash;
+      if (updates.admin !== undefined) toSet.admin = updates.admin;
+      if (updates.permissions) toSet.permissions = updates.permissions;
+      if (updates.status) toSet.status = updates.status;
+
+      // Duplicate checks for name/email
+      if (updates.name || updates.email) {
+        const dupQuery = [];
+        if (updates.name) dupQuery.push({ name: new RegExp(`^${escapeRegex(updates.name)}$`, 'i') });
+        if (updates.email) dupQuery.push({ email: new RegExp(`^${escapeRegex(updates.email)}$`, 'i') });
+        if (dupQuery.length) {
+          const dup = await collection.findOne({
+            _id: { $ne: existing._id },
+            $or: dupQuery
+          });
+          if (dup) return { success: false, message: 'Another user already has that name or email' };
+        }
+      }
+
+      await collection.updateOne({ _id: existing._id }, { $set: toSet });
+      return { success: true };
+    } catch (error) {
+      return { success: false, message: error.message };
+    }
+  }
+
+  async deleteAuthUser(nameOrEmail) {
+    try {
+      const collection = mongoClient.getCollection(COLLECTIONS.AUTH_USERS);
+      const loginId = String(nameOrEmail || '').trim();
+      const escapeRegex = (val) => String(val || '').replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+      const loginRegex = new RegExp(`^${escapeRegex(loginId)}$`, 'i');
+      const result = await collection.deleteOne({ $or: [{ name: loginRegex }, { email: loginRegex }] });
+      if (!result.deletedCount) return { success: false, message: 'User not found' };
+      return { success: true };
+    } catch (error) {
+      return { success: false, message: error.message };
     }
   }
 

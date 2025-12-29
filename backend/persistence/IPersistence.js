@@ -542,6 +542,8 @@ class IPersistence {
   async logoutAuthUser(name) { throw new Error('Method not implemented'); }
   async getAllAuthUsers() { throw new Error('Method not implemented'); }
   async hasAuthUsers() { throw new Error('Method not implemented'); }
+  async updateAuthUser(nameOrEmail, updates) { throw new Error('Method not implemented'); }
+  async deleteAuthUser(nameOrEmail) { throw new Error('Method not implemented'); }
 
   // ════════════════════════════════════════════════════════════════════════════
   // FUNDING SETTINGS (NEW)

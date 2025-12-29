@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getMaterialsForCompany: (company) => ipcRenderer.invoke('materials:get', company),
   saveMaterialLocation:   (company, payload) => ipcRenderer.invoke('materials:saveLocation', company, payload),
   saveMaterial:           (company, payload) => ipcRenderer.invoke('materials:saveMaterial', company, payload),
+  deleteMaterial:         (company, materialId) => ipcRenderer.invoke('materials:deleteMaterial', company, materialId),
   saveMaterialFilters:    (company, filters) => ipcRenderer.invoke('materials:saveFilters', company, filters),
 
   // ─── Boot progress from the worker (UI progress bar) ────────────────────
@@ -201,10 +202,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ─── Authentication ──────────────────────────────────────────────────────
   hasUsers: () => ipcRenderer.invoke('auth:hasUsers'),
   createUser: (userData) => ipcRenderer.invoke('auth:createUser', userData),
+  adminCreateUser: (userData) => ipcRenderer.invoke('auth:adminCreateUser', userData),
   loginUser: (name, password) => ipcRenderer.invoke('auth:login', name, password),
   logoutUser: () => ipcRenderer.invoke('auth:logout'),
+  logoutAndShowLogin: () => ipcRenderer.invoke('auth:logoutAndLogin'),
   getCurrentUser: () => ipcRenderer.invoke('auth:getCurrentUser'),
   getAllUsers: () => ipcRenderer.invoke('auth:getAllUsers'),
+  updateUser: (target, updates) => ipcRenderer.invoke('auth:updateUser', target, updates),
+  deleteUser: (target) => ipcRenderer.invoke('auth:deleteUser', target),
+  sendAccessRequest: (data) => ipcRenderer.invoke('auth:sendAccessRequest', data),
+  createUserWithCode: (payload) => ipcRenderer.invoke('auth:createUserWithCode', payload),
   navigateToMain: () => ipcRenderer.invoke('auth:navigateToMain'),
 
   getFundingSettings: (company, location) => 
@@ -386,6 +393,16 @@ try {
   // eslint-disable-next-line no-undef
   window.appAlert = appAlert;
 }
+
+// Permission alert channel from main process
+ipcRenderer.on('app:alert', (_evt, payload) => {
+  const message = payload?.message || 'You do not have permission to perform this action. Please ask an approver to change your permission level.';
+  try {
+    appAlert(message);
+  } catch (_) {
+    try { alert(message); } catch (_) {}
+  }
+});
 // --- END: appAlert ---
 
 

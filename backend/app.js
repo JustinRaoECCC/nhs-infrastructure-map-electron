@@ -902,6 +902,10 @@ async function saveMaterial(company, payload) {
   return materialsManager.upsertMaterial(company, payload);
 }
 
+async function deleteMaterial(company, materialId) {
+  return materialsManager.deleteMaterial(company, materialId);
+}
+
 async function saveMaterialFilters(company, filters) {
   return materialsManager.saveFilters(company, filters);
 }
@@ -939,6 +943,7 @@ module.exports = {
   getMaterialsForCompany,
   saveStorageLocation,
   saveMaterial,
+  deleteMaterial,
   saveMaterialFilters,
   // algorithm/workplan & weights
   getAlgorithmParameters: async () => {

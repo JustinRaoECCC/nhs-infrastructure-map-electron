@@ -28,15 +28,18 @@
     });
 
     document.getElementById('btnLogin')?.addEventListener('click', handleLogin);
-    document.getElementById('btnRegister')?.addEventListener('click', handleRegister);
+    document.getElementById('btnSendRequest')?.addEventListener('click', handleSendRequest);
+    document.getElementById('btnCreateAccount')?.addEventListener('click', handleCreateAccount);
 
     // Enter key handlers
     document.getElementById('loginPassword')?.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') handleLogin();
     });
-
     document.getElementById('regPassword')?.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') handleRegister();
+      if (e.key === 'Enter') handleSendRequest();
+    });
+    document.getElementById('regAccessCode')?.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') handleCreateAccount();
     });
   }
 
@@ -73,14 +76,15 @@
     }
   }
 
-  async function handleRegister() {
+  async function handleSendRequest() {
     const name = document.getElementById('regName').value.trim();
     const email = document.getElementById('regEmail').value.trim();
     const password = document.getElementById('regPassword').value;
-    const admin = document.getElementById('regAdmin').value === 'yes';
-    const permissions = document.getElementById('regPermissions').value;
+    const reason = document.getElementById('regReason').value.trim();
+    const approver = document.getElementById('regApprover').value;
+    const permissionLevel = document.getElementById('regPermissionLevel').value;
 
-    if (!name || !email || !password) {
+    if (!name || !email || !password || !reason) {
       window.appAlert('Please fill in all required fields');
       return;
     }
@@ -91,12 +95,48 @@
     }
 
     try {
-      const result = await window.electronAPI.createUser({
+      const result = await window.electronAPI.sendAccessRequest({
         name,
         email,
         password,
-        admin,
-        permissions
+        reason,
+        approver,
+        permissionLevel
+      });
+
+      if (result.success) {
+        window.appAlert('Request sent! Check with your approver for the access code.');
+        document.getElementById('regAccessCode')?.focus();
+      } else {
+        window.appAlert(result.message || 'Failed to send request');
+      }
+    } catch (e) {
+      console.error('[register] Send request error:', e);
+      window.appAlert('Failed to send request');
+    }
+  }
+
+  async function handleCreateAccount() {
+    const name = document.getElementById('regName').value.trim();
+    const email = document.getElementById('regEmail').value.trim();
+    const password = document.getElementById('regPassword').value;
+    const accessCode = document.getElementById('regAccessCode').value.trim();
+
+    if (!name || !email || !password || !accessCode) {
+      window.appAlert('Please enter name, email, password, and access code');
+      return;
+    }
+
+    if (!email.toLowerCase().endsWith('@ec.gc.ca')) {
+      window.appAlert('Email must be @ec.gc.ca domain');
+      return;
+    }
+
+    try {
+      const result = await window.electronAPI.createUserWithCode({
+        nameOrEmail: email || name,
+        password,
+        accessCode
       });
 
       if (result.success) {
@@ -106,7 +146,7 @@
         window.appAlert(result.message || 'Registration failed');
       }
     } catch (e) {
-      console.error('[register] Error:', e);
+      console.error('[register] Create with code error:', e);
       window.appAlert('Registration error occurred');
     }
   }

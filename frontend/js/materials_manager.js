@@ -370,9 +370,36 @@
 
       footer.innerHTML = `
         <button class="btn btn-ghost" id="matCancel">Cancel</button>
+        ${isEdit ? '<button class="btn btn-danger" id="matDelete">Delete</button>' : ''}
         <button class="btn btn-primary" id="matSave">${isEdit ? 'Save Changes' : 'Save Material'}</button>
       `;
       qs(footer, '#matCancel')?.addEventListener('click', close);
+      if (isEdit) {
+        const delBtn = qs(footer, '#matDelete');
+        delBtn?.addEventListener('click', async () => {
+          if (!existingMaterial?.id) return appAlert('Material ID missing; cannot delete.');
+          const confirmed = window.confirm('Delete this material? This cannot be undone.');
+          if (!confirmed) return;
+          delBtn.disabled = true;
+          delBtn.textContent = 'Deleting...';
+          try {
+            const res = await window.electronAPI.deleteMaterial(state.activeCompany, existingMaterial.id);
+            if (res?.success) {
+              await loadCompanyData(state.activeCompany);
+              close();
+            } else {
+              appAlert(res?.message || 'Unable to delete material');
+              delBtn.disabled = false;
+              delBtn.textContent = 'Delete';
+            }
+          } catch (e) {
+            console.error('[materials] delete failed', e);
+            appAlert('Unexpected error deleting material.');
+            delBtn.disabled = false;
+            delBtn.textContent = 'Delete';
+          }
+        });
+      }
       qs(footer, '#matSave')?.addEventListener('click', async () => {
         const name = qs(body, '#matName')?.value.trim();
         if (!name) return appAlert('Please enter a material name.');

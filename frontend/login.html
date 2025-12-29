@@ -14,8 +14,8 @@
       <div id="loginForm" class="auth-form">
         <h2>Sign In</h2>
         <div class="form-row">
-          <label>Name</label>
-          <input type="text" id="loginName" placeholder="Enter your name" />
+          <label>Name or Email</label>
+          <input type="text" id="loginName" placeholder="Enter your name or email" />
         </div>
         <div class="form-row">
           <label>Password</label>
@@ -43,21 +43,37 @@
           <input type="password" id="regPassword" placeholder="Create password" />
         </div>
         <div class="form-row">
-          <label>Admin</label>
-          <select id="regAdmin">
-            <option value="no">No</option>
-            <option value="yes">Yes</option>
+          <label>Reason for access*</label>
+          <textarea id="regReason" placeholder="Tell us why you need access" rows="2"></textarea>
+        </div>
+        <div class="form-row">
+          <label>Request Access From*</label>
+          <select id="regApprover">
+            <option value="Khodayar Ahktarhavari">Khodayar Ahktarhavari</option>
+            <option value="Hiroki Haji">Hiroki Haji</option>
+            <option value="Justin Rao">Justin Rao</option>
           </select>
         </div>
         <div class="form-row">
-          <label>Permissions</label>
-          <select id="regPermissions">
-            <option value="Read">Read Only</option>
-            <option value="Write">Read & Write</option>
-            <option value="Admin">Full Admin</option>
+          <label>Request Permission Level*</label>
+          <select id="regPermissionLevel">
+            <option value="Read Only">Read Only</option>
+            <option value="Read and Edit">Read and Edit</option>
+            <option value="Read and Edit, including General Info, and Add Infrastructure">Read and Edit, including General Info, and Add Infrastructure</option>
+            <option value="Full Admin">Full Admin</option>
           </select>
+          <p class="permission-info">
+            <strong>Permission levels</strong><br>
+            Read Only: view only. Read and Edit: edit station data, repairs, photos/docs, keywords, materials, settings colors. Read and Edit, including General Info, and Add Infrastructure: everything in Read and Edit plus manage companies/locations/asset types, general info, funding settings. Full Admin: all above plus user management and destructive actions.
+          </p>
         </div>
-        <button id="btnRegister" class="btn btn-primary btn-block">Create Account</button>
+        <button id="btnSendRequest" class="btn btn-primary btn-block">Send Request</button>
+
+        <div class="form-row">
+          <label>Access Code</label>
+          <input type="text" id="regAccessCode" placeholder="Enter the code provided by your approver" />
+        </div>
+        <button id="btnCreateAccount" class="btn btn-primary btn-block">Create Account</button>
         <p class="auth-switch">
           Have an account? <a href="#" id="showLogin">Sign in</a>
         </p>

@@ -16,6 +16,10 @@ async function deleteXlsxRecursive(dir) {
   } catch (_) {
     return;
   }
+  // Skip auth/login data to preserve login state
+  if (path.basename(dir).toLowerCase() === 'login') {
+    return;
+  }
   for (const ent of entries) {
     const full = path.join(dir, ent.name);
     try {

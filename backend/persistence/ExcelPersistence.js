@@ -428,6 +428,16 @@ class ExcelPersistence extends IPersistence {
     return await excel.hasAuthUsers();
   }
 
+  async updateAuthUser(nameOrEmail, updates) {
+    const excel = getExcel();
+    return await excel.updateAuthUser(nameOrEmail, updates);
+  }
+
+  async deleteAuthUser(nameOrEmail) {
+    const excel = getExcel();
+    return await excel.deleteAuthUser(nameOrEmail);
+  }
+
   // ════════════════════════════════════════════════════════════════════════════
   // FUNDING SETTINGS (NEW)
   // ════════════════════════════════════════════════════════════════════════════

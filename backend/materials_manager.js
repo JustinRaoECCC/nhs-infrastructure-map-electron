@@ -291,6 +291,43 @@ async function upsertMaterial(company, payload = {}) {
   return { success: true, material };
 }
 
+async function deleteMaterial(company, materialId) {
+  const id = String(materialId || '').trim();
+  if (!company) return { success: false, message: 'company is required' };
+  if (!id) return { success: false, message: 'material id is required' };
+
+  let removedExcel = false;
+  if (SHOULD_WRITE_EXCEL) {
+    const { workbook, filePath } = await ensureWorkbook(company);
+    workbook.worksheets.forEach((sheet) => {
+      if (sheet.name === STORAGE_SHEET) return;
+      ensureMaterialSheetColumns(sheet);
+      for (let r = sheet.rowCount; r >= 2; r--) {
+        const row = sheet.getRow(r);
+        if (String(row.getCell(1).value) === id) {
+          sheet.spliceRows(r, 1);
+          removedExcel = true;
+        }
+      }
+    });
+    if (removedExcel) {
+      await workbook.xlsx.writeFile(filePath);
+    }
+  }
+
+  let removedMongo = false;
+  if (SHOULD_WRITE_MONGO) {
+    const cols = await ensureMongoCollections();
+    if (cols) {
+      const res = await cols.materials.deleteOne({ company, id });
+      removedMongo = (res?.deletedCount || 0) > 0;
+    }
+  }
+
+  const success = removedExcel || removedMongo;
+  return { success, removedExcel, removedMongo, message: success ? undefined : 'Material not found' };
+}
+
 async function saveFilters(company, filters = []) {
   // Filters sheet is no longer persisted to Excel; optional Mongo write is kept for parity.
   if (SHOULD_WRITE_MONGO) await saveFiltersMongo(company, filters);
@@ -436,6 +473,7 @@ module.exports = {
   getCompanyData,
   upsertStorageLocation,
   upsertMaterial,
+  deleteMaterial,
   saveFilters,
   health() {
     return { success: true };
