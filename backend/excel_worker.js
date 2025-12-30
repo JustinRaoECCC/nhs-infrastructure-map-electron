@@ -3128,56 +3128,109 @@ async function saveFixedParameters(params = []) {
 }
 
 // ─── Auth Functions ─────────────────────────────────────────────────────
-async function createAuthWorkbook() {
+const AUTH_FILE = path.join(LOGIN_DIR, 'Login_Information.xlsx');
+const AUTH_HEADERS = ['Name','Email','Password','Admin','Permissions','Status','Created','LastLogin'];
+
+function ensureLoginDirs() {
   ensureDir(DATA_DIR);
   ensureDir(LOGIN_DIR);
-  const AUTH_FILE = path.join(LOGIN_DIR, 'Login_Information.xlsx');
-  
+}
+
+function isAuthFileCorrupt() {
+  try {
+    if (!fs.existsSync(AUTH_FILE)) return false;
+    const stat = fs.statSync(AUTH_FILE);
+    if (!stat.isFile() || stat.size < 8) return true;
+    const buf = Buffer.alloc(4);
+    let fd;
+    try {
+      fd = fs.openSync(AUTH_FILE, 'r');
+      fs.readSync(fd, buf, 0, 4, 0);
+    } finally {
+      if (fd) {
+        try { fs.closeSync(fd); } catch (_) {}
+      }
+    }
+    // XLSX files are ZIPs that start with "PK"
+    return buf[0] !== 0x50 || buf[1] !== 0x4b;
+  } catch (_) {
+    return true;
+  }
+}
+
+function backupCorruptAuthFile(tag = 'corrupt') {
+  try {
+    if (!fs.existsSync(AUTH_FILE)) return;
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const suffix = tag ? `-${tag}` : '';
+    const backup = path.join(LOGIN_DIR, `Login_Information${suffix}-${stamp}.bak`);
+    fs.copyFileSync(AUTH_FILE, backup);
+  } catch (_) { /* best effort */ }
+}
+
+async function writeAuthWorkbookSafe(workbook) {
+  ensureLoginDirs();
+  const tmp = `${AUTH_FILE}.tmp`;
+  const buffer = await workbook.xlsx.writeBuffer();
+  try {
+    fs.writeFileSync(tmp, buffer);
+    fs.renameSync(tmp, AUTH_FILE);
+  } finally {
+    try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (_) {}
+  }
+}
+
+async function loadAuthWorkbook() {
+  ensureLoginDirs();
   const _ExcelJS = getExcel();
   const workbook = new _ExcelJS.Workbook();
-  const HEADERS = ['Name','Email','Password','Admin','Permissions','Status','Created','LastLogin'];
+  const exists = fs.existsSync(AUTH_FILE);
+  const corrupt = exists && isAuthFileCorrupt();
+  let repaired = false;
 
-  // If the auth file already exists, do NOT overwrite it (prevents wiping users on reload).
-  if (fs.existsSync(AUTH_FILE)) {
-    await workbook.xlsx.readFile(AUTH_FILE);
-    let sheet = workbook.getWorksheet('Users');
-
-    // If the sheet is missing (legacy/accidental deletion), add it with headers but keep other sheets/data
-    if (!sheet) {
-      sheet = workbook.addWorksheet('Users');
-      sheet.addRow(HEADERS);
-      await workbook.xlsx.writeFile(AUTH_FILE);
-    } else if (sheet.rowCount < 1) {
-      // Sheet exists but empty—seed headers once
-      sheet.addRow(HEADERS);
-      await workbook.xlsx.writeFile(AUTH_FILE);
-    }
-
-    return { success: true, exists: true };
+  if (!exists || corrupt) {
+    if (corrupt) backupCorruptAuthFile('corrupt');
+    const sheet = workbook.addWorksheet('Users');
+    sheet.addRow(AUTH_HEADERS);
+    await writeAuthWorkbookSafe(workbook);
+    return { workbook, sheet, created: !exists, repaired: corrupt };
   }
 
-  // Fresh file creation
-  const sheet = workbook.addWorksheet('Users');
-  sheet.addRow(HEADERS);
+  try {
+    await workbook.xlsx.readFile(AUTH_FILE);
+  } catch (err) {
+    backupCorruptAuthFile('readfail');
+    const sheet = workbook.addWorksheet('Users');
+    sheet.addRow(AUTH_HEADERS);
+    await writeAuthWorkbookSafe(workbook);
+    return { workbook, sheet, created: false, repaired: true };
+  }
 
-  await workbook.xlsx.writeFile(AUTH_FILE);
-  return { success: true, created: true };
+  let sheet = workbook.getWorksheet('Users');
+  if (!sheet) {
+    sheet = workbook.addWorksheet('Users');
+    sheet.addRow(AUTH_HEADERS);
+    repaired = true;
+  } else if (sheet.rowCount < 1) {
+    sheet.addRow(AUTH_HEADERS);
+    repaired = true;
+  }
+
+  if (repaired) {
+    await writeAuthWorkbookSafe(workbook);
+  }
+
+  return { workbook, sheet, created: false, repaired };
+}
+
+async function createAuthWorkbook() {
+  const { created, repaired } = await loadAuthWorkbook();
+  return { success: true, created, exists: !created, repaired };
 }
 
 async function createAuthUser(userData) {
-  const AUTH_FILE = path.join(LOGIN_DIR, 'Login_Information.xlsx');
-  const _ExcelJS = getExcel();
-  const workbook = new _ExcelJS.Workbook();
+  const { workbook, sheet } = await loadAuthWorkbook();
   
-  // Ensure file exists
-  if (!fs.existsSync(AUTH_FILE)) {
-    await createAuthWorkbook();
-    await workbook.xlsx.readFile(AUTH_FILE);
-  } else {
-    await workbook.xlsx.readFile(AUTH_FILE);
-  }
-  
-  const sheet = workbook.getWorksheet('Users');
   if (!sheet) {
     return { success: false, message: 'Users sheet not found' };
   }
@@ -3212,17 +3265,12 @@ async function createAuthUser(userData) {
     userData.lastLogin || ''
   ]);
   
-  await workbook.xlsx.writeFile(AUTH_FILE);
+  await writeAuthWorkbookSafe(workbook);
   return { success: true };
 }
 
 async function loginAuthUser(nameOrEmail, hashedPassword) {
-  const AUTH_FILE = path.join(LOGIN_DIR, 'Login_Information.xlsx');
-  const _ExcelJS = getExcel();
-  const workbook = new _ExcelJS.Workbook();
-  
-  await workbook.xlsx.readFile(AUTH_FILE);
-  const sheet = workbook.getWorksheet('Users');
+  const { workbook, sheet } = await loadAuthWorkbook();
   
   if (!sheet) {
     return { success: false, message: 'Users sheet not found' };
@@ -3263,17 +3311,12 @@ async function loginAuthUser(nameOrEmail, hashedPassword) {
   row.getCell(6).value = 'Active';
   row.getCell(8).value = new Date().toISOString();
   
-  await workbook.xlsx.writeFile(AUTH_FILE);
+  await writeAuthWorkbookSafe(workbook);
   return { success: true, user: foundUser };
 }
 
 async function logoutAuthUser(name) {
-  const AUTH_FILE = path.join(LOGIN_DIR, 'Login_Information.xlsx');
-  const _ExcelJS = getExcel();
-  const workbook = new _ExcelJS.Workbook();
-  
-  await workbook.xlsx.readFile(AUTH_FILE);
-  const sheet = workbook.getWorksheet('Users');
+  const { workbook, sheet } = await loadAuthWorkbook();
   
   if (!sheet) {
     return { success: true }; // Silent fail for logout
@@ -3285,25 +3328,13 @@ async function logoutAuthUser(name) {
     }
   });
 
-  await workbook.xlsx.writeFile(AUTH_FILE);
+  await writeAuthWorkbookSafe(workbook);
   return { success: true };
 }
 
 async function getAllAuthUsers() {
-  const AUTH_FILE = path.join(LOGIN_DIR, 'Login_Information.xlsx');
-  
-  if (!fs.existsSync(AUTH_FILE)) {
-    return { users: [] };
-  }
-  
-  const _ExcelJS = getExcel();
-  const workbook = new _ExcelJS.Workbook();
-  await workbook.xlsx.readFile(AUTH_FILE);
-  const sheet = workbook.getWorksheet('Users');
-  
-  if (!sheet) {
-    return { users: [] };
-  }
+  const { sheet } = await loadAuthWorkbook();
+  if (!sheet) return { users: [] };
   
   const users = [];
   sheet.eachRow((row, rowNum) => {
@@ -3324,16 +3355,7 @@ async function getAllAuthUsers() {
 }
 
 async function updateAuthUser(nameOrEmail, updates = {}) {
-  const AUTH_FILE = path.join(LOGIN_DIR, 'Login_Information.xlsx');
-  const _ExcelJS = getExcel();
-  const workbook = new _ExcelJS.Workbook();
-
-  if (!fs.existsSync(AUTH_FILE)) {
-    return { success: false, message: 'Users sheet not found' };
-  }
-
-  await workbook.xlsx.readFile(AUTH_FILE);
-  const sheet = workbook.getWorksheet('Users');
+  const { workbook, sheet } = await loadAuthWorkbook();
   if (!sheet) return { success: false, message: 'Users sheet not found' };
 
   const target = String(nameOrEmail || '').trim().toLowerCase();
@@ -3377,21 +3399,12 @@ async function updateAuthUser(nameOrEmail, updates = {}) {
   if (updates.permissions) targetRow.getCell(5).value = updates.permissions;
   if (updates.status) targetRow.getCell(6).value = updates.status;
 
-  await workbook.xlsx.writeFile(AUTH_FILE);
+  await writeAuthWorkbookSafe(workbook);
   return { success: true };
 }
 
 async function deleteAuthUser(nameOrEmail) {
-  const AUTH_FILE = path.join(LOGIN_DIR, 'Login_Information.xlsx');
-  const _ExcelJS = getExcel();
-  const workbook = new _ExcelJS.Workbook();
-
-  if (!fs.existsSync(AUTH_FILE)) {
-    return { success: false, message: 'Users sheet not found' };
-  }
-
-  await workbook.xlsx.readFile(AUTH_FILE);
-  const sheet = workbook.getWorksheet('Users');
+  const { workbook, sheet } = await loadAuthWorkbook();
   if (!sheet) return { success: false, message: 'Users sheet not found' };
 
   const target = String(nameOrEmail || '').trim().toLowerCase();
@@ -3410,40 +3423,13 @@ async function deleteAuthUser(nameOrEmail) {
   if (foundRow === -1) return { success: false, message: 'User not found' };
 
   sheet.spliceRows(foundRow, 1);
-  await workbook.xlsx.writeFile(AUTH_FILE);
+  await writeAuthWorkbookSafe(workbook);
   return { success: true };
 }
 
 async function hasAuthUsers() {
-  const AUTH_FILE = path.join(LOGIN_DIR, 'Login_Information.xlsx');
-  
-  if (!fs.existsSync(AUTH_FILE)) {
-    return { hasUsers: false };
-  }
-  
-  const _ExcelJS = getExcel();
-  const workbook = new _ExcelJS.Workbook();
-  await workbook.xlsx.readFile(AUTH_FILE);
-  const sheet = workbook.getWorksheet('Users');
-  
-  if (!sheet) {
-    return { hasUsers: false };
-  }
-  
-  return { hasUsers: sheet.rowCount > 1 };
-}
-async function hasAuthUsers() {
-  const AUTH_FILE = path.join(LOGIN_DIR, 'Login_Information.xlsx');
-  
-  if (!fs.existsSync(AUTH_FILE)) {
-    return { hasUsers: false };
-  }
-  
-  const _ExcelJS = getExcel();
-  const workbook = new _ExcelJS.Workbook();
-  await workbook.xlsx.readFile(AUTH_FILE);
-  const sheet = workbook.getWorksheet('Users');
-  
+  const { sheet } = await loadAuthWorkbook();
+  if (!sheet) return { hasUsers: false };
   return { hasUsers: sheet.rowCount > 1 };
 }
 

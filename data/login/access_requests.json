@@ -1,15 +1,15 @@
 [
   {
-    "id": "7d035976-d152-4fca-acb4-39feab436729",
-    "name": "JJJJJ",
-    "email": "jjjjj@ec.gc.ca",
+    "id": "2a87beb8-35f4-49c5-b443-bb80e711eee1",
+    "name": "Bobby Smith",
+    "email": "bobby.smith@ec.gc.ca",
     "passwordHash": "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4",
-    "reason": "fregefre",
+    "reason": "testing purposes",
     "approver": "Justin Rao",
     "approverEmail": "nitsuji7@icloud.com",
     "permissionLevel": "Full Admin",
-    "codeHash": "38f83066b4e741c6fa2a7d43f8f7e0a68817a3121cbda89e804d97d631cca822",
+    "codeHash": "9d38f0685825385bc568dfc77066a5ae64a82fa8f7d2b1855b96b9e43d006ae0",
     "status": "pending",
-    "createdAt": "2025-12-29T09:26:57.857Z"
+    "createdAt": "2025-12-30T01:25:27.125Z"
   }
 ]
