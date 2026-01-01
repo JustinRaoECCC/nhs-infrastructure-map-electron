@@ -2,8 +2,55 @@
 let currentStationData = null;
 let hasUnsavedChanges = false;
 let generalInfoUnlocked = false;
+let currentUserLevel = 'Read Only';
 // FUNDING LOCK: can not change this section name
 const FUNDING_SECTION_NAME = 'Funding Type Override Settings';
+
+const PERMISSION_LEVELS = {
+  READ_ONLY: 'Read Only',
+  READ_EDIT: 'Read and Edit',
+  READ_EDIT_GI: 'Read and Edit, including General Info, and Add Infrastructure',
+  FULL_ADMIN: 'Full Admin'
+};
+
+const LEGACY_PERMISSION_LEVEL = 'Read and Edit General Info and Delete Functionalities';
+
+const PERMISSION_ORDER = [
+  PERMISSION_LEVELS.READ_ONLY,
+  PERMISSION_LEVELS.READ_EDIT,
+  PERMISSION_LEVELS.READ_EDIT_GI,
+  PERMISSION_LEVELS.FULL_ADMIN
+];
+
+function normalizePermissionLevel(level, isAdminFlag) {
+  const raw = String(level || '').trim();
+  if (isAdminFlag === true || raw === 'All') return PERMISSION_LEVELS.FULL_ADMIN;
+  if (raw === LEGACY_PERMISSION_LEVEL) return PERMISSION_LEVELS.READ_EDIT_GI;
+  if (PERMISSION_ORDER.includes(raw)) return raw;
+  return PERMISSION_LEVELS.READ_ONLY;
+}
+
+async function ensureCurrentUserLevel() {
+  try {
+    const user = await window.electronAPI.getCurrentUser();
+    if (user) {
+      currentUserLevel = normalizePermissionLevel(
+        user.permissions,
+        user.admin === 'Yes' || user.admin === true
+      );
+    }
+  } catch (e) {
+    console.warn('[station] Failed to load current user', e);
+    currentUserLevel = PERMISSION_LEVELS.READ_ONLY;
+  }
+}
+
+function canEditGeneralInfo() {
+  return (
+    PERMISSION_ORDER.indexOf(currentUserLevel) >=
+    PERMISSION_ORDER.indexOf(PERMISSION_LEVELS.READ_EDIT_GI)
+  );
+}
 
 // Helper
 function escapeHtml(str) {
@@ -34,6 +81,8 @@ async function loadStationPage(stationId, origin = 'map') {
   }
   const html = await resp.text();
   container.innerHTML = html;
+
+  await ensureCurrentUserLevel();
 
   // Show station view, hide others
   container.dataset.origin = origin === 'list' ? 'list' : 'map';
@@ -208,6 +257,8 @@ function setupStationDetailUI(container, stn) {
   // Also render any additional GI fields *inside* the main GI block (read-only)
   try { renderExtraGIFields(container, stn); } catch (_) {}
 
+  applyGeneralInfoPermissions(container);
+
   // Setup event handlers
   setupEventHandlers(container, stn);
 
@@ -357,6 +408,19 @@ function setHeaderPills(container, stn) {
     pill.classList.add(s === 'active' ? 'pill--green' : s === 'inactive' ? 'pill--red' : 'pill--amber');
   }
   if (type) type.textContent = stn.asset_type || '—';
+}
+
+function applyGeneralInfoPermissions(container) {
+  const unlockBtn = container.querySelector('#unlockEditing');
+  if (!unlockBtn) return;
+
+  if (canEditGeneralInfo()) {
+    unlockBtn.disabled = false;
+    unlockBtn.title = 'Enable editing for General Information';
+  } else {
+    unlockBtn.disabled = true;
+    unlockBtn.title = 'Requires permission: Read and Edit, including General Info, and Add Infrastructure';
+  }
 }
 
 function renderPhotoPlaceholders(container) {
@@ -765,7 +829,11 @@ function setupEventHandlers(container, stn) {
     const unlockBtn = e.target.closest('#unlockEditing');
     if (unlockBtn) {
       e.preventDefault();
-      showPasswordModal();
+      if (canEditGeneralInfo()) {
+        unlockGeneralInformation(container);
+      } else {
+        appAlert('Editing General Information requires permission level: Read and Edit, including General Info, and Add Infrastructure.');
+      }
     }
   };
   container._stationClickHandler = clickHandler;
@@ -779,62 +847,6 @@ function setupEventHandlers(container, stn) {
   };
   container._stationInputHandler = inputHandler;
   container.addEventListener('input', inputHandler, true);
-
-  setupPasswordModal(container);
-}
-
-function setupPasswordModal(container) {
-  const modal = container.querySelector('#passwordModal');
-  const passwordInput = container.querySelector('#passwordInput');
-  const confirmBtn = container.querySelector('#confirmPassword');
-  const cancelBtn = container.querySelector('#cancelPassword');
-
-  if (confirmBtn) {
-    confirmBtn.addEventListener('click', () => {
-      const password = passwordInput.value;
-      if (password === '1234') {
-        unlockGeneralInformation(container);
-        hidePasswordModal(container);
-        passwordInput.value = '';
-      } else {
-        appAlert('Incorrect password. Please try again.');
-        passwordInput.focus();
-      }
-    });
-  }
-
-  if (cancelBtn) {
-    cancelBtn.addEventListener('click', () => {
-      hidePasswordModal(container);
-      passwordInput.value = '';
-    });
-  }
-
-  if (passwordInput) {
-    passwordInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        confirmBtn.click();
-      } else if (e.key === 'Escape') {
-        cancelBtn.click();
-      }
-    });
-  }
-}
-
-function showPasswordModal() {
-  const modal = document.querySelector('#passwordModal');
-  const passwordInput = document.querySelector('#passwordInput');
-  if (modal) {
-    modal.style.display = 'flex';
-    setTimeout(() => passwordInput?.focus(), 100);
-  }
-}
-
-function hidePasswordModal() {
-  const modal = document.querySelector('#passwordModal');
-  if (modal) {
-    modal.style.display = 'none';
-  }
 }
 
 function unlockGeneralInformation(container) {

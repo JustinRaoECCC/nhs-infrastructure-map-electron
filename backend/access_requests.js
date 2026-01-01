@@ -10,8 +10,7 @@ const LOGIN_DIR = path.join(DATA_DIR, 'login');
 const REQUESTS_FILE = path.join(LOGIN_DIR, 'access_requests.json');
 const APPROVERS = [
   { name: 'Khodayar Ahktarhavari', email: 'khodayar.ahktarhavari@ec.gc.ca' },
-  { name: 'Hiroki Haji', email: 'hiroki.haji@ec.gc.ca' },
-  { name: 'Justin Rao', email: 'nitsuji7@icloud.com' }
+  { name: 'Hiroki Haji', email: 'hiroki.haji@ec.gc.ca' }
 ];
 
 function ensureDataFile() {
